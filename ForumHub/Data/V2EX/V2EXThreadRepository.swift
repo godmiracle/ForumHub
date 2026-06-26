@@ -1,0 +1,500 @@
+import Foundation
+
+struct V2EXThreadRepository: ThreadRepository {
+    let source = ForumSource.v2ex
+    let capabilities = ForumCapabilities(
+        supportsSearch: false,
+        supportsFavorites: false,
+        supportsReply: false,
+        supportsAuthentication: true,
+        supportsFeedPagination: true
+    )
+    let defaultChannel = ForumChannel.v2exLatest
+
+    private let session: URLSession
+    private let baseURL = URL(string: "https://www.v2ex.com/api/")!
+    private let v2BaseURL = URL(string: "https://www.v2ex.com/api/v2/")!
+    private let webBaseURL = URL(string: "https://www.v2ex.com/")!
+    private let tokenProvider: () -> String?
+
+    init(
+        session: URLSession = .shared,
+        tokenProvider: @escaping () -> String? = { V2EXTokenKeychainStore().loadToken() }
+    ) {
+        self.session = session
+        self.tokenProvider = tokenProvider
+    }
+
+    func fetchChannels() async throws -> [ForumChannel] {
+        let data = try await get(
+            path: "nodes/list.json",
+            queryItems: [
+                URLQueryItem(name: "fields", value: "id,name,title,topics"),
+                URLQueryItem(name: "sort_by", value: "topics"),
+                URLQueryItem(name: "reverse", value: "1")
+            ]
+        )
+        let nodes = try JSONDecoder().decode([V2EXNodeDTO].self, from: data)
+        let channels = nodes
+            .filter { ($0.topics ?? 0) > 0 }
+            .prefix(60)
+            .map(V2EXMapper.channel)
+
+        return [defaultChannel] + channels.filter { $0.nativeKey != defaultChannel.nativeKey }
+    }
+
+    func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult {
+        if channel.nativeKey == "latest" {
+            let data = try await getRecentTopics(page: page)
+            let recentPage = V2EXRecentPageParser.parse(data: data)
+            return ThreadFetchResult(
+                payload: V2EXMapper.payload(title: channel.title, channel: channel, topics: recentPage.topics),
+                rawText: String(decoding: data, as: UTF8.self),
+                hasMore: recentPage.hasNextPage
+            )
+        }
+
+        if let token = tokenProvider() {
+            let data = try await getV2NodeTopics(channel.nativeKey, page: page, token: token)
+            let topics = try V2EXTopicResponseParser.topics(from: data)
+            return ThreadFetchResult(
+                payload: V2EXMapper.payload(title: channel.title, channel: channel, topics: topics),
+                rawText: String(decoding: data, as: UTF8.self),
+                hasMore: !topics.isEmpty
+            )
+        }
+
+        guard page == 1 else {
+            throw ForumProviderError.unsupported("登录 V2EX 后才能加载该节点的更多主题。")
+        }
+        let data = try await get(
+            path: "topics/show.json",
+            queryItems: [URLQueryItem(name: "node_name", value: channel.nativeKey)]
+        )
+        let topics = try V2EXTopicResponseParser.topics(from: data)
+        return ThreadFetchResult(
+            payload: V2EXMapper.payload(title: channel.title, channel: channel, topics: topics),
+            rawText: String(decoding: data, as: UTF8.self),
+            hasMore: false
+        )
+    }
+
+    func fetchHotThreads(page: Int) async throws -> ThreadFetchResult {
+        guard page == 1 else {
+            return ThreadFetchResult(
+                payload: V2EXMapper.payload(
+                    title: "V2EX 热门",
+                    channel: defaultChannel,
+                    topics: []
+                ),
+                rawText: "[]",
+                hasMore: false
+            )
+        }
+
+        let data = try await get(path: "topics/hot.json")
+        let topics = try V2EXTopicResponseParser.topics(from: data)
+        let threads = topics.map(V2EXMapper.thread)
+        let payload = ForumPayload(
+            forum: ForumSummary(
+                id: -20_002,
+                title: "V2EX 热门",
+                subtitle: "V2EX 当前热门主题",
+                todayPosts: 0,
+                onlineUsers: threads.count,
+                source: .v2ex
+            ),
+            channels: [],
+            pinned: [],
+            threads: threads
+        )
+        return ThreadFetchResult(
+            payload: payload,
+            rawText: String(decoding: data, as: UTF8.self),
+            hasMore: false
+        )
+    }
+
+    func fetchFavoriteThreads(page: Int) async throws -> ThreadFetchResult {
+        throw ForumProviderError.unsupported("V2EX 官方接口暂不提供主题收藏列表。")
+    }
+
+    func searchThreads(query: String, page: Int) async throws -> ThreadFetchResult {
+        throw ForumProviderError.unsupported("V2EX 官方接口暂不提供全站主题搜索。")
+    }
+
+    func fetchThread(tid: Int, page: Int) async throws -> ThreadDetailFetchResult {
+        guard page == 1 else {
+            return ThreadDetailFetchResult(
+                thread: ForumThread(
+                    id: tid,
+                    title: "V2EX 主题 \(tid)",
+                    summary: "",
+                    author: "未知作者",
+                    lastReplyAt: "",
+                    replyCount: 0,
+                    viewCount: 0,
+                    body: "",
+                    replies: [],
+                    source: .v2ex
+                ),
+                rawText: "[]"
+            )
+        }
+
+        async let topicData = get(
+            path: "topics/show.json",
+            queryItems: [URLQueryItem(name: "id", value: String(tid))]
+        )
+        async let replyData = get(
+            path: "replies/show.json",
+            queryItems: [URLQueryItem(name: "topic_id", value: String(tid))]
+        )
+
+        let (resolvedTopicData, resolvedReplyData) = try await (topicData, replyData)
+        let topic = try JSONDecoder().decode([V2EXTopicDTO].self, from: resolvedTopicData).first
+        guard let topic else {
+            throw ForumProviderError.invalidResponse
+        }
+        let replies = try JSONDecoder().decode([V2EXReplyDTO].self, from: resolvedReplyData)
+        let thread = V2EXMapper.threadDetail(topic: topic, replies: replies)
+        return ThreadDetailFetchResult(
+            thread: thread,
+            rawText: String(decoding: resolvedTopicData, as: UTF8.self)
+        )
+    }
+
+    func addFavoriteThread(tid: Int) async throws {
+        throw ForumProviderError.unsupported("V2EX 当前官方 API 未提供主题收藏接口。")
+    }
+
+    func removeFavoriteThread(tid: Int) async throws {
+        throw ForumProviderError.unsupported("V2EX 当前官方 API 未提供主题收藏接口。")
+    }
+
+    func replyThread(tid: Int, content: String, attachments: [ReplyAttachmentUpload]) async throws {
+        throw ForumProviderError.unsupported("V2EX 当前官方 API 未提供主题回复接口。")
+    }
+
+    private func get(path: String, queryItems: [URLQueryItem] = []) async throws -> Data {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent(path),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+        guard let url = components.url else { throw ForumProviderError.invalidResponse }
+
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("NGAReader/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse else {
+            throw ForumProviderError.invalidResponse
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw ForumProviderError.httpStatus(response.statusCode)
+        }
+        return data
+    }
+
+    private func getV2NodeTopics(_ nodeName: String, page: Int, token: String) async throws -> Data {
+        let url = v2BaseURL
+            .appendingPathComponent("nodes")
+            .appendingPathComponent(nodeName)
+            .appendingPathComponent("topics")
+        return try await get(url: url, queryItems: [URLQueryItem(name: "p", value: String(page))], token: token)
+    }
+
+    private func getRecentTopics(page: Int) async throws -> Data {
+        var components = URLComponents(
+            url: webBaseURL.appendingPathComponent("recent"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "p", value: String(page))]
+        guard let url = components.url else { throw ForumProviderError.invalidResponse }
+
+        var request = URLRequest(url: url)
+        request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+        request.setValue("ForumHub/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse else {
+            throw ForumProviderError.invalidResponse
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw ForumProviderError.httpStatus(response.statusCode)
+        }
+        return data
+    }
+
+    private func get(url: URL, queryItems: [URLQueryItem], token: String) async throws -> Data {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.queryItems = queryItems
+        guard let requestURL = components.url else { throw ForumProviderError.invalidResponse }
+
+        var request = URLRequest(url: requestURL)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("ForumHub/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse else {
+            throw ForumProviderError.invalidResponse
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            if response.statusCode == 401 || response.statusCode == 403 {
+                throw ForumProviderError.unsupported("V2EX Token 已失效，请在用户页重新登录。")
+            }
+            throw ForumProviderError.httpStatus(response.statusCode)
+        }
+        return data
+    }
+}
+
+enum ForumProviderError: LocalizedError {
+    case invalidResponse
+    case httpStatus(Int)
+    case unsupported(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse:
+            return "论坛返回了无法识别的数据。"
+        case let .httpStatus(code):
+            return "论坛请求失败（\(code)），请稍后重试。"
+        case let .unsupported(message):
+            return message
+        }
+    }
+}
+
+enum V2EXMapper {
+    static func channel(_ node: V2EXNodeDTO) -> ForumChannel {
+        ForumChannel(
+            id: node.id ?? stableID(node.name),
+            title: node.title ?? node.name,
+            source: .v2ex,
+            nativeKey: node.name
+        )
+    }
+
+    static func payload(
+        title: String,
+        channel: ForumChannel,
+        topics: [V2EXTopicDTO]
+    ) -> ForumPayload {
+        let threads = topics.map { thread($0) }
+        return ForumPayload(
+            forum: ForumSummary(
+                id: channel.id,
+                title: title,
+                subtitle: "V2EX · \(title)",
+                todayPosts: 0,
+                onlineUsers: threads.count,
+                source: .v2ex
+            ),
+            channels: [channel],
+            pinned: [],
+            threads: threads
+        )
+    }
+
+    static func thread(_ topic: V2EXTopicDTO) -> ForumThread {
+        let body = normalizedContent(topic.contentRendered ?? topic.content ?? "")
+        return ForumThread(
+            id: topic.id,
+            title: topic.title ?? "V2EX 主题 \(topic.id)",
+            summary: String(body.prefix(180)),
+            author: topic.member?.username ?? "未知作者",
+            authorAvatarURL: avatarURL(from: topic.member?.avatarNormal),
+            createdAt: formattedTime(topic.created),
+            lastReplyAt: formattedTime(topic.lastTouched ?? topic.created),
+            replyCount: topic.replies ?? 0,
+            viewCount: 0,
+            body: body,
+            replies: [],
+            source: .v2ex
+        )
+    }
+
+    static func threadDetail(topic: V2EXTopicDTO, replies: [V2EXReplyDTO]) -> ForumThread {
+        let summary = thread(topic)
+        let mappedReplies = replies.map { reply in
+            Reply(
+                id: reply.id,
+                author: reply.member?.username ?? "未知作者",
+                createdAt: formattedTime(reply.created),
+                body: normalizedContent(reply.contentRendered ?? reply.content ?? ""),
+                avatarURL: avatarURL(from: reply.member?.avatarNormal)
+            )
+        }
+        return ForumThread(
+            id: summary.id,
+            title: summary.title,
+            summary: summary.summary,
+            author: summary.author,
+            authorAvatarURL: summary.authorAvatarURL,
+            createdAt: summary.createdAt,
+            lastReplyAt: summary.lastReplyAt,
+            replyCount: max(summary.replyCount, mappedReplies.count),
+            viewCount: 0,
+            body: summary.body,
+            replies: mappedReplies,
+            source: .v2ex
+        )
+    }
+
+    static func decodeTopics(_ data: Data) throws -> [ForumThread] {
+        try JSONDecoder().decode([V2EXTopicDTO].self, from: data).map { thread($0) }
+    }
+
+    private static func normalizedContent(_ value: String) -> String {
+        value
+            .replacingOccurrences(
+                of: #"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>"#,
+                with: "\n[图片] $1\n",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(of: "</p>", with: "\n\n", options: .caseInsensitive)
+            .cleanedForumText
+    }
+
+    private static func formattedTime(_ timestamp: Int?) -> String {
+        guard let timestamp else { return "" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+    }
+
+    private static func stableID(_ value: String) -> Int {
+        value.utf8.reduce(2_166_136_261) { hash, byte in
+            (hash ^ Int(byte)) &* 16_777_619
+        } & 0x7fff_ffff
+    }
+
+    private static func avatarURL(from value: String?) -> URL? {
+        guard let value, !value.isEmpty else { return nil }
+        if value.hasPrefix("//") {
+            return URL(string: "https:\(value)")
+        }
+        if value.hasPrefix("/") {
+            return URL(string: "https://www.v2ex.com\(value)")
+        }
+        return URL(string: value)
+    }
+}
+
+struct V2EXNodeDTO: Decodable {
+    let id: Int?
+    let name: String
+    let title: String?
+    let topics: Int?
+}
+
+struct V2EXMemberDTO: Decodable {
+    let id: Int?
+    let username: String
+    let avatarNormal: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, username
+        case avatarNormal = "avatar_normal"
+    }
+}
+
+struct V2EXTopicDTO: Decodable {
+    let id: Int
+    let title: String?
+    let content: String?
+    let contentRendered: String?
+    let replies: Int?
+    let created: Int?
+    let lastTouched: Int?
+    let member: V2EXMemberDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, content, replies, created, member
+        case contentRendered = "content_rendered"
+        case lastTouched = "last_touched"
+    }
+}
+
+struct V2EXReplyDTO: Decodable {
+    let id: Int
+    let content: String?
+    let contentRendered: String?
+    let created: Int?
+    let member: V2EXMemberDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case id, content, created, member
+        case contentRendered = "content_rendered"
+    }
+}
+
+enum V2EXTopicResponseParser {
+    static func topics(from data: Data) throws -> [V2EXTopicDTO] {
+        let decoder = JSONDecoder()
+        if let topics = try? decoder.decode([V2EXTopicDTO].self, from: data) {
+            return topics
+        }
+        if let envelope = try? decoder.decode(V2EXTopicsEnvelope.self, from: data) {
+            return envelope.result
+        }
+        throw ForumProviderError.invalidResponse
+    }
+}
+
+private struct V2EXTopicsEnvelope: Decodable {
+    let result: [V2EXTopicDTO]
+}
+
+struct V2EXRecentPage {
+    let topics: [V2EXTopicDTO]
+    let hasNextPage: Bool
+}
+
+enum V2EXRecentPageParser {
+    static func parse(data: Data) -> V2EXRecentPage {
+        let html = String(decoding: data, as: UTF8.self)
+        let sections = html.components(separatedBy: #"<div class="cell item""#).dropFirst()
+        let topics = sections.compactMap { section in
+            parseTopic(section)
+        }
+        let hasNextPage = html.range(
+            of: #"<link\s+rel="next"\s+title="Next Page""#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        return V2EXRecentPage(topics: topics, hasNextPage: hasNextPage)
+    }
+
+    private static func parseTopic(_ value: String) -> V2EXTopicDTO? {
+        guard let link = value.matches(
+            pattern: #"<a\s+href="/t/(\d+)[^"]*"\s+class="topic-link"[^>]*>(.*?)</a>"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ).first,
+              let id = Int(link[1])
+        else { return nil }
+
+        let author = value.matches(
+            pattern: #"class="avatar"[^>]*\salt="([^"]+)""#,
+            options: .caseInsensitive
+        ).first?[1].cleanedForumText
+            ?? value.matches(pattern: #"/member/([A-Za-z0-9_-]+)"#).first?[1]
+            ?? "未知作者"
+        let replyCount = value.matches(
+            pattern: #"class="count_(?:livid|orange)"[^>]*>(\d+)</a>"#,
+            options: .caseInsensitive
+        ).first.flatMap { Int($0[1]) } ?? 0
+
+        return V2EXTopicDTO(
+            id: id,
+            title: link[2].cleanedForumText,
+            content: nil,
+            contentRendered: nil,
+            replies: replyCount,
+            created: nil,
+            lastTouched: nil,
+            member: V2EXMemberDTO(id: nil, username: author, avatarNormal: nil)
+        )
+    }
+}
