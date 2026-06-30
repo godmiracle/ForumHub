@@ -30,7 +30,11 @@ struct ContentView: View {
     @State private var showsPinnedThreads = true
 
     init() {
-        _viewModel = State(initialValue: ForumViewModel())
+        if ProcessInfo.processInfo.arguments.contains("UITEST_PAGED_THREAD") {
+            _viewModel = State(initialValue: ForumViewModel.pagedPreview())
+        } else {
+            _viewModel = State(initialValue: ForumViewModel())
+        }
     }
 
     init(viewModel: ForumViewModel) {
@@ -62,6 +66,11 @@ struct ContentView: View {
             }
         }
         .task {
+            if ProcessInfo.processInfo.arguments.contains("UITEST_PAGED_THREAD") {
+                subscriptions.prepareDefaults(for: viewModel.channels)
+                selectedChannelID = viewModel.forum.id
+                return
+            }
             async let ngaSession: Void = viewModel.restoreSession()
             async let v2exSession: Void = v2exAuthStore.restoreSession()
             async let linuxDoSession: Void = linuxDoAuthStore.restoreSession()

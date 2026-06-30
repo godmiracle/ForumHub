@@ -144,6 +144,30 @@ Use a shared remote image pipeline with in-memory reuse, in-flight request reuse
 - Image behavior is centralized, which reduces duplicated networking logic
 - Bugs in the shared image path can affect multiple rich-content surfaces at once
 
+## ADR-007 NGA Thread Pagination Preserves Source Page Slices
+
+### Status
+
+Accepted
+
+### Date
+
+2026-06
+
+### Context
+
+Accumulating every fetched NGA reply page into one long local list made it harder to understand the remote ordering contract and increased the chance of seeing repeated content after refreshes or page jumps.
+
+### Decision
+
+Keep NGA thread detail pagination source-shaped: page 1 shows the main post plus its returned replies, later pages replace the visible reply slice with that page's replies, and local presentation options such as only-author mode or reverse order stay on top of the currently loaded slice.
+
+### Consequences
+
+- Users can inspect the source's default page ordering more directly
+- Pagination state becomes easier to reason about than unbounded local accumulation
+- Cross-page reading now depends on explicit page changes instead of one continuous merged reply list
+
 ## Template
 
 Use this structure for future decisions:

@@ -6,7 +6,7 @@ struct ThreadDetailParser {
             return nil
         }
 
-        if let thread = parseResultArray(in: object, tid: tid, page: page) {
+        if let thread = parseResultPosts(in: object, tid: tid, page: page) {
             return thread
         }
 
@@ -44,15 +44,19 @@ struct ThreadDetailParser {
         )
     }
 
-    private static func parseResultArray(in object: Any, tid: Int, page: Int) -> ForumThread? {
+    private static func parseResultPosts(in object: Any, tid: Int, page: Int) -> ForumThread? {
         guard let root = object as? [String: Any],
-              let result = root["result"] as? [[String: Any]]
+              let resultDictionaries = postDictionaries(from: root["result"])
         else {
             return nil
         }
 
+        let result = normalizedResultDictionaries(resultDictionaries, page: page)
         let posts = result.enumerated().compactMap { index, dictionary in
-            makeReply(from: dictionary, fallbackID: tid * 1000 + index)
+            makeReply(
+                from: dictionary,
+                fallbackID: fallbackReplyID(tid: tid, page: page, index: index)
+            )
         }
 
         guard !posts.isEmpty else {
@@ -83,6 +87,62 @@ struct ThreadDetailParser {
             body: firstPost.body,
             replies: replies
         )
+    }
+
+    private static func postDictionaries(from result: Any?) -> [[String: Any]]? {
+        if let dictionaries = result as? [[String: Any]] {
+            return dictionaries
+        }
+
+        if let dictionary = result as? [String: Any] {
+            let keyedPosts = dictionary.compactMap { key, value -> (Int, [String: Any])? in
+                guard let nested = value as? [String: Any] else { return nil }
+                let sortKey = Int(key)
+                    ?? int(for: ["lou", "floor", "position", "pid", "id", "post_id"], in: nested)
+                    ?? Int.max
+                return (sortKey, nested)
+            }
+            .sorted { lhs, rhs in
+                if lhs.0 == rhs.0 {
+                    return (int(for: ["pid", "id", "post_id"], in: lhs.1) ?? .max)
+                        < (int(for: ["pid", "id", "post_id"], in: rhs.1) ?? .max)
+                }
+                return lhs.0 < rhs.0
+            }
+            .map(\.1)
+
+            if !keyedPosts.isEmpty {
+                return keyedPosts
+            }
+        }
+
+        return nil
+    }
+
+    private static func normalizedResultDictionaries(_ dictionaries: [[String: Any]], page: Int) -> [[String: Any]] {
+        guard page > 1 else { return dictionaries }
+
+        let filtered = dictionaries.filter { dictionary in
+            !isMainPostDictionary(dictionary)
+        }
+
+        return filtered.isEmpty ? dictionaries : filtered
+    }
+
+    private static func isMainPostDictionary(_ dictionary: [String: Any]) -> Bool {
+        if let pid = int(for: ["pid", "post_id"], in: dictionary), pid == 0 {
+            return true
+        }
+
+        if let floor = int(for: ["lou", "floor", "position"], in: dictionary), floor <= 1 {
+            return true
+        }
+
+        return false
+    }
+
+    private static func fallbackReplyID(tid: Int, page: Int, index: Int) -> Int {
+        tid * 10_000 + page * 100 + index
     }
 
     private static func continuationPage(tid: Int, posts: [Reply]) -> ForumThread {
@@ -128,7 +188,8 @@ struct ThreadDetailParser {
             author: authorName(in: dictionary) ?? "未知作者",
             createdAt: string(for: ["postdate", "timestamp", "created_at", "lastpost", "time"], in: dictionary) ?? "未知时间",
             body: body,
-            avatarURL: avatarURL(in: dictionary)
+            avatarURL: avatarURL(in: dictionary),
+            floorNumber: int(for: ["lou", "floor", "position"], in: dictionary)
         )
     }
 

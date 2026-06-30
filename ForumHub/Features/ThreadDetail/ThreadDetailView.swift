@@ -9,7 +9,13 @@ struct ThreadDetailView: View {
     let thread: ForumThread
     let repository: any ThreadRepository
     @Bindable var favoriteThreads: FavoriteThreadsStore
+    private let topAnchorID = "thread-detail-top-anchor"
+    private let replyTopAnchorID = "thread-detail-reply-top-anchor"
+    private let scrollTrackingSpaceName = "thread-detail-scroll"
+    private let detailPageSize = 20
     @State private var detailThread: ForumThread
+    @State private var canonicalThread: ForumThread?
+    @State private var threadReplyTotalCount: Int
     @State private var isLoading = false
     @State private var isLoadingMore = false
     @State private var errorMessage: String?
@@ -24,171 +30,266 @@ struct ThreadDetailView: View {
     @State private var favoriteErrorMessage: String?
     @State private var isUpdatingFavorite = false
     @State private var showsReplyComposer = false
+    @State private var showsPagePicker = false
     @State private var replyText = ""
     @State private var replyAttachments: [ReplyComposerAttachment] = []
     @State private var isSubmittingReply = false
     @State private var replyErrorMessage: String?
     @State private var replySuccessMessage: String?
+    @State private var showsScrollToTopButton = false
+    @State private var scrollViewportHeight: CGFloat = 0
+    @State private var lastObservedScrollOffset: CGFloat = 0
+    @State private var autoAdvanceFooterMinY: CGFloat?
+    @State private var autoAdvanceBaselineOffset: CGFloat?
+    @State private var pendingPageSelection = 1
+    @State private var shouldScrollToTopAfterPageJump = false
+    @State private var autoAdvanceArmedPage: Int?
 
     init(thread: ForumThread, repository: any ThreadRepository, favoriteThreads: FavoriteThreadsStore) {
         self.thread = thread
         self.repository = repository
         self.favoriteThreads = favoriteThreads
         _detailThread = State(initialValue: thread)
+        _threadReplyTotalCount = State(initialValue: thread.replyCount)
     }
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(detailThread.title)
-                        .font(.system(size: 25, weight: .bold, design: .serif))
-                        .foregroundStyle(PaperTheme.ink)
+        GeometryReader { listGeometry in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Color.clear
+                            .frame(height: 1)
+                            .id(topAnchorID)
+                            .background(
+                                GeometryReader { proxy in
+                                    Color.clear.preference(
+                                        key: ThreadDetailScrollOffsetPreferenceKey.self,
+                                        value: proxy.frame(in: .named(scrollTrackingSpaceName)).minY
+                                    )
+                                }
+                            )
 
-                    HStack(alignment: .center, spacing: 12) {
-                        AvatarView(name: detailThread.author, imageURL: detailThread.authorAvatarURL, size: 52)
+                        threadDetailCard {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(detailThread.title)
+                                    .font(.system(size: 25, weight: .bold, design: .serif))
+                                    .foregroundStyle(PaperTheme.ink)
 
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                TagChip(title: "1楼")
-                                TagChip(title: detailThread.author)
-                                TagChip(title: "\(detailThread.replyCount) 回复")
-                                TagChip(title: "\(detailThread.viewCount) 浏览")
+                                HStack(alignment: .center, spacing: 12) {
+                                    AvatarView(name: detailThread.author, imageURL: detailThread.authorAvatarURL, size: 52)
+
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            TagChip(title: "1楼")
+                                            TagChip(title: detailThread.author)
+                                            TagChip(title: "\(threadReplyTotalCount) 回复")
+                                            TagChip(title: "\(detailThread.viewCount) 浏览")
+                                        }
+
+                                        if detailThread.createdAt.isUsefulForumValue {
+                                            Text(detailThread.createdAt)
+                                                .font(.caption)
+                                                .foregroundStyle(PaperTheme.mutedText)
+                                        }
+                                    }
+                                }
+
+                                ForumRichContentView(text: detailThread.body, fontSize: 18)
                             }
+                            .padding(.vertical, 8)
+                        }
 
-                            if detailThread.createdAt.isUsefulForumValue {
-                                Text(detailThread.createdAt)
-                                    .font(.caption)
+                        if isLoading {
+                            threadDetailCard {
+                                ProgressView("正在加载回帖")
+                                    .tint(PaperTheme.mutedText)
                                     .foregroundStyle(PaperTheme.mutedText)
                             }
                         }
-                    }
 
-                    ForumRichContentView(text: detailThread.body, fontSize: 18)
-                }
-                .padding(.vertical, 8)
-                .listRowBackground(PaperTheme.card)
-            }
-
-            if isLoading {
-                Section {
-                    ProgressView("正在加载回帖")
-                        .tint(PaperTheme.mutedText)
-                        .foregroundStyle(PaperTheme.mutedText)
-                        .listRowBackground(PaperTheme.card)
-                }
-            }
-
-            if let errorMessage {
-                Section("错误") {
-                    Text(errorMessage)
-                        .foregroundStyle(PaperTheme.accent)
-                        .listRowBackground(PaperTheme.card)
-                }
-            }
-
-            if !detailThread.replies.isEmpty {
-                Section(replySectionTitle) {
-                    if displayedReplies.isEmpty, showsOnlyThreadAuthor {
-                        VStack(spacing: 10) {
-                            Image(systemName: "person.crop.circle.badge.questionmark")
-                                .font(.system(size: 28))
-                            Text("楼主暂时没有继续回复")
-                                .font(.headline)
-                            Text("点击下方“查看全部”恢复所有回帖。")
-                                .font(.footnote)
-                        }
-                        .foregroundStyle(PaperTheme.mutedText)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 28)
-                        .listRowBackground(PaperTheme.card)
-                    }
-
-                    ForEach(displayedReplies) { reply in
-                        HStack(alignment: .top, spacing: 12) {
-                            AvatarView(name: reply.author, imageURL: reply.avatarURL, size: 40)
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text(reply.author)
-                                        .font(.subheadline.weight(.semibold))
+                        if let errorMessage {
+                            threadDetailCard {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("错误")
+                                        .font(.headline)
                                         .foregroundStyle(PaperTheme.ink)
-                                    Spacer()
-                                    Text(floorLabel(for: reply))
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(PaperTheme.secondaryInk)
-                                    Text(reply.createdAt)
-                                        .font(.caption)
+                                    Text(errorMessage)
+                                        .foregroundStyle(PaperTheme.accent)
+                                }
+                            }
+                        }
+
+                        if !detailThread.replies.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(replySectionTitle)
+                                    .font(.system(size: 18, weight: .semibold, design: .serif))
+                                    .foregroundStyle(PaperTheme.ink)
+                                    .padding(.horizontal, 4)
+
+                                Color.clear
+                                    .frame(height: 1)
+                                    .id(replyTopAnchorID)
+
+                                if displayedReplies.isEmpty, showsOnlyThreadAuthor {
+                                    threadDetailCard {
+                                        VStack(spacing: 10) {
+                                            Image(systemName: "person.crop.circle.badge.questionmark")
+                                                .font(.system(size: 28))
+                                            Text("楼主暂时没有继续回复")
+                                                .font(.headline)
+                                            Text("点击下方“查看全部”恢复所有回帖。")
+                                                .font(.footnote)
+                                        }
                                         .foregroundStyle(PaperTheme.mutedText)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 28)
+                                    }
                                 }
 
-                                ForumRichContentView(text: reply.body, fontSize: 17)
+                                ForEach(displayedReplies) { reply in
+                                    threadDetailCard {
+                                        HStack(alignment: .top, spacing: 12) {
+                                            AvatarView(name: reply.author, imageURL: reply.avatarURL, size: 40)
+
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                HStack {
+                                                    Text(reply.author)
+                                                        .font(.subheadline.weight(.semibold))
+                                                        .foregroundStyle(PaperTheme.ink)
+                                                    Spacer()
+                                                    Text(floorLabel(for: reply))
+                                                        .font(.caption.weight(.semibold))
+                                                        .foregroundStyle(PaperTheme.secondaryInk)
+                                                    Text(reply.createdAt)
+                                                        .font(.caption)
+                                                        .foregroundStyle(PaperTheme.mutedText)
+                                                }
+
+                                                ForumRichContentView(text: reply.body, fontSize: 17)
+                                            }
+                                        }
+                                        .padding(.vertical, 4)
+                                    }
+                                }
                             }
                         }
-                        .padding(.vertical, 4)
-                        .listRowBackground(PaperTheme.card)
-                    }
-                }
-            }
 
-            if hasMoreReplies, !isLoading {
-                Section {
-                    Button {
-                        Task { await loadNextPage() }
-                    } label: {
-                        HStack(spacing: 10) {
-                            if isLoadingMore {
-                                ProgressView()
-                                    .tint(PaperTheme.mutedText)
+                        if hasMoreReplies, !isLoading, !supportsDirectPagination {
+                            threadDetailCard {
+                                Button {
+                                    Task { await loadNextPage() }
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        if isLoadingMore {
+                                            ProgressView()
+                                                .tint(PaperTheme.mutedText)
+                                        }
+                                        Text(loadMoreTitle)
+                                    }
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(PaperTheme.accent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                }
+                                .disabled(isLoadingMore)
+                                .onAppear {
+                                    Task { await loadNextPage() }
+                                }
                             }
-                            Text(loadMoreTitle)
+                        } else if currentPage > 1, !isLoadingMore, !supportsDirectPagination {
+                            threadDetailCard {
+                                Text("已经加载全部回帖")
+                                    .font(.footnote)
+                                    .foregroundStyle(PaperTheme.mutedText)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                            }
                         }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(PaperTheme.accent)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                    }
-                    .disabled(isLoadingMore)
-                    .listRowBackground(PaperTheme.card)
-                    .onAppear {
-                        Task { await loadNextPage() }
-                    }
-                }
-            } else if currentPage > 1, !isLoadingMore {
-                Section {
-                    Text("已经加载全部回帖")
-                        .font(.footnote)
-                        .foregroundStyle(PaperTheme.mutedText)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .listRowBackground(PaperTheme.card)
-                }
-            }
 
-        }
-        .scrollContentBackground(.hidden)
-        .background(PaperBackground())
-        .navigationTitle("帖子详情")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
-        .toolbarBackground(.regularMaterial, for: .navigationBar)
-        .task {
-            await refreshDetail()
-        }
-        .refreshable {
-            await refreshDetail()
-        }
-        .safeAreaInset(edge: .bottom) {
-            threadActionBar
-        }
-        .overlay {
-            if isPreparingSnapshot {
-                ZStack {
-                    Color.black.opacity(0.16)
-                        .ignoresSafeArea()
-                    ProgressView("正在生成长图")
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 18)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                        if supportsDirectPagination, currentPage < totalPageCount, !isLoading {
+                            threadDetailCard {
+                                VStack(spacing: 8) {
+                                    if isLoadingMore {
+                                        ProgressView()
+                                            .tint(PaperTheme.mutedText)
+                                    } else {
+                                        Image(systemName: "arrow.down.circle")
+                                            .font(.system(size: 18, weight: .semibold))
+                                            .foregroundStyle(PaperTheme.mutedText)
+                                    }
+
+                                    Text(isLoadingMore ? "正在切换下一页" : "继续下滑切到下一页")
+                                        .font(.footnote)
+                                        .foregroundStyle(PaperTheme.mutedText)
+
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                            }
+                            .background(
+                                GeometryReader { footerProxy in
+                                    Color.clear.preference(
+                                        key: ThreadDetailFooterOffsetPreferenceKey.self,
+                                        value: footerProxy.frame(in: .named(scrollTrackingSpaceName)).minY
+                                    )
+                                }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 96)
+                }
+                .accessibilityIdentifier("thread-detail-scroll")
+                .background(PaperBackground())
+                .coordinateSpace(name: scrollTrackingSpaceName)
+                .navigationTitle("帖子详情")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar(.visible, for: .navigationBar)
+                .toolbarBackground(.regularMaterial, for: .navigationBar)
+                .task {
+                    await refreshDetail()
+                }
+                .refreshable {
+                    await refreshDetail()
+                }
+                .safeAreaInset(edge: .bottom) {
+                    threadActionBar
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    trailingFloatingControls(proxy: proxy)
+                }
+                .onAppear {
+                    scrollViewportHeight = listGeometry.size.height
+                }
+                .onChange(of: listGeometry.size.height) { _, height in
+                    scrollViewportHeight = height
+                    evaluateDirectPaginationIfNeeded(topOffset: lastObservedScrollOffset)
+                }
+                .onPreferenceChange(ThreadDetailScrollOffsetPreferenceKey.self) { offset in
+                    handleScrollOffsetChange(offset)
+                }
+                .onPreferenceChange(ThreadDetailFooterOffsetPreferenceKey.self) { minY in
+                    handleDirectPaginationFooterChange(minY)
+                }
+                .onChange(of: currentPage) { _, _ in
+                    guard shouldScrollToTopAfterPageJump else { return }
+                    shouldScrollToTopAfterPageJump = false
+                    withAnimation(.snappy(duration: 0.28)) {
+                        proxy.scrollTo(replyScrollTargetID, anchor: .top)
+                    }
+                }
+                .overlay {
+                    if isPreparingSnapshot {
+                        ZStack {
+                            Color.black.opacity(0.16)
+                                .ignoresSafeArea()
+                            ProgressView("正在生成长图")
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 18)
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                        }
+                    }
                 }
             }
         }
@@ -233,6 +334,80 @@ struct ThreadDetailView: View {
             )
             .presentationDetents([.medium])
         }
+        .sheet(isPresented: $showsPagePicker) {
+            pagePickerSheet
+        }
+    }
+
+    private func handleScrollOffsetChange(_ offset: CGFloat) {
+        let shouldShow = offset < -220
+        let isScrollingUp = offset > lastObservedScrollOffset + 14
+        lastObservedScrollOffset = offset
+
+        let nextVisibility = shouldShow && !isScrollingUp
+        if nextVisibility != showsScrollToTopButton {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                showsScrollToTopButton = nextVisibility
+            }
+        }
+        evaluateDirectPaginationIfNeeded(topOffset: offset)
+    }
+
+    private func handleDirectPaginationFooterChange(_ minY: CGFloat) {
+        autoAdvanceFooterMinY = minY
+        evaluateDirectPaginationIfNeeded(topOffset: lastObservedScrollOffset)
+    }
+
+    private func evaluateDirectPaginationIfNeeded(topOffset: CGFloat) {
+        guard supportsDirectPagination else { return }
+        guard currentPage < totalPageCount else {
+            return
+        }
+        guard scrollViewportHeight > 0 else {
+            return
+        }
+        guard let footerMinY = autoAdvanceFooterMinY else {
+            return
+        }
+
+        if autoAdvanceBaselineOffset == nil {
+            autoAdvanceBaselineOffset = topOffset
+            return
+        }
+
+        guard let baselineOffset = autoAdvanceBaselineOffset else { return }
+        let scrolledDistance = ThreadDetailDirectPaginationAutoAdvancePolicy.scrolledDistance(
+            baselineOffset: baselineOffset,
+            currentOffset: topOffset
+        )
+        let isNearBottom = ThreadDetailDirectPaginationAutoAdvancePolicy.isNearBottom(
+            footerMinY: footerMinY,
+            viewportHeight: scrollViewportHeight
+        )
+
+        if ThreadDetailDirectPaginationAutoAdvancePolicy.shouldArmCurrentPage(
+            scrolledDistance: scrolledDistance,
+            isNearBottom: isNearBottom,
+            currentPage: currentPage,
+            totalPageCount: totalPageCount
+        ) {
+            autoAdvanceArmedPage = currentPage
+        }
+
+        guard ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
+            currentPage: currentPage,
+            totalPageCount: totalPageCount,
+            isLoadingMore: isLoadingMore,
+            armedPage: autoAdvanceArmedPage,
+            isNearBottom: isNearBottom
+        ) else { return }
+
+        let sourcePage = currentPage
+        autoAdvanceArmedPage = nil
+        shouldScrollToTopAfterPageJump = true
+        Task {
+            await loadSpecificPage(sourcePage + 1, proxy: nil)
+        }
     }
 
     private var displayedReplies: [Reply] {
@@ -240,10 +415,33 @@ struct ThreadDetailView: View {
         return showsRepliesInReverseOrder ? Array(replies.reversed()) : replies
     }
 
+    private var replyScrollTargetID: String {
+        displayedReplies.isEmpty ? topAnchorID : replyTopAnchorID
+    }
+
+    private var supportsDirectPagination: Bool {
+        repository.source == .nga
+    }
+
+    private var totalPageCount: Int {
+        let totalReplies = max(threadReplyTotalCount, thread.replyCount)
+        let totalPosts = max(totalReplies + 1, 1)
+        return max(1, Int(ceil(Double(totalPosts) / Double(detailPageSize))))
+    }
+
     private var replySectionTitle: String {
         showsOnlyThreadAuthor
             ? "楼主回帖 · \(displayedReplies.count)"
             : "回帖 · \(detailThread.replies.count)"
+    }
+
+    private func threadDetailCard<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var threadActionBar: some View {
@@ -414,12 +612,71 @@ struct ThreadDetailView: View {
         do {
             let result = try await repository.fetchThread(tid: thread.id, page: 1)
             let loadedThread = result.thread
-            detailThread = loadedThread.mergingMetadataFallback(from: thread)
+            let mergedThread = loadedThread.mergingMetadataFallback(from: thread)
+            let resolvedReplyTotal = max(threadReplyTotalCount, thread.replyCount, mergedThread.replyCount)
+            detailThread = mergedThread
+            canonicalThread = mergedThread
+            threadReplyTotalCount = resolvedReplyTotal
             currentPage = 1
-            hasMoreReplies = shouldTryAnotherPage(
-                loadedCount: loadedThread.replies.count,
-                totalCount: detailThread.replyCount
-            )
+            autoAdvanceFooterMinY = nil
+            autoAdvanceBaselineOffset = nil
+            autoAdvanceArmedPage = nil
+            pendingPageSelection = 1
+            hasMoreReplies = supportsDirectPagination
+                ? totalPageCount > 1
+                : shouldTryAnotherPage(
+                    loadedCount: loadedThread.replies.count,
+                    totalCount: resolvedReplyTotal
+                )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadSpecificPage(_ page: Int, proxy: ScrollViewProxy?) async {
+        guard supportsDirectPagination else { return }
+        let targetPage = min(max(page, 1), totalPageCount)
+        guard !isLoading, !isLoadingMore else { return }
+
+        isLoadingMore = true
+        errorMessage = nil
+        defer { isLoadingMore = false }
+
+        do {
+            let result = try await repository.fetchThread(tid: thread.id, page: targetPage)
+            let resolvedReplyTotal = max(threadReplyTotalCount, thread.replyCount, result.thread.replyCount)
+            if targetPage == 1 {
+                let mergedThread = result.thread.mergingMetadataFallback(from: thread)
+                detailThread = mergedThread.replacingReplies(
+                    mergedThread.replies,
+                    lastReplyAt: mergedThread.lastReplyAt,
+                    replyCount: resolvedReplyTotal
+                )
+                canonicalThread = detailThread
+            } else {
+                let baseThread = canonicalThread ?? detailThread.mergingMetadataFallback(from: thread)
+                let pageReplies = normalizedContinuationReplies(from: result.thread.replies)
+                detailThread = baseThread.replacingReplies(
+                    pageReplies,
+                    lastReplyAt: pageReplies.last?.createdAt ?? baseThread.lastReplyAt,
+                    replyCount: resolvedReplyTotal
+                )
+                canonicalThread = baseThread
+            }
+
+            threadReplyTotalCount = resolvedReplyTotal
+            currentPage = targetPage
+            autoAdvanceFooterMinY = nil
+            autoAdvanceBaselineOffset = nil
+            autoAdvanceArmedPage = nil
+            pendingPageSelection = targetPage
+            hasMoreReplies = currentPage < totalPageCount
+
+            if let proxy {
+                withAnimation(.snappy(duration: 0.28)) {
+                    proxy.scrollTo(replyScrollTargetID, anchor: .top)
+                }
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -543,7 +800,19 @@ struct ThreadDetailView: View {
     }
 
     private func floorLabel(for reply: Reply) -> String {
+        if let floorNumber = reply.floorNumber, floorNumber > 0 {
+            return "\(floorNumber)楼"
+        }
+
         if let index = detailThread.replies.firstIndex(where: { $0.id == reply.id }) {
+            if supportsDirectPagination {
+                if currentPage == 1 {
+                    return "\(index + 2)楼"
+                }
+
+                return "\(((currentPage - 1) * detailPageSize) + index + 1)楼"
+            }
+
             return "\(index + 2)楼"
         }
         return "--楼"
@@ -554,7 +823,7 @@ struct ThreadDetailView: View {
         withAnimation(.easeInOut(duration: 0.2)) {
             showsOnlyThreadAuthor.toggle()
         }
-        if enablesOnlyAuthor, hasMoreReplies {
+        if enablesOnlyAuthor, hasMoreReplies, !supportsDirectPagination {
             Task { await loadNextPage() }
         }
     }
@@ -596,6 +865,386 @@ struct ThreadDetailView: View {
         }
     }
 
+}
+
+private extension ThreadDetailView {
+    var floatingControlTransition: AnyTransition {
+        .asymmetric(
+            insertion: .offset(x: 18, y: 6)
+                .combined(with: .scale(scale: 0.94, anchor: .trailing))
+                .combined(with: .opacity),
+            removal: .offset(x: 14, y: 4)
+                .combined(with: .scale(scale: 0.96, anchor: .trailing))
+                .combined(with: .opacity)
+        )
+    }
+
+    var floatingControlAnimation: Animation {
+        .spring(response: 0.28, dampingFraction: 0.84, blendDuration: 0.12)
+    }
+
+    @ViewBuilder
+    func trailingFloatingControls(proxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .trailing, spacing: 10) {
+            if showsScrollToTopButton {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        showsScrollToTopButton = false
+                    }
+                    withAnimation(.snappy(duration: 0.28)) {
+                        proxy.scrollTo(topAnchorID, anchor: .top)
+                    }
+                } label: {
+                    VStack(spacing: 1) {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("TOP")
+                            .font(.system(size: 7, weight: .heavy, design: .rounded))
+                            .tracking(0.7)
+                            .foregroundStyle(PaperTheme.mutedText)
+                    }
+                    .foregroundStyle(PaperTheme.secondaryInk)
+                    .frame(width: 46, height: 46)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.2),
+                                        Color.white.opacity(0.04)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .padding(1)
+                    }
+                    .overlay {
+                        Circle()
+                            .stroke(Color.white.opacity(0.24), lineWidth: 0.8)
+                    }
+                    .overlay {
+                        Circle()
+                            .fill(Color.white.opacity(0.08))
+                            .padding(4)
+                    }
+                    .shadow(color: Color.black.opacity(0.08), radius: 12, y: 6)
+                }
+                .buttonStyle(.plain)
+                .transition(floatingControlTransition)
+                .accessibilityLabel("回到顶部")
+            }
+
+            if supportsDirectPagination, totalPageCount > 1, !isLoading {
+                detailFloatingPaginationControl(proxy: proxy)
+                    .transition(floatingControlTransition)
+            }
+        }
+        .padding(.trailing, 18)
+        .padding(.bottom, 112)
+        .animation(floatingControlAnimation, value: showsScrollToTopButton)
+        .animation(floatingControlAnimation, value: supportsDirectPagination && totalPageCount > 1 && !isLoading)
+    }
+
+    func detailFloatingPaginationControl(proxy: ScrollViewProxy) -> some View {
+        HStack(spacing: 0) {
+            paginationIconButton(
+                systemImage: "chevron.left",
+                isDisabled: isLoadingMore || currentPage <= 1
+            ) {
+                shouldScrollToTopAfterPageJump = true
+                Task { await loadSpecificPage(currentPage - 1, proxy: proxy) }
+            }
+
+            Button {
+                pendingPageSelection = currentPage
+                showsPagePicker = true
+            } label: {
+                VStack(spacing: 1) {
+                    Text("\(currentPage) / \(totalPageCount)")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .accessibilityIdentifier("thread-detail-current-page")
+                    Text("PAGE")
+                        .font(.system(size: 8, weight: .heavy, design: .rounded))
+                        .tracking(0.8)
+                        .foregroundStyle(PaperTheme.mutedText)
+                }
+                .foregroundStyle(PaperTheme.secondaryInk)
+                .frame(minWidth: 74)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background {
+                    Capsule()
+                        .fill(Color.white.opacity(0.1))
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 2)
+                }
+            }
+            .buttonStyle(.plain)
+
+            paginationIconButton(
+                systemImage: "chevron.right",
+                isDisabled: isLoadingMore || currentPage >= totalPageCount
+            ) {
+                shouldScrollToTopAfterPageJump = true
+                Task { await loadSpecificPage(currentPage + 1, proxy: proxy) }
+            }
+        }
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay {
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.2),
+                            Color.white.opacity(0.04)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .padding(1)
+                .allowsHitTesting(false)
+        }
+        .overlay {
+            Capsule()
+                .stroke(Color.white.opacity(0.24), lineWidth: 0.8)
+                .allowsHitTesting(false)
+        }
+        .overlay {
+            HStack {
+                Capsule()
+                    .fill(Color.white.opacity(0.16))
+                    .frame(width: 1, height: 18)
+                    .padding(.leading, 38)
+                Spacer()
+                Capsule()
+                    .fill(Color.white.opacity(0.16))
+                    .frame(width: 1, height: 18)
+                    .padding(.trailing, 38)
+            }
+            .allowsHitTesting(false)
+        }
+        .overlay(alignment: .center) {
+            if isLoadingMore {
+                ProgressView()
+                    .scaleEffect(0.8)
+                    .tint(PaperTheme.mutedText)
+            }
+        }
+        .shadow(color: Color.black.opacity(0.08), radius: 12, y: 6)
+    }
+
+    func paginationIconButton(
+        systemImage: String,
+        isDisabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(isDisabled ? PaperTheme.mutedText.opacity(0.7) : PaperTheme.secondaryInk)
+                .frame(width: 36, height: 36)
+                .background {
+                    Circle()
+                        .fill(Color.white.opacity(isDisabled ? 0.04 : 0.1))
+                        .padding(3)
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+    }
+
+    var pagePickerSheet: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                VStack(spacing: 6) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.34))
+                        .frame(width: 40, height: 5)
+                        .padding(.top, 4)
+
+                    Text("第 \(pendingPageSelection) / \(totalPageCount) 页")
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PaperTheme.ink)
+
+                    Text("滑动选择后可直接跳转，或快速前往首页与末页")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(PaperTheme.mutedText)
+                }
+                .padding(.top, 8)
+                .padding(.bottom, 2)
+
+                ZStack {
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .fill(.ultraThinMaterial.opacity(0.92))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white.opacity(0.16),
+                                            Color.white.opacity(0.04)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .padding(1)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                .stroke(Color.white.opacity(0.28), lineWidth: 0.8)
+                        }
+
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.white.opacity(0.18))
+                        .frame(height: 44)
+                        .padding(.horizontal, 14)
+
+                    Picker("分页", selection: $pendingPageSelection) {
+                        ForEach(1...totalPageCount, id: \.self) { page in
+                            Text("\(page)").tag(page)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(height: 176)
+                    .clipped()
+                    .padding(.horizontal, 8)
+                }
+                .frame(height: 196)
+
+                HStack(spacing: 10) {
+                    pagePickerActionButton(
+                        title: "首页",
+                        systemImage: "backward.end.fill"
+                    ) {
+                        jumpToPageFromPicker(1)
+                    }
+
+                    pagePickerActionButton(
+                        title: "最后一页",
+                        systemImage: "forward.end.fill"
+                    ) {
+                        jumpToPageFromPicker(totalPageCount)
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    pagePickerActionButton(
+                        title: "取消",
+                        systemImage: "xmark",
+                        style: .secondary
+                    ) {
+                        showsPagePicker = false
+                    }
+
+                    pagePickerActionButton(
+                        title: "确定",
+                        systemImage: "checkmark",
+                        style: .primary
+                    ) {
+                        jumpToPageFromPicker(pendingPageSelection)
+                    }
+                }
+
+                Text("首页与最后一页会直接跳转")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(PaperTheme.mutedText.opacity(0.9))
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 8)
+            .padding(.bottom, 18)
+            .background(PaperBackground())
+        }
+        .presentationDetents([.height(430)])
+        .presentationDragIndicator(.visible)
+    }
+
+    func jumpToPageFromPicker(_ page: Int) {
+        pendingPageSelection = page
+        shouldScrollToTopAfterPageJump = true
+        showsPagePicker = false
+        Task {
+            await loadSpecificPage(page, proxy: nil)
+        }
+    }
+
+    func pagePickerActionButton(
+        title: String,
+        systemImage: String,
+        style: PagePickerActionButtonStyle = .neutral,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: style == .primary ? .bold : .semibold))
+
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .foregroundStyle(pagePickerActionForegroundColor(for: style))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .background(pagePickerActionBackground(for: style), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(pagePickerActionBorderColor(for: style), lineWidth: 0.8)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    func pagePickerActionBackground(for style: PagePickerActionButtonStyle) -> some ShapeStyle {
+        switch style {
+        case .primary:
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [
+                        PaperTheme.accent.opacity(0.3),
+                        PaperTheme.accent.opacity(0.16)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        case .secondary:
+            return AnyShapeStyle(Color.white.opacity(0.08))
+        case .neutral:
+            return AnyShapeStyle(.ultraThinMaterial.opacity(0.72))
+        }
+    }
+
+    func pagePickerActionBorderColor(for style: PagePickerActionButtonStyle) -> Color {
+        switch style {
+        case .primary:
+            return PaperTheme.accent.opacity(0.38)
+        case .secondary:
+            return Color.white.opacity(0.14)
+        case .neutral:
+            return Color.white.opacity(0.2)
+        }
+    }
+
+    func pagePickerActionForegroundColor(for style: PagePickerActionButtonStyle) -> Color {
+        switch style {
+        case .primary:
+            return PaperTheme.accent
+        case .secondary:
+            return PaperTheme.mutedText
+        case .neutral:
+            return PaperTheme.secondaryInk
+        }
+    }
+}
+
+private enum PagePickerActionButtonStyle {
+    case primary
+    case secondary
+    case neutral
 }
 
 private struct ThreadActionButton: View {
@@ -935,6 +1584,50 @@ enum ThreadDetailPaginationPolicy {
             && hasMoreReplies
             && authorReplyCountAfterLoad == authorReplyCountBeforeLoad
             && scannedPageCount < maximumAutomaticPageScan
+    }
+}
+
+enum ThreadDetailDirectPaginationAutoAdvancePolicy {
+    static let minimumAdditionalScrollDistance: CGFloat = 140
+    static let bottomTriggerInset: CGFloat = 36
+
+    static func scrolledDistance(
+        baselineOffset: CGFloat,
+        currentOffset: CGFloat
+    ) -> CGFloat {
+        max(0, baselineOffset - currentOffset)
+    }
+
+    static func shouldArmCurrentPage(
+        scrolledDistance: CGFloat,
+        isNearBottom: Bool,
+        currentPage: Int,
+        totalPageCount: Int
+    ) -> Bool {
+        currentPage < totalPageCount
+            && isNearBottom
+            && scrolledDistance > minimumAdditionalScrollDistance
+    }
+
+    static func isNearBottom(
+        footerMinY: CGFloat,
+        viewportHeight: CGFloat
+    ) -> Bool {
+        guard viewportHeight > 0 else { return false }
+        return footerMinY <= (viewportHeight + bottomTriggerInset)
+    }
+
+    static func shouldAutoAdvance(
+        currentPage: Int,
+        totalPageCount: Int,
+        isLoadingMore: Bool,
+        armedPage: Int?,
+        isNearBottom: Bool
+    ) -> Bool {
+        !isLoadingMore
+            && currentPage < totalPageCount
+            && armedPage == currentPage
+            && isNearBottom
     }
 }
 
@@ -1343,5 +2036,21 @@ private struct TagChip: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(PaperTheme.paperDeep.opacity(0.55), in: Capsule())
+    }
+}
+
+private struct ThreadDetailScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ThreadDetailFooterOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = .infinity
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }

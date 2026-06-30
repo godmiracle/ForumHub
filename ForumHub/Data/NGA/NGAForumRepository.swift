@@ -823,6 +823,113 @@ struct MockThreadRepository: ThreadRepository {
     func replyThread(tid: Int, content: String, attachments: [ReplyAttachmentUpload]) async throws {}
 }
 
+struct MockPagedThreadRepository: ThreadRepository {
+    let source = ForumSource.nga
+    let capabilities = ForumCapabilities(
+        supportsSearch: true,
+        supportsFavorites: true,
+        supportsReply: true,
+        supportsAuthentication: false,
+        supportsFeedPagination: true
+    )
+    let defaultChannel = ForumChannel.defaultForum
+    private let detailPageSize = 20
+    private let totalReplyCount = 120
+
+    var previewThread: ForumThread {
+        pagedThread(page: 1)
+    }
+
+    func fetchChannels() async throws -> [ForumChannel] {
+        ForumPayload.mock.channels
+    }
+
+    func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult {
+        let primaryThread = previewThread
+        let secondaryThread = ForumPayload.mock.threads[1]
+        let payload = ForumPayload(
+            forum: ForumPayload.mock.forum,
+            channels: ForumPayload.mock.channels,
+            pinned: ForumPayload.mock.pinned,
+            threads: [
+                primaryThread.withChannel(channel),
+                secondaryThread.withChannel(channel)
+            ]
+        )
+        return ThreadFetchResult(
+            payload: payload,
+            rawText: #"{"mockPagedThread":true}"#
+        )
+    }
+
+    func fetchHotThreads(page: Int) async throws -> ThreadFetchResult {
+        try await fetchForum(channel: defaultChannel, page: page)
+    }
+
+    func fetchFavoriteThreads(page: Int) async throws -> ThreadFetchResult {
+        try await fetchForum(channel: defaultChannel, page: page)
+    }
+
+    func searchThreads(query: String, page: Int) async throws -> ThreadFetchResult {
+        let result = try await fetchForum(channel: defaultChannel, page: page)
+        guard let payload = result.payload else { return result }
+        let filtered = payload.threads.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+                || $0.summary.localizedCaseInsensitiveContains(query)
+        }
+        return ThreadFetchResult(
+            payload: ForumPayload(
+                forum: payload.forum,
+                channels: payload.channels,
+                pinned: payload.pinned,
+                threads: filtered
+            ),
+            rawText: result.rawText
+        )
+    }
+
+    func fetchThread(tid: Int, page: Int) async throws -> ThreadDetailFetchResult {
+        ThreadDetailFetchResult(
+            thread: pagedThread(page: page),
+            rawText: #"{"mockPagedThreadDetail":true,"page":\#(page)}"#
+        )
+    }
+
+    func addFavoriteThread(tid: Int) async throws {}
+
+    func removeFavoriteThread(tid: Int) async throws {}
+
+    func replyThread(tid: Int, content: String, attachments: [ReplyAttachmentUpload]) async throws {}
+
+    private func pagedThread(page: Int) -> ForumThread {
+        let clampedPage = max(page, 1)
+        let startFloor = ((clampedPage - 1) * detailPageSize) + 2
+        let endFloor = min(startFloor + detailPageSize - 1, totalReplyCount + 1)
+        let replies = (startFloor...endFloor).map { floor in
+            Reply(
+                id: floor,
+                author: floor % 3 == 0 ? "CJ" : "测试用户\(floor)",
+                createdAt: "2026-06-30 12:\(String(format: "%02d", floor % 60))",
+                body: "这是第 \(floor) 楼，用于分页与下滑翻页调试。",
+                floorNumber: floor
+            )
+        }
+
+        return ForumThread(
+            id: 991001,
+            title: "分页调试主题",
+            summary: "用于 UI 测试的多页帖子",
+            author: "CJ",
+            createdAt: "2026-06-30 12:00",
+            lastReplyAt: replies.last?.createdAt ?? "2026-06-30 12:00",
+            replyCount: totalReplyCount,
+            viewCount: 4096,
+            body: "这是一个专门给自动翻页调试准备的 mock 主楼。",
+            replies: replies
+        )
+    }
+}
+
 struct ThreadFetchResult {
     let payload: ForumPayload?
     let rawText: String

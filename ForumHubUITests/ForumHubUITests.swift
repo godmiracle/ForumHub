@@ -78,4 +78,38 @@ final class ForumHubUITests: XCTestCase {
             XCUIApplication().launch()
         }
     }
+
+    @MainActor
+    func testThreadDetailScrollAutoAdvancesToNextPage() throws {
+        let app = XCUIApplication()
+        app.launchArguments.append("UITEST_PAGED_THREAD")
+        app.launch()
+
+        let threadRow = app.otherElements["thread-row-991001"]
+        if !threadRow.waitForExistence(timeout: 2) {
+            for _ in 0..<4 where !threadRow.exists {
+                app.swipeUp()
+            }
+        }
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 5))
+        threadRow.tap()
+
+        let detailScrollView = app.scrollViews["thread-detail-scroll"]
+        XCTAssertTrue(detailScrollView.waitForExistence(timeout: 8))
+
+        let currentPageLabel = app.staticTexts["thread-detail-current-page"]
+        XCTAssertTrue(currentPageLabel.waitForExistence(timeout: 5))
+        XCTAssertEqual(currentPageLabel.label, "1 / 7")
+
+        var reachedSecondPage = false
+        for _ in 0..<8 {
+            detailScrollView.swipeUp()
+            if currentPageLabel.waitForExistence(timeout: 1), currentPageLabel.label == "2 / 7" {
+                reachedSecondPage = true
+                break
+            }
+        }
+
+        XCTAssertTrue(reachedSecondPage, "继续上滑后应该自动切到第 2 页。")
+    }
 }

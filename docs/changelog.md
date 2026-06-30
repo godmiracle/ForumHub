@@ -26,6 +26,19 @@
 - Added thread detail floor labels
 - Added only-author mode
 - Added reverse reply ordering
+- Added NGA thread-detail explicit pagination with previous/next controls and a page picker
+- Moved NGA pagination controls into the lower-right floating control area for faster one-handed access
+- Fixed NGA page switching so later pages replace the visible reply slice instead of appearing unchanged
+- Fixed NGA floor labels and page-count display so explicit pagination no longer reuses page-local reply counts as global paging state
+- Restored downward scroll-to-next-page behavior for NGA while keeping explicit page state in sync
+- Fixed NGA downward auto-pagination so entering a new page no longer immediately re-triggers another page jump before the user scrolls through that page
+- Reworked NGA downward auto-pagination to observe SwiftUI geometry from the page top and pagination footer instead of footer row appearance, improving reliability when continuing to the next page by scrolling
+- Replaced the thread-detail `List` container with a `ScrollView` stack so NGA auto-pagination can receive stable continuous scroll geometry again
+- Replaced the NGA reply `LazyVStack` with a regular `VStack` so auto-pagination keeps stable top/footer anchors instead of losing geometry state and ignoring further downward scrolling
+- Refined the NGA page-picker sheet with a cleaner glass layout and quicker first/last-page actions
+- Further polished the NGA pagination controls so the floating capsule and picker sheet feel like one visual system
+- Unified the thread-detail scroll-to-top button with the pagination control's glass material treatment
+- Unified the floating control entrance and exit animations in thread detail for a smoother shared motion language
 - Reworked the thread detail action bar into a floating icon-first layout
 - Added extra protection against duplicate main-post rows during NGA thread pagination
 

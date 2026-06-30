@@ -279,6 +279,29 @@ struct ForumThread: Identifiable, Equatable {
         )
     }
 
+    func replacingReplies(
+        _ newReplies: [Reply],
+        lastReplyAt: String? = nil,
+        replyCount: Int? = nil
+    ) -> ForumThread {
+        ForumThread(
+            id: id,
+            title: title,
+            summary: summary,
+            author: author,
+            authorAvatarURL: authorAvatarURL,
+            createdAt: createdAt,
+            lastReplyAt: lastReplyAt ?? self.lastReplyAt,
+            replyCount: replyCount ?? self.replyCount,
+            viewCount: viewCount,
+            body: body,
+            replies: newReplies,
+            source: source,
+            channelID: channelID,
+            channelTitle: channelTitle
+        )
+    }
+
     func mergingMetadataFallback(from fallback: ForumThread) -> ForumThread {
         ForumThread(
             id: id,
@@ -409,19 +432,22 @@ struct Reply: Identifiable, Equatable {
     let createdAt: String
     let body: String
     let avatarURL: URL?
+    let floorNumber: Int?
 
     init(
         id: Int,
         author: String,
         createdAt: String,
         body: String,
-        avatarURL: URL? = nil
+        avatarURL: URL? = nil,
+        floorNumber: Int? = nil
     ) {
         self.id = id
         self.author = author
         self.createdAt = createdAt
         self.body = body
         self.avatarURL = avatarURL
+        self.floorNumber = floorNumber
     }
 
     var signatureKey: String {

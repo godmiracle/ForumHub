@@ -303,6 +303,50 @@ struct ForumHubTests {
         ))
 
         #expect(page.replies.map(\.id) == [201, 202])
+        #expect(page.replies.map(\.floorNumber) == [nil, nil])
+    }
+
+    @Test func threadDetailParserDropsRepeatedMainPostOnLaterPages() throws {
+        let json = """
+        {
+          "code": 0,
+          "result": {
+            "0": {
+              "pid": 0,
+              "lou": 1,
+              "tid": 100,
+              "subject": "测试主题",
+              "author": { "username": "楼主" },
+              "content": "首楼内容"
+            },
+            "1": {
+              "pid": 301,
+              "lou": 21,
+              "tid": 100,
+              "author": { "username": "用户 A" },
+              "content": "第二页第一条"
+            },
+            "2": {
+              "pid": 302,
+              "lou": 22,
+              "tid": 100,
+              "author": { "username": "用户 B" },
+              "content": "第二页第二条"
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let page = try #require(ThreadDetailParser.parse(
+            data: json,
+            fallbackText: String(decoding: json, as: UTF8.self),
+            tid: 100,
+            page: 2
+        ))
+
+        #expect(page.replies.map(\.id) == [301, 302])
+        #expect(page.replies.map(\.body) == ["第二页第一条", "第二页第二条"])
+        #expect(page.replies.map(\.floorNumber) == [21, 22])
     }
 
     @Test func onlyAuthorPaginationContinuesUntilVisibleReplyOrSafetyLimit() {
@@ -319,6 +363,61 @@ struct ForumHubTests {
             authorReplyCountAfterLoad: 1,
             hasMoreReplies: true,
             scannedPageCount: 5
+        ))
+    }
+
+    @Test func directPaginationAutoAdvanceRequiresArmedCurrentPage() {
+        #expect(ThreadDetailDirectPaginationAutoAdvancePolicy.scrolledDistance(
+            baselineOffset: 0,
+            currentOffset: -180
+        ) == 180)
+        #expect(ThreadDetailDirectPaginationAutoAdvancePolicy.isNearBottom(
+            footerMinY: 540,
+            viewportHeight: 520
+        ))
+        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.isNearBottom(
+            footerMinY: 620,
+            viewportHeight: 520
+        ))
+        #expect(ThreadDetailDirectPaginationAutoAdvancePolicy.shouldArmCurrentPage(
+            scrolledDistance: 180,
+            isNearBottom: true,
+            currentPage: 1,
+            totalPageCount: 3
+        ))
+        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.shouldArmCurrentPage(
+            scrolledDistance: 80,
+            isNearBottom: true,
+            currentPage: 1,
+            totalPageCount: 3
+        ))
+        #expect(ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
+            currentPage: 1,
+            totalPageCount: 3,
+            isLoadingMore: false,
+            armedPage: 1,
+            isNearBottom: true
+        ))
+        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
+            currentPage: 2,
+            totalPageCount: 3,
+            isLoadingMore: false,
+            armedPage: 1,
+            isNearBottom: true
+        ))
+        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
+            currentPage: 2,
+            totalPageCount: 3,
+            isLoadingMore: false,
+            armedPage: nil,
+            isNearBottom: true
+        ))
+        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
+            currentPage: 1,
+            totalPageCount: 3,
+            isLoadingMore: false,
+            armedPage: 1,
+            isNearBottom: false
         ))
     }
 

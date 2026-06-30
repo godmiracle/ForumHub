@@ -454,6 +454,7 @@ struct ThreadRow: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(PaperTheme.card)
+        .accessibilityIdentifier("thread-row-\(thread.id)")
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(PaperTheme.hairline)

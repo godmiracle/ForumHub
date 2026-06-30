@@ -88,6 +88,22 @@ final class ForumViewModel {
         return viewModel
     }
 
+    static func pagedPreview() -> ForumViewModel {
+        let repository = MockPagedThreadRepository()
+        let viewModel = ForumViewModel(repository: repository)
+        viewModel.isAuthenticated = false
+        viewModel.loginState = .empty
+        viewModel.forum = ForumPayload.mock.forum
+        viewModel.channels = ForumPayload.mock.channels
+        viewModel.pinnedThreads = ForumPayload.mock.pinned
+        viewModel.threads = [
+            repository.previewThread.withChannel(repository.defaultChannel),
+            ForumPayload.mock.threads[1].withChannel(repository.defaultChannel)
+        ]
+        viewModel.canLoadMore = false
+        return viewModel
+    }
+
     func restoreSession() async {
         loginState = await NGAAuthStore.shared.currentLoginState()
         isAuthenticated = loginState.isLoggedIn
