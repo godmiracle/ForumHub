@@ -144,7 +144,7 @@ Use a shared remote image pipeline with in-memory reuse, in-flight request reuse
 - Image behavior is centralized, which reduces duplicated networking logic
 - Bugs in the shared image path can affect multiple rich-content surfaces at once
 
-## ADR-007 NGA Thread Pagination Preserves Source Page Slices
+## ADR-007 NGA Thread Pagination Keeps Source Fetches But Uses A Continuous Reading Flow
 
 ### Status
 
@@ -156,17 +156,18 @@ Accepted
 
 ### Context
 
-Accumulating every fetched NGA reply page into one long local list made it harder to understand the remote ordering contract and increased the chance of seeing repeated content after refreshes or page jumps.
+NGA still returns reply data in discrete source pages, but reading one page at a time made the detail screen feel interrupted and made the floating page control reflect only the last loaded page instead of the reader's actual scroll position.
 
 ### Decision
 
-Keep NGA thread detail pagination source-shaped: page 1 shows the main post plus its returned replies, later pages replace the visible reply slice with that page's replies, and local presentation options such as only-author mode or reverse order stay on top of the currently loaded slice.
+Keep NGA thread fetching source-shaped, but let the detail screen accumulate continuation pages into one continuous reply list. The floating page control should derive its current page from scroll position, while still using source-page fetches and duplicate protection underneath. Intermediate page loads should happen through an invisible footer trigger instead of a visible "load next page" card, reserving visible terminal state only for the true end of the thread.
 
 ### Consequences
 
-- Users can inspect the source's default page ordering more directly
-- Pagination state becomes easier to reason about than unbounded local accumulation
-- Cross-page reading now depends on explicit page changes instead of one continuous merged reply list
+- Cross-page reading becomes continuous instead of requiring page-by-page replacement
+- The floating page indicator can track the reader's visible page instead of only the latest fetched page
+- Mid-thread reading stays visually uninterrupted, while the UI still has an explicit end-of-thread state when no more replies remain
+- Detail-state logic must keep page anchors and duplicate filtering stable while local presentation options remain layered on top
 
 ## Template
 

@@ -39,11 +39,10 @@ struct ThreadDetailView: View {
     @State private var showsScrollToTopButton = false
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var lastObservedScrollOffset: CGFloat = 0
-    @State private var autoAdvanceFooterMinY: CGFloat?
-    @State private var autoAdvanceBaselineOffset: CGFloat?
+    @State private var visiblePage = 1
+    @State private var loadedPageStartReplyIndices: [Int: Int] = [1: 0]
     @State private var pendingPageSelection = 1
-    @State private var shouldScrollToTopAfterPageJump = false
-    @State private var autoAdvanceArmedPage: Int?
+    @State private var deferredScrollTargetPage: Int?
 
     init(thread: ForumThread, repository: any ThreadRepository, favoriteThreads: FavoriteThreadsStore) {
         self.thread = thread
@@ -148,6 +147,20 @@ struct ThreadDetailView: View {
                                 }
 
                                 ForEach(displayedReplies) { reply in
+                                    if let anchorPage = anchorPage(for: reply) {
+                                        Color.clear
+                                            .frame(height: 1)
+                                            .id(pageAnchorID(for: anchorPage))
+                                            .background(
+                                                GeometryReader { anchorProxy in
+                                                    Color.clear.preference(
+                                                        key: ThreadDetailPageAnchorOffsetPreferenceKey.self,
+                                                        value: [anchorPage: anchorProxy.frame(in: .named(scrollTrackingSpaceName)).minY]
+                                                    )
+                                                }
+                                            )
+                                    }
+
                                     threadDetailCard {
                                         HStack(alignment: .top, spacing: 12) {
                                             AvatarView(name: reply.author, imageURL: reply.avatarURL, size: 40)
@@ -206,34 +219,19 @@ struct ThreadDetailView: View {
                             }
                         }
 
-                        if supportsDirectPagination, currentPage < totalPageCount, !isLoading {
-                            threadDetailCard {
-                                VStack(spacing: 8) {
-                                    if isLoadingMore {
-                                        ProgressView()
-                                            .tint(PaperTheme.mutedText)
-                                    } else {
-                                        Image(systemName: "arrow.down.circle")
-                                            .font(.system(size: 18, weight: .semibold))
-                                            .foregroundStyle(PaperTheme.mutedText)
-                                    }
-
-                                    Text(isLoadingMore ? "正在切换下一页" : "继续下滑切到下一页")
+                        if supportsDirectPagination, !isLoading {
+                            if currentPage < totalPageCount {
+                                directPaginationSentinel
+                                    .id("thread-detail-direct-pagination-footer-\(currentPage)")
+                            } else if totalPageCount > 1 {
+                                threadDetailCard {
+                                    Text("已经显示全部回帖")
                                         .font(.footnote)
                                         .foregroundStyle(PaperTheme.mutedText)
-
+                                        .frame(maxWidth: .infinity, alignment: .center)
+                                        .padding(.vertical, 4)
                                 }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
                             }
-                            .background(
-                                GeometryReader { footerProxy in
-                                    Color.clear.preference(
-                                        key: ThreadDetailFooterOffsetPreferenceKey.self,
-                                        value: footerProxy.frame(in: .named(scrollTrackingSpaceName)).minY
-                                    )
-                                }
-                            )
                         }
                     }
                     .padding(.horizontal, 16)
@@ -264,20 +262,17 @@ struct ThreadDetailView: View {
                 }
                 .onChange(of: listGeometry.size.height) { _, height in
                     scrollViewportHeight = height
-                    evaluateDirectPaginationIfNeeded(topOffset: lastObservedScrollOffset)
                 }
                 .onPreferenceChange(ThreadDetailScrollOffsetPreferenceKey.self) { offset in
                     handleScrollOffsetChange(offset)
                 }
-                .onPreferenceChange(ThreadDetailFooterOffsetPreferenceKey.self) { minY in
-                    handleDirectPaginationFooterChange(minY)
+                .onPreferenceChange(ThreadDetailPageAnchorOffsetPreferenceKey.self) { offsets in
+                    handlePageAnchorOffsetsChange(offsets)
                 }
-                .onChange(of: currentPage) { _, _ in
-                    guard shouldScrollToTopAfterPageJump else { return }
-                    shouldScrollToTopAfterPageJump = false
-                    withAnimation(.snappy(duration: 0.28)) {
-                        proxy.scrollTo(replyScrollTargetID, anchor: .top)
-                    }
+                .onChange(of: deferredScrollTargetPage) { _, page in
+                    guard let page else { return }
+                    deferredScrollTargetPage = nil
+                    scrollToPage(page, proxy: proxy)
                 }
                 .overlay {
                     if isPreparingSnapshot {
@@ -350,63 +345,34 @@ struct ThreadDetailView: View {
                 showsScrollToTopButton = nextVisibility
             }
         }
-        evaluateDirectPaginationIfNeeded(topOffset: offset)
     }
 
-    private func handleDirectPaginationFooterChange(_ minY: CGFloat) {
-        autoAdvanceFooterMinY = minY
-        evaluateDirectPaginationIfNeeded(topOffset: lastObservedScrollOffset)
-    }
-
-    private func evaluateDirectPaginationIfNeeded(topOffset: CGFloat) {
+    private func handlePageAnchorOffsetsChange(_ offsets: [Int: CGFloat]) {
         guard supportsDirectPagination else { return }
-        guard currentPage < totalPageCount else {
-            return
-        }
-        guard scrollViewportHeight > 0 else {
-            return
-        }
-        guard let footerMinY = autoAdvanceFooterMinY else {
+        guard currentPage > 1 || !displayedReplies.isEmpty else {
+            visiblePage = 1
             return
         }
 
-        if autoAdvanceBaselineOffset == nil {
-            autoAdvanceBaselineOffset = topOffset
-            return
+        let threshold: CGFloat = 120
+        let candidatePages = loadedPageStartReplyIndices.keys.sorted()
+        let candidates = candidatePages.compactMap { page in
+            offsets[page].map { (page, $0) }
         }
+        guard !candidates.isEmpty else { return }
 
-        guard let baselineOffset = autoAdvanceBaselineOffset else { return }
-        let scrolledDistance = ThreadDetailDirectPaginationAutoAdvancePolicy.scrolledDistance(
-            baselineOffset: baselineOffset,
-            currentOffset: topOffset
-        )
-        let isNearBottom = ThreadDetailDirectPaginationAutoAdvancePolicy.isNearBottom(
-            footerMinY: footerMinY,
-            viewportHeight: scrollViewportHeight
-        )
+        let nextVisiblePage = candidates
+            .filter { $0.1 <= threshold }
+            .max { $0.0 < $1.0 }?.0
+            ?? candidates
+            .filter { $0.1 >= 0 }
+            .min { $0.1 < $1.1 }?.0
+            ?? 1
 
-        if ThreadDetailDirectPaginationAutoAdvancePolicy.shouldArmCurrentPage(
-            scrolledDistance: scrolledDistance,
-            isNearBottom: isNearBottom,
-            currentPage: currentPage,
-            totalPageCount: totalPageCount
-        ) {
-            autoAdvanceArmedPage = currentPage
-        }
-
-        guard ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
-            currentPage: currentPage,
-            totalPageCount: totalPageCount,
-            isLoadingMore: isLoadingMore,
-            armedPage: autoAdvanceArmedPage,
-            isNearBottom: isNearBottom
-        ) else { return }
-
-        let sourcePage = currentPage
-        autoAdvanceArmedPage = nil
-        shouldScrollToTopAfterPageJump = true
-        Task {
-            await loadSpecificPage(sourcePage + 1, proxy: nil)
+        guard nextVisiblePage != visiblePage else { return }
+        visiblePage = nextVisiblePage
+        if !showsPagePicker {
+            pendingPageSelection = nextVisiblePage
         }
     }
 
@@ -421,6 +387,17 @@ struct ThreadDetailView: View {
 
     private var supportsDirectPagination: Bool {
         repository.source == .nga
+    }
+
+    private var firstDisplayedReplyIDByPage: [Int: Int] {
+        var mapping: [Int: Int] = [:]
+        for reply in displayedReplies {
+            let page = page(for: reply)
+            if mapping[page] == nil {
+                mapping[page] = reply.id
+            }
+        }
+        return mapping
     }
 
     private var totalPageCount: Int {
@@ -618,9 +595,8 @@ struct ThreadDetailView: View {
             canonicalThread = mergedThread
             threadReplyTotalCount = resolvedReplyTotal
             currentPage = 1
-            autoAdvanceFooterMinY = nil
-            autoAdvanceBaselineOffset = nil
-            autoAdvanceArmedPage = nil
+            visiblePage = 1
+            loadedPageStartReplyIndices = [1: 0]
             pendingPageSelection = 1
             hasMoreReplies = supportsDirectPagination
                 ? totalPageCount > 1
@@ -633,49 +609,77 @@ struct ThreadDetailView: View {
         }
     }
 
-    private func loadSpecificPage(_ page: Int, proxy: ScrollViewProxy?) async {
+    private func loadSpecificPage(
+        _ page: Int,
+        proxy: ScrollViewProxy?,
+        shouldScrollAfterLoad: Bool = false
+    ) async {
         guard supportsDirectPagination else { return }
         let targetPage = min(max(page, 1), totalPageCount)
         guard !isLoading, !isLoadingMore else { return }
+
+        if targetPage <= currentPage {
+            visiblePage = targetPage
+            pendingPageSelection = targetPage
+            if let proxy {
+                scrollToPage(targetPage, proxy: proxy)
+            } else if shouldScrollAfterLoad {
+                deferredScrollTargetPage = targetPage
+            }
+            return
+        }
 
         isLoadingMore = true
         errorMessage = nil
         defer { isLoadingMore = false }
 
         do {
-            let result = try await repository.fetchThread(tid: thread.id, page: targetPage)
-            let resolvedReplyTotal = max(threadReplyTotalCount, thread.replyCount, result.thread.replyCount)
-            if targetPage == 1 {
-                let mergedThread = result.thread.mergingMetadataFallback(from: thread)
-                detailThread = mergedThread.replacingReplies(
-                    mergedThread.replies,
-                    lastReplyAt: mergedThread.lastReplyAt,
-                    replyCount: resolvedReplyTotal
-                )
-                canonicalThread = detailThread
-            } else {
-                let baseThread = canonicalThread ?? detailThread.mergingMetadataFallback(from: thread)
+            var workingThread = detailThread
+            var workingCanonicalThread = canonicalThread ?? detailThread.mergingMetadataFallback(from: thread)
+            var resolvedReplyTotal = threadReplyTotalCount
+            var nextPageStarts = loadedPageStartReplyIndices
+
+            for nextPage in (currentPage + 1)...targetPage {
+                let result = try await repository.fetchThread(tid: thread.id, page: nextPage)
+                resolvedReplyTotal = max(resolvedReplyTotal, thread.replyCount, result.thread.replyCount)
+
+                if nextPage == 1 {
+                    let mergedThread = result.thread.mergingMetadataFallback(from: thread)
+                    workingThread = mergedThread
+                    workingCanonicalThread = mergedThread
+                    nextPageStarts = [1: 0]
+                    continue
+                }
+
                 let pageReplies = normalizedContinuationReplies(from: result.thread.replies)
-                detailThread = baseThread.replacingReplies(
-                    pageReplies,
-                    lastReplyAt: pageReplies.last?.createdAt ?? baseThread.lastReplyAt,
+                let startIndex = workingThread.replies.count
+                let appendedThread = workingThread.appendingReplies(pageReplies)
+                workingThread = appendedThread.replacingReplies(
+                    appendedThread.replies,
+                    lastReplyAt: pageReplies.last?.createdAt ?? workingThread.lastReplyAt,
                     replyCount: resolvedReplyTotal
                 )
-                canonicalThread = baseThread
+                nextPageStarts[nextPage] = startIndex
             }
 
+            detailThread = workingThread.replacingReplies(
+                workingThread.replies,
+                lastReplyAt: workingThread.lastReplyAt,
+                replyCount: resolvedReplyTotal
+            )
+            canonicalThread = workingCanonicalThread
             threadReplyTotalCount = resolvedReplyTotal
             currentPage = targetPage
-            autoAdvanceFooterMinY = nil
-            autoAdvanceBaselineOffset = nil
-            autoAdvanceArmedPage = nil
+            loadedPageStartReplyIndices = nextPageStarts
             pendingPageSelection = targetPage
             hasMoreReplies = currentPage < totalPageCount
 
             if let proxy {
-                withAnimation(.snappy(duration: 0.28)) {
-                    proxy.scrollTo(replyScrollTargetID, anchor: .top)
-                }
+                visiblePage = targetPage
+                scrollToPage(targetPage, proxy: proxy)
+            } else if shouldScrollAfterLoad {
+                visiblePage = targetPage
+                deferredScrollTargetPage = targetPage
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -806,11 +810,12 @@ struct ThreadDetailView: View {
 
         if let index = detailThread.replies.firstIndex(where: { $0.id == reply.id }) {
             if supportsDirectPagination {
-                if currentPage == 1 {
+                let page = page(for: reply)
+                let pageStartIndex = loadedPageStartReplyIndices[page] ?? 0
+                if page == 1 {
                     return "\(index + 2)楼"
                 }
-
-                return "\(((currentPage - 1) * detailPageSize) + index + 1)楼"
+                return "\(((page - 1) * detailPageSize) + (index - pageStartIndex) + 1)楼"
             }
 
             return "\(index + 2)楼"
@@ -823,6 +828,7 @@ struct ThreadDetailView: View {
         withAnimation(.easeInOut(duration: 0.2)) {
             showsOnlyThreadAuthor.toggle()
         }
+        visiblePage = min(visiblePage, currentPage)
         if enablesOnlyAuthor, hasMoreReplies, !supportsDirectPagination {
             Task { await loadNextPage() }
         }
@@ -868,6 +874,70 @@ struct ThreadDetailView: View {
 }
 
 private extension ThreadDetailView {
+    var directPaginationSentinel: some View {
+        VStack(spacing: 0) {
+            if isLoadingMore {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .tint(PaperTheme.mutedText)
+                    Spacer()
+                }
+                .padding(.vertical, 12)
+            }
+
+            Color.clear
+                .frame(height: 1)
+                .onAppear {
+                    guard supportsDirectPagination else { return }
+                    guard currentPage < totalPageCount else { return }
+                    guard !isLoading, !isLoadingMore else { return }
+                    Task {
+                        await loadSpecificPage(currentPage + 1, proxy: nil)
+                    }
+                }
+        }
+    }
+
+    func pageAnchorID(for page: Int) -> String {
+        page == 1 ? replyTopAnchorID : "thread-detail-page-\(page)"
+    }
+
+    func anchorPage(for reply: Reply) -> Int? {
+        let page = page(for: reply)
+        guard firstDisplayedReplyIDByPage[page] == reply.id else { return nil }
+        return page
+    }
+
+    func page(for reply: Reply) -> Int {
+        guard let index = detailThread.replies.firstIndex(where: { $0.id == reply.id }) else {
+            return 1
+        }
+
+        let sortedStarts = loadedPageStartReplyIndices.sorted { $0.key < $1.key }
+        var resolvedPage = 1
+        for (page, startIndex) in sortedStarts where startIndex <= index {
+            resolvedPage = page
+        }
+        return resolvedPage
+    }
+
+    func scrollToPage(_ page: Int, proxy: ScrollViewProxy) {
+        let targetPage = resolvedScrollTargetPage(for: page)
+        withAnimation(.snappy(duration: 0.28)) {
+            proxy.scrollTo(pageAnchorID(for: targetPage), anchor: .top)
+        }
+    }
+
+    func resolvedScrollTargetPage(for page: Int) -> Int {
+        for candidate in stride(from: page, through: 1, by: -1) {
+            if candidate == 1 || firstDisplayedReplyIDByPage[candidate] != nil {
+                return candidate
+            }
+        }
+        return 1
+    }
+
     var floatingControlTransition: AnyTransition {
         .asymmetric(
             insertion: .offset(x: 18, y: 6)
@@ -951,18 +1021,17 @@ private extension ThreadDetailView {
         HStack(spacing: 0) {
             paginationIconButton(
                 systemImage: "chevron.left",
-                isDisabled: isLoadingMore || currentPage <= 1
+                isDisabled: isLoadingMore || visiblePage <= 1
             ) {
-                shouldScrollToTopAfterPageJump = true
-                Task { await loadSpecificPage(currentPage - 1, proxy: proxy) }
+                Task { await loadSpecificPage(visiblePage - 1, proxy: proxy) }
             }
 
             Button {
-                pendingPageSelection = currentPage
+                pendingPageSelection = visiblePage
                 showsPagePicker = true
             } label: {
                 VStack(spacing: 1) {
-                    Text("\(currentPage) / \(totalPageCount)")
+                    Text("\(visiblePage) / \(totalPageCount)")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .accessibilityIdentifier("thread-detail-current-page")
                     Text("PAGE")
@@ -985,10 +1054,9 @@ private extension ThreadDetailView {
 
             paginationIconButton(
                 systemImage: "chevron.right",
-                isDisabled: isLoadingMore || currentPage >= totalPageCount
+                isDisabled: isLoadingMore || visiblePage >= totalPageCount
             ) {
-                shouldScrollToTopAfterPageJump = true
-                Task { await loadSpecificPage(currentPage + 1, proxy: proxy) }
+                Task { await loadSpecificPage(visiblePage + 1, proxy: proxy) }
             }
         }
         .background(.ultraThinMaterial, in: Capsule())
@@ -1165,10 +1233,9 @@ private extension ThreadDetailView {
 
     func jumpToPageFromPicker(_ page: Int) {
         pendingPageSelection = page
-        shouldScrollToTopAfterPageJump = true
         showsPagePicker = false
         Task {
-            await loadSpecificPage(page, proxy: nil)
+            await loadSpecificPage(page, proxy: nil, shouldScrollAfterLoad: true)
         }
     }
 
@@ -1584,50 +1651,6 @@ enum ThreadDetailPaginationPolicy {
             && hasMoreReplies
             && authorReplyCountAfterLoad == authorReplyCountBeforeLoad
             && scannedPageCount < maximumAutomaticPageScan
-    }
-}
-
-enum ThreadDetailDirectPaginationAutoAdvancePolicy {
-    static let minimumAdditionalScrollDistance: CGFloat = 140
-    static let bottomTriggerInset: CGFloat = 36
-
-    static func scrolledDistance(
-        baselineOffset: CGFloat,
-        currentOffset: CGFloat
-    ) -> CGFloat {
-        max(0, baselineOffset - currentOffset)
-    }
-
-    static func shouldArmCurrentPage(
-        scrolledDistance: CGFloat,
-        isNearBottom: Bool,
-        currentPage: Int,
-        totalPageCount: Int
-    ) -> Bool {
-        currentPage < totalPageCount
-            && isNearBottom
-            && scrolledDistance > minimumAdditionalScrollDistance
-    }
-
-    static func isNearBottom(
-        footerMinY: CGFloat,
-        viewportHeight: CGFloat
-    ) -> Bool {
-        guard viewportHeight > 0 else { return false }
-        return footerMinY <= (viewportHeight + bottomTriggerInset)
-    }
-
-    static func shouldAutoAdvance(
-        currentPage: Int,
-        totalPageCount: Int,
-        isLoadingMore: Bool,
-        armedPage: Int?,
-        isNearBottom: Bool
-    ) -> Bool {
-        !isLoadingMore
-            && currentPage < totalPageCount
-            && armedPage == currentPage
-            && isNearBottom
     }
 }
 
@@ -2047,10 +2070,10 @@ private struct ThreadDetailScrollOffsetPreferenceKey: PreferenceKey {
     }
 }
 
-private struct ThreadDetailFooterOffsetPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = .infinity
+private struct ThreadDetailPageAnchorOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: [Int: CGFloat] = [1: 0]
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }

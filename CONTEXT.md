@@ -35,7 +35,7 @@ Current sources:
 - Persisted member identities are scoped by Forum Source so same-name users do not collide.
 - The first launch subscribes to 网事杂谈 (`-7`), 大时代 (`706`), and 晴风村 (`-7955747`); at least one Forum Subscription remains active.
 - iCloud-backed sync is currently disabled and should not be treated as an active feature.
-- NGA thread detail pagination should preserve source page slices and must not reintroduce the main post as a reply row.
+- NGA thread detail pagination should preserve source fetch order, accumulate continuation pages into one reading flow, and must not reintroduce the main post as a reply row.
 
 ## Current Focus Areas
 
