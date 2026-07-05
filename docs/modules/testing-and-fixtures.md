@@ -35,14 +35,18 @@ It includes:
 - Favorites, blocked users, and browsing history persistence rules
 - Source capability gating for unsupported actions
 
-## Common Verification Command
+## Common Verification Rule
+
+Prefer building for a connected iOS device. If no iOS device is currently available, skip the build instead of falling back to a simulator build.
+
+Example device build command:
 
 ```sh
 /Applications/Xcode-beta.app/Contents/Developer/usr/bin/xcodebuild \
   -project ForumHub.xcodeproj \
   -scheme ForumHub \
   -configuration Debug \
-  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -destination 'platform=iOS,id=<CONNECTED_DEVICE_ID>' \
   build
 ```
 
@@ -51,4 +55,3 @@ It includes:
 - Some user-visible behaviors still rely more on manual validation than automated tests.
 - Source-specific fallbacks can drift if fixtures do not cover both normal and degraded responses.
 - Pagination bugs are easy to reintroduce if there is no fixture-backed regression coverage.
-

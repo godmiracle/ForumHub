@@ -23,8 +23,10 @@ It includes:
 ## Notes
 
 - Rich content images are rendered from parsed content blocks rather than embedded web content.
-- GIF support currently relies on a shared remote image pipeline plus WebKit-backed playback.
-- The pipeline uses in-memory reuse and local file caching to reduce repeated full GIF downloads.
+- GIF support relies on a shared remote image pipeline plus WebKit-backed playback for both inline detail rendering and full-screen preview.
+- Inline thread-detail GIF playback is viewport-aware: only a small number of GIFs near the visible region stay animated, while off-screen items fall back to their first frame.
+- The pipeline uses in-memory reuse, local file caching, and downsampled preview decoding to reduce repeated downloads and oversized inline image decode work.
+- Full-screen preview keeps a lightweight right-side centered action group: save plus close. Outbound link actions stay in the inline long-press menu so the preview surface does not become overcrowded.
 - Thread snapshot export uses static image loading behavior and should not depend on interactive preview state.
 
 ## Current Risks
@@ -32,4 +34,3 @@ It includes:
 - GIF loading is more expensive than static image loading and is sensitive to cancellation timing.
 - Source image hosts may use unstable caching or anti-hotlink protections.
 - Preview, zoom, save, and inline rendering all share the same asset assumptions, so regressions can cascade across multiple surfaces.
-

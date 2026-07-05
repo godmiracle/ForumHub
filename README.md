@@ -55,7 +55,7 @@ ForumHub/
 
 1. Open [ForumHub.xcodeproj](/Users/v/XBP/ForumHub/ForumHub.xcodeproj).
 2. Select the `ForumHub` scheme.
-3. Build and run on an iOS simulator.
+3. Build and run on a connected iOS device when one is available.
 
 ## Common Workflows
 
@@ -64,16 +64,18 @@ ForumHub/
 - Understand repository boundaries: open [docs/architecture.md](/Users/v/XBP/ForumHub/docs/architecture.md)
 - Continue feature work: open the relevant module note under [docs/modules](/Users/v/XBP/ForumHub/docs/modules)
 
-Example build command:
+Example device build command:
 
 ```sh
 /Applications/Xcode-beta.app/Contents/Developer/usr/bin/xcodebuild \
   -project ForumHub.xcodeproj \
   -scheme ForumHub \
   -configuration Debug \
-  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -destination 'platform=iOS,id=<CONNECTED_DEVICE_ID>' \
   build
 ```
+
+If no iOS device is currently available, skip the build instead of falling back to a simulator build.
 
 ## Documentation
 

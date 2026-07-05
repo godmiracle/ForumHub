@@ -29,10 +29,10 @@ It includes:
 - Sorting is currently a presentation concern applied after repository data is loaded.
 - Cancellation handling matters because feed refreshes, tab reselection, and source changes can overlap.
 - NGA child-channel aggregation is handled in the feed view model and must not leak parser details into views.
+- The first feed render should prefer a loading state until the initial request has completed once; an empty-state message is only valid after that first load resolves with no visible topics.
 
 ## Current Risks
 
 - Refresh and tab switching can create overlapping async tasks.
 - Aggregated child-channel content needs careful deduplication and stable pagination behavior.
 - User perception is strongly affected by loading-state timing, even when data is technically correct.
-

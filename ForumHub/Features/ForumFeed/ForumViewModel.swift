@@ -8,6 +8,7 @@ final class ForumViewModel {
     var pinnedThreads: [ForumThread] = []
     var threads: [ForumThread] = []
     var isLoading = false
+    var hasLoadedInitialFeed = false
     var isAuthenticated = false
     var errorMessage: String?
     var loginState = NGALoginState.empty
@@ -85,6 +86,7 @@ final class ForumViewModel {
         viewModel.channels = ForumPayload.mock.channels
         viewModel.pinnedThreads = ForumPayload.mock.pinned
         viewModel.threads = ForumPayload.mock.threads
+        viewModel.hasLoadedInitialFeed = true
         return viewModel
     }
 
@@ -101,6 +103,7 @@ final class ForumViewModel {
             ForumPayload.mock.threads[1].withChannel(repository.defaultChannel)
         ]
         viewModel.canLoadMore = false
+        viewModel.hasLoadedInitialFeed = true
         return viewModel
     }
 
@@ -158,6 +161,7 @@ final class ForumViewModel {
                     errorMessage = "请求成功，但还没完全匹配到响应结构。"
                 }
             }
+            hasLoadedInitialFeed = true
         } catch {
             guard !error.isCancellationLike else {
                 errorMessage = nil
@@ -167,6 +171,7 @@ final class ForumViewModel {
             pinnedThreads = []
             threads = []
             errorMessage = error.localizedDescription
+            hasLoadedInitialFeed = true
         }
     }
 
@@ -188,6 +193,7 @@ final class ForumViewModel {
                 threads = []
                 errorMessage = "热门接口请求成功，但还没匹配到主题结构。"
             }
+            hasLoadedInitialFeed = true
         } catch {
             guard !error.isCancellationLike else {
                 errorMessage = nil
@@ -197,6 +203,7 @@ final class ForumViewModel {
             pinnedThreads = []
             threads = []
             errorMessage = error.localizedDescription
+            hasLoadedInitialFeed = true
         }
     }
 
@@ -271,6 +278,7 @@ final class ForumViewModel {
         threads = []
         canLoadMore = false
         currentPage = 1
+        hasLoadedInitialFeed = false
         feedTab = .home
         selectedForum = channel
         selectedChildChannelIDs = []
@@ -294,6 +302,7 @@ final class ForumViewModel {
             threads = []
             canLoadMore = false
             currentPage = 1
+            hasLoadedInitialFeed = false
             await reload()
         case .hot:
             forum = ForumSummary(
@@ -308,6 +317,7 @@ final class ForumViewModel {
             threads = []
             canLoadMore = false
             currentPage = 1
+            hasLoadedInitialFeed = false
             await reload()
         case .community, .history, .user:
             break
@@ -361,6 +371,7 @@ final class ForumViewModel {
         pinnedThreads = []
         threads = []
         canLoadMore = false
+        hasLoadedInitialFeed = false
         errorMessage = nil
 
         await loadChannels()
@@ -386,6 +397,7 @@ final class ForumViewModel {
         pinnedThreads = []
         threads = []
         canLoadMore = false
+        hasLoadedInitialFeed = false
         errorMessage = nil
         let currentDefault = repository.defaultChannel
         channels = [currentDefault]

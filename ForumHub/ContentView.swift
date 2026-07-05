@@ -204,6 +204,7 @@ struct ContentView: View {
                         blockedUsers: blockedUsers,
                         favoriteThreads: favoriteThreads,
                         isLoading: viewModel.isLoading,
+                        hasLoadedInitialFeed: viewModel.hasLoadedInitialFeed,
                         isLoadingMore: viewModel.isLoadingMore,
                         canLoadMore: viewModel.canLoadMore,
                         errorMessage: viewModel.errorMessage,

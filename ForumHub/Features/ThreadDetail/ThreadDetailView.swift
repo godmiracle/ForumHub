@@ -13,6 +13,9 @@ struct ThreadDetailView: View {
     private let replyTopAnchorID = "thread-detail-reply-top-anchor"
     private let scrollTrackingSpaceName = "thread-detail-scroll"
     private let detailPageSize = 20
+    private let directPaginationPrefetchReplyDistance = 6
+    private let inlineGIFPlaybackViewportBuffer: CGFloat = 180
+    private let maximumSimultaneousInlineGIFs = 3
     @State private var detailThread: ForumThread
     @State private var canonicalThread: ForumThread?
     @State private var threadReplyTotalCount: Int
@@ -43,6 +46,8 @@ struct ThreadDetailView: View {
     @State private var loadedPageStartReplyIndices: [Int: Int] = [1: 0]
     @State private var pendingPageSelection = 1
     @State private var deferredScrollTargetPage: Int?
+    @State private var lastAutoLoadedPage: Int?
+    @State private var activeInlineGIFPlaybackIDs: Set<UUID> = []
 
     init(thread: ForumThread, repository: any ThreadRepository, favoriteThreads: FavoriteThreadsStore) {
         self.thread = thread
@@ -53,6 +58,8 @@ struct ThreadDetailView: View {
     }
 
     var body: some View {
+        let replyEntries = displayedReplyEntries
+
         GeometryReader { listGeometry in
             ScrollViewReader { proxy in
                 ScrollView {
@@ -94,16 +101,27 @@ struct ThreadDetailView: View {
                                     }
                                 }
 
-                                ForumRichContentView(text: detailThread.body, fontSize: 18)
+                                ForumRichContentView(
+                                    text: detailThread.body,
+                                    fontSize: 18,
+                                    activeGIFPlaybackImageIDs: activeInlineGIFPlaybackIDs,
+                                    scrollTrackingSpaceName: scrollTrackingSpaceName
+                                )
                             }
                             .padding(.vertical, 8)
                         }
 
                         if isLoading {
                             threadDetailCard {
-                                ProgressView("正在加载回帖")
-                                    .tint(PaperTheme.mutedText)
-                                    .foregroundStyle(PaperTheme.mutedText)
+                                VStack(spacing: 10) {
+                                    ProgressView()
+                                        .tint(PaperTheme.mutedText)
+                                    Text("正在加载回帖")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(PaperTheme.mutedText)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 10)
                             }
                         }
 
@@ -146,16 +164,16 @@ struct ThreadDetailView: View {
                                     }
                                 }
 
-                                ForEach(displayedReplies) { reply in
-                                    if let anchorPage = anchorPage(for: reply) {
+                                ForEach(replyEntries) { entry in
+                                    if entry.showsPageAnchor {
                                         Color.clear
                                             .frame(height: 1)
-                                            .id(pageAnchorID(for: anchorPage))
+                                            .id(pageAnchorID(for: entry.page))
                                             .background(
                                                 GeometryReader { anchorProxy in
                                                     Color.clear.preference(
                                                         key: ThreadDetailPageAnchorOffsetPreferenceKey.self,
-                                                        value: [anchorPage: anchorProxy.frame(in: .named(scrollTrackingSpaceName)).minY]
+                                                        value: [entry.page: anchorProxy.frame(in: .named(scrollTrackingSpaceName)).minY]
                                                     )
                                                 }
                                             )
@@ -163,26 +181,34 @@ struct ThreadDetailView: View {
 
                                     threadDetailCard {
                                         HStack(alignment: .top, spacing: 12) {
-                                            AvatarView(name: reply.author, imageURL: reply.avatarURL, size: 40)
+                                            AvatarView(name: entry.reply.author, imageURL: entry.reply.avatarURL, size: 40)
 
                                             VStack(alignment: .leading, spacing: 8) {
                                                 HStack {
-                                                    Text(reply.author)
+                                                    Text(entry.reply.author)
                                                         .font(.subheadline.weight(.semibold))
                                                         .foregroundStyle(PaperTheme.ink)
                                                     Spacer()
-                                                    Text(floorLabel(for: reply))
+                                                    Text(entry.floorLabel)
                                                         .font(.caption.weight(.semibold))
                                                         .foregroundStyle(PaperTheme.secondaryInk)
-                                                    Text(reply.createdAt)
+                                                    Text(entry.reply.createdAt)
                                                         .font(.caption)
                                                         .foregroundStyle(PaperTheme.mutedText)
                                                 }
 
-                                                ForumRichContentView(text: reply.body, fontSize: 17)
+                                                ForumRichContentView(
+                                                    text: entry.reply.body,
+                                                    fontSize: 17,
+                                                    activeGIFPlaybackImageIDs: activeInlineGIFPlaybackIDs,
+                                                    scrollTrackingSpaceName: scrollTrackingSpaceName
+                                                )
                                             }
                                         }
                                         .padding(.vertical, 4)
+                                    }
+                                    .onAppear {
+                                        handleReplyEntryAppear(entry)
                                     }
                                 }
                             }
@@ -220,10 +246,7 @@ struct ThreadDetailView: View {
                         }
 
                         if supportsDirectPagination, !isLoading {
-                            if currentPage < totalPageCount {
-                                directPaginationSentinel
-                                    .id("thread-detail-direct-pagination-footer-\(currentPage)")
-                            } else if totalPageCount > 1 {
+                            if currentPage >= totalPageCount, totalPageCount > 1 {
                                 threadDetailCard {
                                     Text("已经显示全部回帖")
                                         .font(.footnote)
@@ -236,7 +259,7 @@ struct ThreadDetailView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
-                    .padding(.bottom, 96)
+                    .padding(.bottom, supportsDirectPagination ? 28 : 96)
                 }
                 .accessibilityIdentifier("thread-detail-scroll")
                 .background(PaperBackground())
@@ -268,6 +291,9 @@ struct ThreadDetailView: View {
                 }
                 .onPreferenceChange(ThreadDetailPageAnchorOffsetPreferenceKey.self) { offsets in
                     handlePageAnchorOffsetsChange(offsets)
+                }
+                .onPreferenceChange(ThreadDetailGIFFramePreferenceKey.self) { candidates in
+                    handleGIFFrameCandidatesChange(candidates)
                 }
                 .onChange(of: deferredScrollTargetPage) { _, page in
                     guard let page else { return }
@@ -336,13 +362,11 @@ struct ThreadDetailView: View {
 
     private func handleScrollOffsetChange(_ offset: CGFloat) {
         let shouldShow = offset < -220
-        let isScrollingUp = offset > lastObservedScrollOffset + 14
         lastObservedScrollOffset = offset
 
-        let nextVisibility = shouldShow && !isScrollingUp
-        if nextVisibility != showsScrollToTopButton {
+        if shouldShow != showsScrollToTopButton {
             withAnimation(.easeInOut(duration: 0.18)) {
-                showsScrollToTopButton = nextVisibility
+                showsScrollToTopButton = shouldShow
             }
         }
     }
@@ -376,6 +400,60 @@ struct ThreadDetailView: View {
         }
     }
 
+    private func handleGIFFrameCandidatesChange(_ candidates: [ThreadDetailGIFFrameCandidate]) {
+        let viewportHeight = max(scrollViewportHeight, 1)
+        let expandedTop = -inlineGIFPlaybackViewportBuffer
+        let expandedBottom = viewportHeight + inlineGIFPlaybackViewportBuffer
+
+        let nextActiveIDs = Set(
+            candidates
+                .filter { candidate in
+                    candidate.frame.maxY >= expandedTop && candidate.frame.minY <= expandedBottom
+                }
+                .sorted { lhs, rhs in
+                    abs(lhs.frame.midY - viewportHeight / 2) < abs(rhs.frame.midY - viewportHeight / 2)
+                }
+                .prefix(maximumSimultaneousInlineGIFs)
+                .map(\.id)
+        )
+
+        guard nextActiveIDs != activeInlineGIFPlaybackIDs else { return }
+        activeInlineGIFPlaybackIDs = nextActiveIDs
+    }
+
+    private func handleReplyEntryAppear(_ entry: ThreadDetailDisplayedReplyEntry) {
+        guard supportsDirectPagination else { return }
+        guard entry.loadsNextPageWhenAppearing else { return }
+
+        guard currentPage < totalPageCount else { return }
+        guard !isLoading, !isLoadingMore else { return }
+
+        let targetPage = currentPage + 1
+        guard lastAutoLoadedPage != targetPage else { return }
+
+        lastAutoLoadedPage = targetPage
+        Task {
+            let didLoad = await loadSpecificPage(targetPage, proxy: nil, updatesPageSelection: false)
+            if !didLoad {
+                lastAutoLoadedPage = nil
+            }
+        }
+    }
+
+    private func navigateToAdjacentVisiblePage(_ delta: Int, proxy: ScrollViewProxy) async {
+        guard supportsDirectPagination else { return }
+
+        let targetPage = min(max(visiblePage + delta, 1), totalPageCount)
+        guard targetPage != visiblePage else { return }
+
+        await loadSpecificPage(
+            targetPage,
+            proxy: proxy,
+            shouldScrollAfterLoad: true,
+            updatesPageSelection: true
+        )
+    }
+
     private var displayedReplies: [Reply] {
         let replies = showsOnlyThreadAuthor ? detailThread.authorReplies : detailThread.replies
         return showsRepliesInReverseOrder ? Array(replies.reversed()) : replies
@@ -389,15 +467,33 @@ struct ThreadDetailView: View {
         repository.source == .nga
     }
 
-    private var firstDisplayedReplyIDByPage: [Int: Int] {
-        var mapping: [Int: Int] = [:]
-        for reply in displayedReplies {
-            let page = page(for: reply)
-            if mapping[page] == nil {
-                mapping[page] = reply.id
+    private var displayedReplyEntries: [ThreadDetailDisplayedReplyEntry] {
+        let sortedPageStarts = loadedPageStartReplyIndices.sorted { $0.value < $1.value }
+        let replyIndices = Dictionary(uniqueKeysWithValues: detailThread.replies.enumerated().map { ($1.id, $0) })
+        var firstVisibleReplyIDByPage: [Int: Int] = [:]
+
+        let prefetchStartIndex = max(displayedReplies.count - directPaginationPrefetchReplyDistance, 0)
+
+        return displayedReplies.enumerated().map { visualIndex, reply in
+            let replyIndex = replyIndices[reply.id]
+            let page = resolvedPage(forReplyIndex: replyIndex, sortedPageStarts: sortedPageStarts)
+            let showsPageAnchor = firstVisibleReplyIDByPage[page] == nil
+            if showsPageAnchor {
+                firstVisibleReplyIDByPage[page] = reply.id
             }
+
+            return ThreadDetailDisplayedReplyEntry(
+                reply: reply,
+                page: page,
+                showsPageAnchor: showsPageAnchor,
+                floorLabel: resolvedFloorLabel(replyIndex: replyIndex, page: page, floorNumber: reply.floorNumber),
+                loadsNextPageWhenAppearing: visualIndex >= prefetchStartIndex
+            )
         }
-        return mapping
+    }
+
+    private var displayedAnchorPages: Set<Int> {
+        Set(displayedReplyEntries.lazy.filter(\.showsPageAnchor).map(\.page))
     }
 
     private var totalPageCount: Int {
@@ -598,6 +694,7 @@ struct ThreadDetailView: View {
             visiblePage = 1
             loadedPageStartReplyIndices = [1: 0]
             pendingPageSelection = 1
+            lastAutoLoadedPage = nil
             hasMoreReplies = supportsDirectPagination
                 ? totalPageCount > 1
                 : shouldTryAnotherPage(
@@ -609,24 +706,28 @@ struct ThreadDetailView: View {
         }
     }
 
+    @discardableResult
     private func loadSpecificPage(
         _ page: Int,
         proxy: ScrollViewProxy?,
-        shouldScrollAfterLoad: Bool = false
-    ) async {
-        guard supportsDirectPagination else { return }
+        shouldScrollAfterLoad: Bool = false,
+        updatesPageSelection: Bool = true
+    ) async -> Bool {
+        guard supportsDirectPagination else { return false }
         let targetPage = min(max(page, 1), totalPageCount)
-        guard !isLoading, !isLoadingMore else { return }
+        guard !isLoading, !isLoadingMore else { return false }
 
         if targetPage <= currentPage {
             visiblePage = targetPage
-            pendingPageSelection = targetPage
+            if updatesPageSelection {
+                pendingPageSelection = targetPage
+            }
             if let proxy {
                 scrollToPage(targetPage, proxy: proxy)
             } else if shouldScrollAfterLoad {
                 deferredScrollTargetPage = targetPage
             }
-            return
+            return true
         }
 
         isLoadingMore = true
@@ -671,7 +772,9 @@ struct ThreadDetailView: View {
             threadReplyTotalCount = resolvedReplyTotal
             currentPage = targetPage
             loadedPageStartReplyIndices = nextPageStarts
-            pendingPageSelection = targetPage
+            if updatesPageSelection {
+                pendingPageSelection = targetPage
+            }
             hasMoreReplies = currentPage < totalPageCount
 
             if let proxy {
@@ -681,8 +784,11 @@ struct ThreadDetailView: View {
                 visiblePage = targetPage
                 deferredScrollTargetPage = targetPage
             }
+            return true
         } catch {
+            lastAutoLoadedPage = nil
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -803,22 +909,38 @@ struct ThreadDetailView: View {
         }
     }
 
-    private func floorLabel(for reply: Reply) -> String {
-        if let floorNumber = reply.floorNumber, floorNumber > 0 {
+    private func resolvedPage(
+        forReplyIndex replyIndex: Int?,
+        sortedPageStarts: [(key: Int, value: Int)]
+    ) -> Int {
+        guard let replyIndex else { return 1 }
+
+        var resolvedPage = 1
+        for (page, startIndex) in sortedPageStarts where startIndex <= replyIndex {
+            resolvedPage = page
+        }
+        return resolvedPage
+    }
+
+    private func resolvedFloorLabel(
+        replyIndex: Int?,
+        page: Int,
+        floorNumber: Int?
+    ) -> String {
+        if let floorNumber, floorNumber > 0 {
             return "\(floorNumber)楼"
         }
 
-        if let index = detailThread.replies.firstIndex(where: { $0.id == reply.id }) {
+        if let replyIndex {
             if supportsDirectPagination {
-                let page = page(for: reply)
                 let pageStartIndex = loadedPageStartReplyIndices[page] ?? 0
                 if page == 1 {
-                    return "\(index + 2)楼"
+                    return "\(replyIndex + 2)楼"
                 }
-                return "\(((page - 1) * detailPageSize) + (index - pageStartIndex) + 1)楼"
+                return "\(((page - 1) * detailPageSize) + (replyIndex - pageStartIndex) + 1)楼"
             }
 
-            return "\(index + 2)楼"
+            return "\(replyIndex + 2)楼"
         }
         return "--楼"
     }
@@ -873,53 +995,19 @@ struct ThreadDetailView: View {
 
 }
 
+private struct ThreadDetailDisplayedReplyEntry: Identifiable {
+    let reply: Reply
+    let page: Int
+    let showsPageAnchor: Bool
+    let floorLabel: String
+    let loadsNextPageWhenAppearing: Bool
+
+    var id: Int { reply.id }
+}
+
 private extension ThreadDetailView {
-    var directPaginationSentinel: some View {
-        VStack(spacing: 0) {
-            if isLoadingMore {
-                HStack {
-                    Spacer()
-                    ProgressView()
-                        .tint(PaperTheme.mutedText)
-                    Spacer()
-                }
-                .padding(.vertical, 12)
-            }
-
-            Color.clear
-                .frame(height: 1)
-                .onAppear {
-                    guard supportsDirectPagination else { return }
-                    guard currentPage < totalPageCount else { return }
-                    guard !isLoading, !isLoadingMore else { return }
-                    Task {
-                        await loadSpecificPage(currentPage + 1, proxy: nil)
-                    }
-                }
-        }
-    }
-
     func pageAnchorID(for page: Int) -> String {
         page == 1 ? replyTopAnchorID : "thread-detail-page-\(page)"
-    }
-
-    func anchorPage(for reply: Reply) -> Int? {
-        let page = page(for: reply)
-        guard firstDisplayedReplyIDByPage[page] == reply.id else { return nil }
-        return page
-    }
-
-    func page(for reply: Reply) -> Int {
-        guard let index = detailThread.replies.firstIndex(where: { $0.id == reply.id }) else {
-            return 1
-        }
-
-        let sortedStarts = loadedPageStartReplyIndices.sorted { $0.key < $1.key }
-        var resolvedPage = 1
-        for (page, startIndex) in sortedStarts where startIndex <= index {
-            resolvedPage = page
-        }
-        return resolvedPage
     }
 
     func scrollToPage(_ page: Int, proxy: ScrollViewProxy) {
@@ -931,7 +1019,7 @@ private extension ThreadDetailView {
 
     func resolvedScrollTargetPage(for page: Int) -> Int {
         for candidate in stride(from: page, through: 1, by: -1) {
-            if candidate == 1 || firstDisplayedReplyIDByPage[candidate] != nil {
+            if candidate == 1 || displayedAnchorPages.contains(candidate) {
                 return candidate
             }
         }
@@ -953,13 +1041,19 @@ private extension ThreadDetailView {
         .spring(response: 0.28, dampingFraction: 0.84, blendDuration: 0.12)
     }
 
+    var shouldShowScrollToTopControl: Bool {
+        showsScrollToTopButton || visiblePage > 1
+    }
+
     @ViewBuilder
     func trailingFloatingControls(proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .trailing, spacing: 10) {
-            if showsScrollToTopButton {
+        VStack(alignment: .trailing, spacing: 7) {
+            if shouldShowScrollToTopControl {
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) {
                         showsScrollToTopButton = false
+                        visiblePage = 1
+                        pendingPageSelection = 1
                     }
                     withAnimation(.snappy(duration: 0.28)) {
                         proxy.scrollTo(topAnchorID, anchor: .top)
@@ -1012,8 +1106,8 @@ private extension ThreadDetailView {
             }
         }
         .padding(.trailing, 18)
-        .padding(.bottom, 112)
-        .animation(floatingControlAnimation, value: showsScrollToTopButton)
+        .padding(.bottom, 88)
+        .animation(floatingControlAnimation, value: shouldShowScrollToTopControl)
         .animation(floatingControlAnimation, value: supportsDirectPagination && totalPageCount > 1 && !isLoading)
     }
 
@@ -1023,7 +1117,7 @@ private extension ThreadDetailView {
                 systemImage: "chevron.left",
                 isDisabled: isLoadingMore || visiblePage <= 1
             ) {
-                Task { await loadSpecificPage(visiblePage - 1, proxy: proxy) }
+                Task { await navigateToAdjacentVisiblePage(-1, proxy: proxy) }
             }
 
             Button {
@@ -1056,7 +1150,7 @@ private extension ThreadDetailView {
                 systemImage: "chevron.right",
                 isDisabled: isLoadingMore || visiblePage >= totalPageCount
             ) {
-                Task { await loadSpecificPage(visiblePage + 1, proxy: proxy) }
+                Task { await navigateToAdjacentVisiblePage(1, proxy: proxy) }
             }
         }
         .background(.ultraThinMaterial, in: Capsule())
@@ -1093,13 +1187,6 @@ private extension ThreadDetailView {
                     .padding(.trailing, 38)
             }
             .allowsHitTesting(false)
-        }
-        .overlay(alignment: .center) {
-            if isLoadingMore {
-                ProgressView()
-                    .scaleEffect(0.8)
-                    .tint(PaperTheme.mutedText)
-            }
         }
         .shadow(color: Color.black.opacity(0.08), radius: 12, y: 6)
     }
@@ -1657,10 +1744,19 @@ enum ThreadDetailPaginationPolicy {
 private struct ForumRichContentView: View {
     let blocks: [ForumContentBlock]
     let fontSize: CGFloat
+    let activeGIFPlaybackImageIDs: Set<UUID>
+    let scrollTrackingSpaceName: String?
 
-    init(text: String, fontSize: CGFloat) {
+    init(
+        text: String,
+        fontSize: CGFloat,
+        activeGIFPlaybackImageIDs: Set<UUID> = [],
+        scrollTrackingSpaceName: String? = nil
+    ) {
         blocks = ForumContentParser.parse(text)
         self.fontSize = fontSize
+        self.activeGIFPlaybackImageIDs = activeGIFPlaybackImageIDs
+        self.scrollTrackingSpaceName = scrollTrackingSpaceName
     }
 
     var body: some View {
@@ -1674,7 +1770,11 @@ private struct ForumRichContentView: View {
                         .lineSpacing(fontSize >= 18 ? 6 : 5)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case let .image(url):
-                    InteractiveForumImage(url: url)
+                    InteractiveForumImage(
+                        url: url,
+                        activeGIFPlaybackImageIDs: activeGIFPlaybackImageIDs,
+                        scrollTrackingSpaceName: scrollTrackingSpaceName
+                    )
                 }
             }
         }
@@ -1683,21 +1783,30 @@ private struct ForumRichContentView: View {
 
 private struct InteractiveForumImage: View {
     let url: URL
+    let activeGIFPlaybackImageIDs: Set<UUID>
+    let scrollTrackingSpaceName: String?
     @State private var asset: ForumRemoteImageAsset?
     @State private var failed = false
     @State private var showsPreview = false
     @State private var actionErrorMessage: String?
     @State private var isSavingImage = false
+    @State private var gifPlaybackID = UUID()
 
     var body: some View {
         Group {
             if let asset {
-                Button {
-                    showsPreview = true
-                } label: {
-                    ForumImageContent(asset: asset)
+                ZStack {
+                    ForumImageContent(
+                        asset: asset,
+                        playsAnimatedGIF: !asset.isAnimatedGIF || activeGIFPlaybackImageIDs.contains(gifPlaybackID)
+                    )
+                    Color.clear
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .background(gifVisibilityProbe(for: asset))
+                .onTapGesture {
+                    showsPreview = true
+                }
                 .contextMenu {
                     Button {
                         Task { await saveImage() }
@@ -1718,6 +1827,7 @@ private struct InteractiveForumImage: View {
                     }
                 }
                 .disabled(isSavingImage)
+                .accessibilityAddTraits(.isButton)
             } else if failed {
                 Link(destination: url) {
                     Label("图片加载失败，点击打开原图", systemImage: "photo.badge.exclamationmark")
@@ -1745,7 +1855,6 @@ private struct InteractiveForumImage: View {
             if let asset {
                 ForumImagePreviewSheet(
                     asset: asset,
-                    imageURL: url,
                     onSave: {
                         Task { await saveImage() }
                     }
@@ -1756,6 +1865,23 @@ private struct InteractiveForumImage: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(actionErrorMessage ?? "请稍后重试。")
+        }
+    }
+
+    @ViewBuilder
+    private func gifVisibilityProbe(for asset: ForumRemoteImageAsset) -> some View {
+        if asset.isAnimatedGIF, let scrollTrackingSpaceName {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ThreadDetailGIFFramePreferenceKey.self,
+                    value: [
+                        ThreadDetailGIFFrameCandidate(
+                            id: gifPlaybackID,
+                            frame: proxy.frame(in: .named(scrollTrackingSpaceName))
+                        )
+                    ]
+                )
+            }
         }
     }
 
@@ -1802,10 +1928,11 @@ private struct InteractiveForumImage: View {
 
 private struct ForumImageContent: View {
     let asset: ForumRemoteImageAsset
+    var playsAnimatedGIF: Bool = true
 
     var body: some View {
         Group {
-            if asset.isAnimatedGIF {
+            if asset.isAnimatedGIF, playsAnimatedGIF {
                 AnimatedImageView(data: asset.data, mimeType: asset.mimeType, localFileURL: asset.localFileURL)
                     .aspectRatio(asset.displayAspectRatio, contentMode: .fit)
             } else {
@@ -1832,7 +1959,6 @@ private struct ForumImageContent: View {
 
 private struct ForumImagePreviewSheet: View {
     let asset: ForumRemoteImageAsset
-    let imageURL: URL
     let onSave: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var zoomScale: CGFloat = 1
@@ -1848,40 +1974,25 @@ private struct ForumImagePreviewSheet: View {
 
                 previewContent
             }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("关闭") { dismiss() }
-                        .tint(.white)
-                }
-
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
+            .overlay(alignment: .trailing) {
+                VStack(spacing: 14) {
+                    previewActionButton(systemImage: "arrow.down.circle") {
                         onSave()
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
                     }
-                    .tint(.white)
 
-                    ShareLink(item: imageURL) {
-                        Image(systemName: "square.and.arrow.up")
-                            .foregroundStyle(.white)
+                    previewActionButton(systemImage: "xmark") {
+                        dismiss()
                     }
                 }
+                .padding(.trailing, 18)
+                .frame(maxHeight: .infinity, alignment: .center)
             }
         }
         .presentationBackground(.clear)
     }
 
     private var previewContent: some View {
-        Group {
-            if asset.isAnimatedGIF {
-                AnimatedImageView(data: asset.data, mimeType: asset.mimeType, localFileURL: asset.localFileURL)
-            } else {
-                Image(uiImage: asset.previewImage)
-                    .resizable()
-                    .scaledToFit()
-            }
-        }
+        ForumImageContent(asset: asset)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(18)
         .scaleEffect(zoomScale)
@@ -1891,6 +2002,21 @@ private struct ForumImagePreviewSheet: View {
         .simultaneousGesture(magnificationGesture)
         .simultaneousGesture(dragGesture)
         .animation(.easeInOut(duration: 0.2), value: zoomScale)
+    }
+
+    private func previewActionButton(systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                }
+        }
+        .buttonStyle(.plain)
     }
 
     private var doubleTapGesture: some Gesture {
@@ -2075,5 +2201,18 @@ private struct ThreadDetailPageAnchorOffsetPreferenceKey: PreferenceKey {
 
     static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct ThreadDetailGIFFrameCandidate: Equatable, Identifiable {
+    let id: UUID
+    let frame: CGRect
+}
+
+private struct ThreadDetailGIFFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [ThreadDetailGIFFrameCandidate] = []
+
+    static func reduce(value: inout [ThreadDetailGIFFrameCandidate], nextValue: () -> [ThreadDetailGIFFrameCandidate]) {
+        value.append(contentsOf: nextValue())
     }
 }

@@ -61,6 +61,7 @@ struct ForumFeedContent: View {
     @Bindable var blockedUsers: BlockedUsersStore
     @Bindable var favoriteThreads: FavoriteThreadsStore
     let isLoading: Bool
+    let hasLoadedInitialFeed: Bool
     let isLoadingMore: Bool
     let canLoadMore: Bool
     let errorMessage: String?
@@ -221,7 +222,7 @@ struct ForumFeedContent: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
             }
-        } else if isLoading {
+        } else if !hasLoadedInitialFeed || isLoading {
             FeedLoadingView()
                 .padding(.top, 80)
         } else {

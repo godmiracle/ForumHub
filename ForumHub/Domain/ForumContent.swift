@@ -12,16 +12,25 @@ struct ForumContentBlock: Identifiable, Equatable {
 
 enum ForumContentParser {
     private static let imagePattern = #"(?m)^[\t ]*\[图片\][\t ]*(https?://[^\s]+)[\t ]*$"#
+    private static let expression = try? NSRegularExpression(pattern: imagePattern)
+    private static let cache = NSCache<NSString, ForumContentBlockArrayBox>()
 
     static func parse(_ text: String) -> [ForumContentBlock] {
-        guard let expression = try? NSRegularExpression(pattern: imagePattern) else {
+        let cacheKey = text as NSString
+        if let cachedBlocks = cache.object(forKey: cacheKey)?.blocks {
+            return cachedBlocks
+        }
+
+        guard let expression else {
             return text.isEmpty ? [] : [ForumContentBlock(id: 0, content: .text(text))]
         }
 
         let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
         let matches = expression.matches(in: text, range: fullRange)
         guard !matches.isEmpty else {
-            return text.isEmpty ? [] : [ForumContentBlock(id: 0, content: .text(text))]
+            let blocks = text.isEmpty ? [] : [ForumContentBlock(id: 0, content: .text(text))]
+            cache.setObject(ForumContentBlockArrayBox(blocks), forKey: cacheKey)
+            return blocks
         }
 
         var blocks: [ForumContentBlock] = []
@@ -41,6 +50,7 @@ enum ForumContentParser {
         }
 
         appendText(String(text[cursor...]), to: &blocks)
+        cache.setObject(ForumContentBlockArrayBox(blocks), forKey: cacheKey)
         return blocks
     }
 
@@ -48,5 +58,13 @@ enum ForumContentParser {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
         blocks.append(ForumContentBlock(id: blocks.count, content: .text(value)))
+    }
+}
+
+private final class ForumContentBlockArrayBox: NSObject {
+    let blocks: [ForumContentBlock]
+
+    init(_ blocks: [ForumContentBlock]) {
+        self.blocks = blocks
     }
 }

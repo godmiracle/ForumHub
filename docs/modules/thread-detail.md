@@ -27,13 +27,15 @@ It includes:
 - Presentation state is layered on top of provider data rather than rewriting repository ordering.
 - Thread detail should use a scroll container that exposes continuous geometry signals for paging and scroll affordances; `List` cell lifecycle is not reliable enough for NGA's direct-pagination auto-advance.
 - NGA thread detail should accumulate fetched continuation pages into one continuous reading flow instead of replacing the visible reply slice page by page.
-- Intermediate NGA pages should preload through an invisible footer sentinel so readers can scroll continuously without seeing a dedicated "load next page" card between reply pages.
+- Intermediate NGA pages should preload when one of the last few visible reply rows appears, so readers can scroll continuously without seeing a dedicated "load next page" card between reply pages.
 - The lower-right floating page control should reflect the page currently near the top of the viewport, not just the highest page fetched so far.
+- The lower-right reading controls should stay visually grouped: the page capsule anchors the group, and the scroll-to-top affordance sits just above it once the reader has moved beyond the opening position.
+- Automatic preloading should append data without advancing the visible-page selection; explicit previous/next controls and picker jumps are responsible for scrolling to a page anchor.
 - Visible-page tracking should prefer lightweight per-page anchor geometry instead of per-reply listeners, so long threads keep smoother scrolling while the floating control stays in sync.
-- NGA auto-pagination should use the simplest possible rule: when the bottom sentinel appears, load the next page once.
+- NGA auto-pagination should use the simplest possible rule: when a near-end reply row appears, load the next source page once.
 - Explicit page jumping with previous/next controls plus a picker sheet should scroll to the corresponding loaded page anchor, loading intermediate pages first when necessary.
-- Automatic page advance for NGA should use SwiftUI geometry signals from the top anchor and pagination footer instead of relying on footer row appearance, because `List` row lifecycle events are not a stable signal for "the reader actually reached the bottom".
-- The geometry-based auto-pagination path should use a non-lazy reply stack. With roughly 20 replies per page, `LazyVStack` can recycle the off-screen top anchor and bottom footer sentinel, which shows up as missing baseline/footer measurements and makes downward paging appear completely unresponsive.
+- Automatic page advance for NGA should not depend on a tiny invisible footer geometry probe; the near-end reply appearance trigger is more stable for the current non-lazy `ScrollView` stack.
+- The page-anchor geometry path should stay lightweight and page-scoped. With roughly 20 replies per page, per-reply geometry listeners are unnecessary and can make long-thread scrolling feel heavier.
 - The page picker should feel visually related to the floating controls: compact glass surfaces, quick first/last-page shortcuts, and a lightweight confirmation row instead of a dense divider-heavy list.
 - Floor labels in NGA thread detail should prefer source-provided floor numbers and only fall back to page-aware local inference when the parser cannot recover them.
 - Reply pagination must protect against duplicate content from source-specific continuation pages.

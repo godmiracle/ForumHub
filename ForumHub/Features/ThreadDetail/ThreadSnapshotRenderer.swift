@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -217,6 +218,11 @@ private struct SnapshotRichContent: View {
 }
 
 enum NGAImageLoader {
+    private static let previewImageMaxPixelSize = max(
+        Int(UIScreen.main.bounds.width * UIScreen.main.scale * 2),
+        1_600
+    )
+
     static func loadAsset(url: URL) async throws -> ForumRemoteImageAsset {
         try await ForumImagePipeline.shared.loadAsset(url: url)
     }
@@ -239,15 +245,16 @@ enum NGAImageLoader {
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        let mimeType = response.mimeType?.lowercased()
+            ?? NGAImageLoader.inferredMimeType(from: url, data: data)
+
         guard let response = response as? HTTPURLResponse,
               (200..<300).contains(response.statusCode),
-              let previewImage = UIImage(data: data)
+              let previewImage = downsampledPreviewImage(from: data)
         else {
             throw URLError(.cannotDecodeContentData)
         }
 
-        let mimeType = response.mimeType?.lowercased()
-            ?? NGAImageLoader.inferredMimeType(from: url, data: data)
         let fileURL = mimeType == "image/gif" ? ForumImagePipeline.cachedFileURL(for: url, pathExtension: "gif") : nil
 
         if let fileURL {
@@ -283,6 +290,28 @@ enum NGAImageLoader {
         default:
             return "image/jpeg"
         }
+    }
+
+    private static func downsampledPreviewImage(from data: Data) -> UIImage? {
+        let options: CFDictionary = [
+            kCGImageSourceShouldCache: false
+        ] as CFDictionary
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, options) else {
+            return UIImage(data: data)
+        }
+
+        let thumbnailOptions: CFDictionary = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: previewImageMaxPixelSize
+        ] as CFDictionary
+
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbnailOptions) else {
+            return UIImage(data: data)
+        }
+
+        return UIImage(cgImage: cgImage)
     }
 }
 

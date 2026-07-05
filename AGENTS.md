@@ -37,14 +37,19 @@ Read these files first:
 
 ## Verification
 
-Preferred local build command:
+Preferred verification rule:
+
+- Prefer building for a connected iOS device.
+- If no iOS device is currently available, skip the build instead of falling back to a simulator build.
+
+Example device build command:
 
 ```sh
 /Applications/Xcode-beta.app/Contents/Developer/usr/bin/xcodebuild \
   -project ForumHub.xcodeproj \
   -scheme ForumHub \
   -configuration Debug \
-  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -destination 'platform=iOS,id=<CONNECTED_DEVICE_ID>' \
   build
 ```
 
