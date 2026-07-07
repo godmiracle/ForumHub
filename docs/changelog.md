@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07
+
+### Flutter Rebuild
+
+- Added the initial Flutter iOS host project
+- Connected the Flutter NGA read-only adapter to a real POST transport
+- Added a native iOS cookie bridge so Flutter NGA requests can reuse cookies stored in the app host
+- Added Flutter feed/detail error states and retry actions so live adapter failures no longer surface as silent empty screens
+- Fixed a Flutter iPhone startup crash by simplifying the native NGA cookie bridge to read shared HTTP cookies synchronously instead of touching WebKit cookie state during app startup
+- Added the first Flutter NGA account screen with embedded Web login and explicit post-login cookie sync
+- Split Flutter NGA session handling into dedicated session-layer files instead of keeping login state and bridge logic inside placeholder screens
+- Added Flutter session-epoch propagation so NGA login/logout can invalidate feed and thread-detail state without hard-coding account logic into each screen
+- Restored iOS-style swipe-back behavior for Flutter thread detail by routing it through a Cupertino page
+- Replaced the default Flutter bottom navigation with a custom floating glass tab bar to better match the app's intended visual style
+
 ## 2026-06
 
 ### Product Evolution

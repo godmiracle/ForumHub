@@ -169,6 +169,59 @@ Keep NGA thread fetching source-shaped, but let the detail screen accumulate con
 - Mid-thread reading stays visually uninterrupted, while the UI still has an explicit end-of-thread state when no more replies remain
 - Detail-state logic must keep page anchors and duplicate filtering stable while local presentation options remain layered on top
 
+## ADR-008 Flutter Rebuild Uses A Parallel Incremental Migration
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+The SwiftUI app has reached a point where interaction-heavy screens, especially thread detail, are expensive to stabilize and verify. At the same time, the product direction benefits from a cross-platform shell. A direct big-bang rewrite would force source adapters, reading flows, persistence, and auth behavior to be re-debugged all at once.
+
+### Decision
+
+Rebuild `ForumHub` in Flutter on a separate branch and in a separate app directory, while preserving the current SwiftUI project during migration. Migrate read-only flows first, then local product features, then authenticated and write flows. Keep the existing product boundaries: source adapters remain source-local, shared UI depends on normalized domain models, and thread-detail presentation options remain presentation state.
+
+### Consequences
+
+- We can ship or validate Flutter in phases instead of waiting for full parity
+- SwiftUI remains the fallback reference while Flutter behavior is still being stabilized
+- Migration work now requires explicit documentation, milestones, and parity audits
+- Some logic may temporarily exist in both codebases until cutover is complete
+
+## ADR-009 Flutter NGA Transport Reads The Flutter Host Cookie Store
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+The Flutter rebuild needs real NGA read-only requests before the full Flutter login flow exists. Reusing the SwiftUI app's existing persisted cookies across a separate Flutter host target would require target-level sharing decisions that are not stable yet, especially while the rebuild is still running as a parallel app shell.
+
+### Decision
+
+Connect the Flutter NGA transport to the Flutter host app's native cookie storage through a thin iOS method-channel bridge. The bridge reads cookies from the host's `WKWebsiteDataStore.default()` and mirrors them into `HTTPCookieStorage.shared` for outgoing Dart HTTP requests. Do not assume direct reuse of the old SwiftUI app's persisted login state at this stage.
+
+### Consequences
+
+- Flutter can load public NGA data immediately and is ready to reuse cookies once a Flutter Web login flow is added
+- Auth transport stays close to the proven `WebView -> native cookie store -> HTTP requests` boundary
+- Existing SwiftUI app cookies are not automatically visible to the Flutter app target during the migration phase
+- The next auth milestone is a Flutter-native Web login surface, not cross-target credential sharing
+- Startup-sensitive host code must avoid querying WebKit cookie state during early app launch on device; shared HTTP cookie storage is the safe default until login sync is explicitly triggered after Web auth
+- Session code should live in a dedicated Flutter session layer instead of being embedded directly into generic account or app-bootstrap files
+- Read-only feature controllers should observe a lightweight session epoch instead of importing account-specific UI concerns, keeping session invalidation explicit while preserving module boundaries
+
 ## Template
 
 Use this structure for future decisions:
