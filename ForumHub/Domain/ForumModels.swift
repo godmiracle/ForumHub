@@ -20,6 +20,7 @@ struct ForumCapabilities: Equatable {
     let supportsSearch: Bool
     let supportsFavorites: Bool
     let supportsReply: Bool
+    let supportsReplyTargeting: Bool
     let supportsAuthentication: Bool
     let supportsFeedPagination: Bool
 }
@@ -28,6 +29,39 @@ struct ReplyAttachmentUpload {
     let filename: String
     let mimeType: String
     let data: Data
+}
+
+enum ThreadReplyTarget: Equatable {
+    case thread
+    case reply(ThreadReplyTargetReply)
+
+    var displayTitle: String {
+        switch self {
+        case .thread:
+            return "回复主题"
+        case let .reply(targetReply):
+            return "回复 \(targetReply.displayFloorLabel) @\(targetReply.author)"
+        }
+    }
+
+    var composerDescription: String {
+        switch self {
+        case .thread:
+            return "主题回复"
+        case let .reply(targetReply):
+            return "对 \(targetReply.displayFloorLabel) @\(targetReply.author) 的回复"
+        }
+    }
+}
+
+struct ThreadReplyTargetReply: Equatable {
+    let replyID: Int
+    let sourcePostID: Int?
+    let floorNumber: Int?
+    let displayFloorLabel: String
+    let author: String
+    let createdAt: String
+    let bodyPreview: String
 }
 
 struct ForumPayload {
@@ -428,6 +462,7 @@ struct ForumThread: Identifiable, Equatable {
 
 struct Reply: Identifiable, Equatable {
     let id: Int
+    let sourcePostID: Int?
     let author: String
     let createdAt: String
     let body: String
@@ -436,6 +471,7 @@ struct Reply: Identifiable, Equatable {
 
     init(
         id: Int,
+        sourcePostID: Int? = nil,
         author: String,
         createdAt: String,
         body: String,
@@ -443,6 +479,7 @@ struct Reply: Identifiable, Equatable {
         floorNumber: Int? = nil
     ) {
         self.id = id
+        self.sourcePostID = sourcePostID
         self.author = author
         self.createdAt = createdAt
         self.body = body

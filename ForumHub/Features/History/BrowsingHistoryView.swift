@@ -33,6 +33,7 @@ struct BrowsingHistoryView: View {
                                 ThreadDetailView(
                                     thread: entry.thread,
                                     repository: repositoryForSource(entry.source),
+                                    blockedUsers: blockedUsers,
                                     favoriteThreads: favoriteThreads
                                 )
                             } label: {

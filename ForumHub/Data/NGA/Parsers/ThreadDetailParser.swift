@@ -177,14 +177,17 @@ struct ThreadDetailParser {
 
     private static func makeReply(from dictionary: [String: Any], fallbackID: Int) -> Reply? {
         guard let body = string(for: ["content", "postcontent", "body", "comment"], in: dictionary)?
-            .cleanedForumText,
+            .structuredForumText,
             !body.isEmpty
         else {
             return nil
         }
 
+        let validPostID = validPostID(in: dictionary)
+
         return Reply(
-            id: validPostID(in: dictionary) ?? fallbackID,
+            id: validPostID ?? fallbackID,
+            sourcePostID: validPostID,
             author: authorName(in: dictionary) ?? "未知作者",
             createdAt: string(for: ["postdate", "timestamp", "created_at", "lastpost", "time"], in: dictionary) ?? "未知时间",
             body: body,

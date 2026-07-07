@@ -8,6 +8,7 @@ import WebKit
 struct ThreadDetailView: View {
     let thread: ForumThread
     let repository: any ThreadRepository
+    @Bindable var blockedUsers: BlockedUsersStore
     @Bindable var favoriteThreads: FavoriteThreadsStore
     private let topAnchorID = "thread-detail-top-anchor"
     private let replyTopAnchorID = "thread-detail-reply-top-anchor"
@@ -28,11 +29,12 @@ struct ThreadDetailView: View {
     @State private var hasMoreReplies = true
     @State private var isPreparingSnapshot = false
     @State private var snapshotImages: [UIImage] = []
-    @State private var showsSnapshotShare = false
+    @State private var showsSnapshotPreview = false
     @State private var snapshotErrorMessage: String?
     @State private var favoriteErrorMessage: String?
     @State private var isUpdatingFavorite = false
     @State private var showsReplyComposer = false
+    @State private var replyTarget: ThreadReplyTarget = .thread
     @State private var showsPagePicker = false
     @State private var replyText = ""
     @State private var replyAttachments: [ReplyComposerAttachment] = []
@@ -49,9 +51,15 @@ struct ThreadDetailView: View {
     @State private var lastAutoLoadedPage: Int?
     @State private var activeInlineGIFPlaybackIDs: Set<UUID> = []
 
-    init(thread: ForumThread, repository: any ThreadRepository, favoriteThreads: FavoriteThreadsStore) {
+    init(
+        thread: ForumThread,
+        repository: any ThreadRepository,
+        blockedUsers: BlockedUsersStore,
+        favoriteThreads: FavoriteThreadsStore
+    ) {
         self.thread = thread
         self.repository = repository
+        self.blockedUsers = blockedUsers
         self.favoriteThreads = favoriteThreads
         _detailThread = State(initialValue: thread)
         _threadReplyTotalCount = State(initialValue: thread.replyCount)
@@ -195,6 +203,7 @@ struct ThreadDetailView: View {
                                                     Text(entry.reply.createdAt)
                                                         .font(.caption)
                                                         .foregroundStyle(PaperTheme.mutedText)
+                                                    replyTargetMenu(for: entry)
                                                 }
 
                                                 ForumRichContentView(
@@ -314,11 +323,10 @@ struct ThreadDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showsSnapshotShare, onDismiss: {
+        .sheet(isPresented: $showsSnapshotPreview, onDismiss: {
             snapshotImages = []
         }) {
-            ActivityShareView(activityItems: snapshotImages)
-                .presentationDetents([.medium, .large])
+            SnapshotPreviewSheet(images: snapshotImages)
         }
         .alert("长图生成失败", isPresented: snapshotErrorBinding) {
             Button("好", role: .cancel) {}
@@ -343,11 +351,13 @@ struct ThreadDetailView: View {
         .sheet(isPresented: $showsReplyComposer) {
             ReplyComposerSheet(
                 source: repository.source,
+                target: $replyTarget,
                 text: $replyText,
                 attachments: $replyAttachments,
                 isSubmitting: isSubmittingReply,
                 onCancel: {
                     showsReplyComposer = false
+                    replyTarget = .thread
                 },
                 onSubmit: {
                     Task { await submitReply() }
@@ -456,7 +466,10 @@ struct ThreadDetailView: View {
 
     private var displayedReplies: [Reply] {
         let replies = showsOnlyThreadAuthor ? detailThread.authorReplies : detailThread.replies
-        return showsRepliesInReverseOrder ? Array(replies.reversed()) : replies
+        let visibleReplies = replies.filter { reply in
+            !blockedUsers.isBlocked(source: repository.source, username: reply.author)
+        }
+        return showsRepliesInReverseOrder ? Array(visibleReplies.reversed()) : visibleReplies
     }
 
     private var replyScrollTargetID: String {
@@ -532,7 +545,10 @@ struct ThreadDetailView: View {
                         systemImage: "square.and.pencil",
                         isProminent: true,
                         isDisabled: isSubmittingReply,
-                        action: { showsReplyComposer = true }
+                        action: {
+                            replyTarget = .thread
+                            showsReplyComposer = true
+                        }
                     )
                 }
 
@@ -573,7 +589,7 @@ struct ThreadDetailView: View {
                     Button {
                         Task { await prepareSnapshot(scope: .mainPost) }
                     } label: {
-                        Label("生成主楼长图", systemImage: "doc.richtext")
+                        Label("截图此层", systemImage: "camera.viewfinder")
                     }
 
                     Button {
@@ -669,7 +685,7 @@ struct ThreadDetailView: View {
                 replies: displayedReplies,
                 scope: scope
             )
-            showsSnapshotShare = true
+            showsSnapshotPreview = true
         } catch {
             snapshotErrorMessage = error.localizedDescription
         }
@@ -968,7 +984,7 @@ struct ThreadDetailView: View {
         if repository.source == .nga {
             let loginState = await NGAAuthStore.shared.currentLoginState()
             guard loginState.isLoggedIn else {
-                replyErrorMessage = "登录 NGA 后才能回复主题。"
+                replyErrorMessage = "登录 NGA 后才能发送回复。"
                 return
             }
         }
@@ -978,18 +994,30 @@ struct ThreadDetailView: View {
         defer { isSubmittingReply = false }
 
         do {
+            let submittedTarget = replyTarget
             try await repository.replyThread(
                 tid: detailThread.id,
+                target: submittedTarget,
                 content: trimmedReply,
                 attachments: replyAttachments.map(\.upload)
             )
             replyText = ""
             replyAttachments = []
             showsReplyComposer = false
+            replyTarget = .thread
             await refreshDetail()
-            replySuccessMessage = "回复已发送，帖子内容已刷新。"
+            replySuccessMessage = successMessage(for: submittedTarget)
         } catch {
             replyErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func successMessage(for target: ThreadReplyTarget) -> String {
+        switch target {
+        case .thread:
+            return "回复已发送，帖子内容已刷新。"
+        case let .reply(targetReply):
+            return "已回复 \(targetReply.displayFloorLabel)，帖子内容已刷新。"
         }
     }
 
@@ -1006,6 +1034,58 @@ private struct ThreadDetailDisplayedReplyEntry: Identifiable {
 }
 
 private extension ThreadDetailView {
+    @ViewBuilder
+    func replyTargetMenu(for entry: ThreadDetailDisplayedReplyEntry) -> some View {
+        Menu {
+            if repository.capabilities.supportsReply
+                && repository.capabilities.supportsReplyTargeting
+                && entry.reply.sourcePostID != nil {
+                Button {
+                    replyTarget = replyTarget(for: entry)
+                    showsReplyComposer = true
+                } label: {
+                    Label("回复本层", systemImage: "arrowshape.turn.up.left")
+                }
+            }
+
+            Button {
+                Task { await prepareSnapshot(scope: .singleReply(entry.reply)) }
+            } label: {
+                Label("截图此层", systemImage: "camera.viewfinder")
+            }
+
+            if entry.reply.author.isBlockableForumUsername {
+                Button(role: .destructive) {
+                    blockedUsers.block(source: repository.source, username: entry.reply.author)
+                } label: {
+                    Label("屏蔽该用户", systemImage: "person.crop.circle.badge.xmark")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(PaperTheme.mutedText)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("楼层操作")
+    }
+
+    func replyTarget(for entry: ThreadDetailDisplayedReplyEntry) -> ThreadReplyTarget {
+        .reply(
+            ThreadReplyTargetReply(
+                replyID: entry.reply.id,
+                sourcePostID: entry.reply.sourcePostID,
+                floorNumber: entry.reply.floorNumber,
+                displayFloorLabel: entry.floorLabel,
+                author: entry.reply.author,
+                createdAt: entry.reply.createdAt,
+                bodyPreview: entry.reply.body
+            )
+        )
+    }
+
     func pageAnchorID(for page: Int) -> String {
         page == 1 ? replyTopAnchorID : "thread-detail-page-\(page)"
     }
@@ -1515,6 +1595,7 @@ private struct ThreadActionButtonLabel: View {
 
 private struct ReplyComposerSheet: View {
     let source: ForumSource
+    @Binding var target: ThreadReplyTarget
     @Binding var text: String
     @Binding var attachments: [ReplyComposerAttachment]
     let isSubmitting: Bool
@@ -1522,28 +1603,78 @@ private struct ReplyComposerSheet: View {
     let onSubmit: () -> Void
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var imageLoadErrorMessage: String?
+    @State private var showsEmojiPicker = false
+    @State private var pendingEmojiInsertion: NGAForumEmojiItem?
+    @State private var shouldFocusRichEditor = false
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 14) {
-                Text("将作为 \(source.title) 主题回复发送。")
-                    .font(.footnote)
-                    .foregroundStyle(PaperTheme.mutedText)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(target.displayTitle)
+                        .font(.headline)
+                        .foregroundStyle(PaperTheme.ink)
+
+                    HStack(alignment: .center, spacing: 10) {
+                        Text("将作为 \(source.title) \(target.composerDescription)发送。")
+                            .font(.footnote)
+                            .foregroundStyle(PaperTheme.mutedText)
+
+                        Spacer(minLength: 0)
+
+                        if case .reply = target {
+                            Button("改为回复主题") {
+                                target = .thread
+                            }
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(PaperTheme.accent)
+                            .disabled(isSubmitting)
+                        }
+                    }
+                    .padding(12)
+                    .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                if case let .reply(targetReply) = target {
+                    ForumQuoteBlockCard(
+                        quote: ForumQuoteBlock(
+                            author: targetReply.author,
+                            createdAt: targetReply.createdAt,
+                            body: targetReply.bodyPreview
+                        ),
+                        fontSize: 16
+                    )
+                }
 
                 if source == .nga {
-                    PhotosPicker(
-                        selection: $selectedPhotoItems,
-                        maxSelectionCount: 9,
-                        matching: .images
-                    ) {
-                        Label("添加图片", systemImage: "photo.on.rectangle.angled")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(PaperTheme.accent)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    HStack(spacing: 12) {
+                        PhotosPicker(
+                            selection: $selectedPhotoItems,
+                            maxSelectionCount: 9,
+                            matching: .images
+                        ) {
+                            Label("添加图片", systemImage: "photo.on.rectangle.angled")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(PaperTheme.accent)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .disabled(isSubmitting)
+
+                        Button {
+                            showsEmojiPicker = true
+                        } label: {
+                            Label("添加表情", systemImage: "face.smiling")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(PaperTheme.accent)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isSubmitting)
                     }
-                    .disabled(isSubmitting)
 
                     if !attachments.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -1557,14 +1688,17 @@ private struct ReplyComposerSheet: View {
                     }
                 }
 
-                TextEditor(text: $text)
-                    .scrollContentBackground(.hidden)
-                    .padding(10)
-                    .frame(minHeight: 180)
-                    .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                ReplyComposerRichTextEditor(
+                    text: $text,
+                    pendingEmojiInsertion: $pendingEmojiInsertion,
+                    shouldFocus: $shouldFocusRichEditor,
+                    isEditable: !isSubmitting
+                )
+                .frame(minHeight: 180)
+                .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                 HStack {
-                    Text("\(text.trimmingCharacters(in: .whitespacesAndNewlines).count) 字")
+                    Text("\(ReplyComposerRichTextEditor.displayCharacterCount(from: text)) 字")
                         .font(.caption)
                         .foregroundStyle(PaperTheme.mutedText)
                     Spacer()
@@ -1579,7 +1713,7 @@ private struct ReplyComposerSheet: View {
             }
             .padding(20)
             .background(PaperBackground())
-            .navigationTitle("回复主题")
+            .navigationTitle("写回复")
             .navigationBarTitleDisplayMode(.inline)
             .onChange(of: selectedPhotoItems) { _, items in
                 guard !items.isEmpty else { return }
@@ -1610,6 +1744,13 @@ private struct ReplyComposerSheet: View {
                 Button("好", role: .cancel) {}
             } message: {
                 Text(imageLoadErrorMessage ?? "请换一张图片重试。")
+            }
+            .sheet(isPresented: $showsEmojiPicker) {
+                NGAEmojiPickerSheet { emoji in
+                    pendingEmojiInsertion = emoji
+                    shouldFocusRichEditor = true
+                    showsEmojiPicker = false
+                }
             }
         }
     }
@@ -1672,6 +1813,609 @@ private struct ReplyComposerSheet: View {
         } catch {
             imageLoadErrorMessage = error.localizedDescription
             selectedPhotoItems = []
+        }
+    }
+}
+
+private struct NGAEmojiPickerSheet: View {
+    let onSelect: (NGAForumEmojiItem) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedGroup: NGAForumEmojiGroup = .ng
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 5)
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 14) {
+                Picker("表情分组", selection: $selectedGroup) {
+                    ForEach(NGAForumEmojiGroup.allCases) { group in
+                        Text(group.title).tag(group)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text("一期先按图片表情插入正文，连续点选会依次追加到回帖末尾。")
+                    .font(.footnote)
+                    .foregroundStyle(PaperTheme.mutedText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(selectedGroup.items) { emoji in
+                            NGAEmojiPickerItemView(
+                                emoji: emoji,
+                                onSelect: onSelect
+                            )
+                        }
+                    }
+                    .padding(.bottom, 8)
+                }
+            }
+            .padding(20)
+            .background(PaperBackground())
+            .navigationTitle("添加表情")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+private struct NGAEmojiPickerItemView: View {
+    let emoji: NGAForumEmojiItem
+    let onSelect: (NGAForumEmojiItem) -> Void
+    @State private var loadedImage: UIImage?
+    @State private var loadFailed = false
+
+    var body: some View {
+        Button {
+            onSelect(emoji.withPreviewImage(loadedImage))
+        } label: {
+            VStack(spacing: 6) {
+                Group {
+                    if let loadedImage {
+                        Image(uiImage: loadedImage)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                    } else if loadFailed {
+                        Image(systemName: "face.smiling.inverse")
+                            .resizable()
+                            .scaledToFit()
+                            .padding(10)
+                            .foregroundStyle(PaperTheme.mutedText)
+                    } else {
+                        ProgressView()
+                            .tint(PaperTheme.mutedText)
+                    }
+                }
+                .frame(width: 44, height: 44)
+
+                Text(emoji.displayName)
+                    .font(.caption2)
+                    .foregroundStyle(PaperTheme.mutedText)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .task(id: emoji.id) {
+            guard loadedImage == nil, !loadFailed else { return }
+            do {
+                loadedImage = try await NGAImageLoader.load(url: emoji.imageURL)
+            } catch {
+                loadFailed = true
+            }
+        }
+    }
+}
+
+private enum NGAForumEmojiGroup: String, CaseIterable, Identifiable {
+    case ng
+    case ac
+    case a2
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ng:
+            return "NG娘"
+        case .ac:
+            return "AC娘v1"
+        case .a2:
+            return "AC娘v2"
+        }
+    }
+
+    var items: [NGAForumEmojiItem] {
+        switch self {
+        case .ng:
+            return (1...40).map {
+                NGAForumEmojiItem(group: self, displayName: "\($0)", filename: "ng_\($0).png")
+            }
+        case .ac:
+            return (1...40).map {
+                NGAForumEmojiItem(group: self, displayName: "\($0)", filename: "ac\($0).png")
+            }
+        case .a2:
+            return (1...40).map {
+                let name = String(format: "%02d", $0)
+                return NGAForumEmojiItem(group: self, displayName: name, filename: "a2_\(name).png")
+            }
+        }
+    }
+}
+
+private struct NGAForumEmojiItem: Identifiable {
+    let group: NGAForumEmojiGroup
+    let displayName: String
+    let filename: String
+    private let imageURLOverride: URL?
+    private let previewImageOverride: UIImage?
+
+    init(group: NGAForumEmojiGroup, displayName: String, filename: String) {
+        self.group = group
+        self.displayName = displayName
+        self.filename = filename
+        self.imageURLOverride = nil
+        self.previewImageOverride = nil
+    }
+
+    var id: String { filename }
+
+    var imageURL: URL {
+        imageURLOverride ?? URL(string: "https://img4.nga.178.com/ngabbs/post/smile/\(filename)")!
+    }
+
+    var markup: String {
+        "[img]\(imageURL.absoluteString)[/img]"
+    }
+
+    var previewImage: UIImage? {
+        previewImageOverride
+    }
+
+    func withPreviewImage(_ image: UIImage?) -> NGAForumEmojiItem {
+        NGAForumEmojiItem(
+            group: group,
+            displayName: displayName,
+            filename: filename,
+            imageURLOverride: imageURLOverride,
+            previewImageOverride: image
+        )
+    }
+
+    init?(filename: String, imageURL: URL) {
+        self.filename = filename
+        switch true {
+        case filename.hasPrefix("ng_"):
+            group = .ng
+            displayName = filename
+                .replacingOccurrences(of: "ng_", with: "")
+                .replacingOccurrences(of: ".png", with: "")
+        case filename.hasPrefix("ac"):
+            group = .ac
+            displayName = filename
+                .replacingOccurrences(of: "ac", with: "")
+                .replacingOccurrences(of: ".png", with: "")
+        case filename.hasPrefix("a2_"):
+            group = .a2
+            displayName = filename
+                .replacingOccurrences(of: "a2_", with: "")
+                .replacingOccurrences(of: ".png", with: "")
+        default:
+            return nil
+        }
+        imageURLOverride = imageURL
+        previewImageOverride = nil
+    }
+
+    private init(
+        group: NGAForumEmojiGroup,
+        displayName: String,
+        filename: String,
+        imageURLOverride: URL?,
+        previewImageOverride: UIImage?
+    ) {
+        self.group = group
+        self.displayName = displayName
+        self.filename = filename
+        self.imageURLOverride = imageURLOverride
+        self.previewImageOverride = previewImageOverride
+    }
+}
+
+private struct ReplyComposerRichTextEditor: UIViewRepresentable {
+    private static let emojiAnchorCharacter = "\u{200B}"
+    private static let emojiMarkupAttribute = NSAttributedString.Key("ForumHubEmojiMarkup")
+    @Binding var text: String
+    @Binding var pendingEmojiInsertion: NGAForumEmojiItem?
+    @Binding var shouldFocus: Bool
+    let isEditable: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, pendingEmojiInsertion: $pendingEmojiInsertion, shouldFocus: $shouldFocus)
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.backgroundColor = .clear
+        textView.delegate = context.coordinator
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.textColor = UIColor(PaperTheme.secondaryInk)
+        textView.tintColor = UIColor(PaperTheme.accent)
+        textView.allowsEditingTextAttributes = true
+        textView.isScrollEnabled = true
+        textView.keyboardDismissMode = .interactive
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 6, bottom: 12, right: 6)
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.typingAttributes = Coordinator.baseAttributes(for: textView.font ?? .preferredFont(forTextStyle: .body))
+        context.coordinator.attach(to: textView)
+        context.coordinator.synchronizeExternalMarkupIfNeeded(text, to: textView)
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        textView.isEditable = isEditable
+        textView.isSelectable = true
+        context.coordinator.attach(to: textView)
+        context.coordinator.synchronizeExternalMarkupIfNeeded(text, to: textView)
+        context.coordinator.schedulePendingEmojiInsertionIfNeeded(into: textView)
+        context.coordinator.updateFocusIfNeeded(for: textView)
+    }
+
+    static func displayCharacterCount(from markup: String) -> Int {
+        let components = parseComponents(from: markup)
+        return components.reduce(0) { partial, component in
+            switch component {
+            case let .text(text):
+                return partial + text.trimmingCharacters(in: .whitespacesAndNewlines).count
+            case .emoji:
+                return partial + 1
+            }
+        }
+    }
+
+    private static let emojiPattern = #"\[img\](https://img4\.nga\.178\.com/ngabbs/post/smile/([^/\]]+))\[/img\]"#
+
+    static func parseComponents(from markup: String) -> [ReplyComposerComponent] {
+        guard let regex = try? NSRegularExpression(pattern: emojiPattern, options: [.caseInsensitive]) else {
+            return [.text(markup)]
+        }
+
+        let range = NSRange(markup.startIndex..<markup.endIndex, in: markup)
+        let matches = regex.matches(in: markup, range: range)
+        guard !matches.isEmpty else { return [.text(markup)] }
+
+        var components: [ReplyComposerComponent] = []
+        var cursor = markup.startIndex
+
+        for match in matches {
+            guard let matchRange = Range(match.range(at: 0), in: markup) else { continue }
+
+            if cursor < matchRange.lowerBound {
+                components.append(.text(String(markup[cursor..<matchRange.lowerBound])))
+            }
+
+            if let urlRange = Range(match.range(at: 1), in: markup),
+               let filenameRange = Range(match.range(at: 2), in: markup),
+               let imageURL = URL(string: String(markup[urlRange])),
+               let emoji = NGAForumEmojiItem(filename: String(markup[filenameRange]), imageURL: imageURL) {
+                components.append(.emoji(emoji))
+            } else {
+                components.append(.text(String(markup[matchRange])))
+            }
+
+            cursor = matchRange.upperBound
+        }
+
+        if cursor < markup.endIndex {
+            components.append(.text(String(markup[cursor...])))
+        }
+
+        return components
+    }
+
+    enum ReplyComposerComponent {
+        case text(String)
+        case emoji(NGAForumEmojiItem)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        private static let emojiInsertionRetryDelay: TimeInterval = 0.05
+        private static let maximumEmojiInsertionRetryCount = 12
+        @Binding private var text: String
+        @Binding private var pendingEmojiInsertion: NGAForumEmojiItem?
+        @Binding private var shouldFocus: Bool
+        private weak var textView: UITextView?
+        private var isApplyingProgrammaticChange = false
+        private var hasInitializedTextView = false
+        private var scheduledEmojiInsertionID: String?
+        private var lastCommittedMarkup = ""
+
+        init(
+            text: Binding<String>,
+            pendingEmojiInsertion: Binding<NGAForumEmojiItem?>,
+            shouldFocus: Binding<Bool>
+        ) {
+            _text = text
+            _pendingEmojiInsertion = pendingEmojiInsertion
+            _shouldFocus = shouldFocus
+        }
+
+        func attach(to textView: UITextView) {
+            self.textView = textView
+        }
+
+        func synchronizeExternalMarkupIfNeeded(_ markup: String, to textView: UITextView) {
+            guard !hasInitializedTextView || markup != lastCommittedMarkup else {
+                hasInitializedTextView = true
+                return
+            }
+
+            let selectedRange = textView.selectedRange
+            let font = textView.font ?? .preferredFont(forTextStyle: .body)
+            isApplyingProgrammaticChange = true
+            textView.attributedText = attributedText(from: markup, font: font, textView: textView)
+            textView.typingAttributes = Self.baseAttributes(for: font)
+            textView.selectedRange = NSRange(location: min(selectedRange.location, textView.attributedText.length), length: 0)
+            isApplyingProgrammaticChange = false
+            hasInitializedTextView = true
+            lastCommittedMarkup = markup
+        }
+
+        func schedulePendingEmojiInsertionIfNeeded(into textView: UITextView) {
+            guard let emoji = pendingEmojiInsertion else {
+                scheduledEmojiInsertionID = nil
+                return
+            }
+            guard scheduledEmojiInsertionID != emoji.id else { return }
+
+            scheduledEmojiInsertionID = emoji.id
+            attemptEmojiInsertion(emoji, into: textView, attempt: 0)
+        }
+
+        private func performEmojiInsertion(_ emoji: NGAForumEmojiItem, into textView: UITextView) -> Bool {
+            guard textView.window != nil else { return false }
+
+            let mutable = NSMutableAttributedString(attributedString: textView.attributedText)
+            let insertionRange = textView.selectedRange
+            let font = textView.font ?? .preferredFont(forTextStyle: .body)
+            let replacement = NSMutableAttributedString(attributedString: Self.makeEmojiAttachment(for: emoji, font: font, textView: textView))
+            replacement.append(NSAttributedString(string: ReplyComposerRichTextEditor.emojiAnchorCharacter, attributes: Self.baseAttributes(for: font)))
+            mutable.replaceCharacters(in: insertionRange, with: replacement)
+
+            isApplyingProgrammaticChange = true
+            textView.attributedText = mutable
+            textView.typingAttributes = Self.baseAttributes(for: font)
+            let nextLocation = min(insertionRange.location + replacement.length, textView.attributedText.length)
+            textView.selectedRange = NSRange(location: nextLocation, length: 0)
+            isApplyingProgrammaticChange = false
+            return true
+        }
+
+        private func attemptEmojiInsertion(_ emoji: NGAForumEmojiItem, into textView: UITextView, attempt: Int) {
+            let work = { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                guard self.pendingEmojiInsertion?.id == emoji.id else {
+                    self.scheduledEmojiInsertionID = nil
+                    return
+                }
+
+                if self.performEmojiInsertion(emoji, into: textView) {
+                    self.commitMarkup(from: textView)
+                    self.pendingEmojiInsertion = nil
+                    self.scheduledEmojiInsertionID = nil
+                    return
+                }
+
+                guard attempt < Self.maximumEmojiInsertionRetryCount else {
+                    self.scheduledEmojiInsertionID = nil
+                    return
+                }
+
+                self.attemptEmojiInsertion(emoji, into: textView, attempt: attempt + 1)
+            }
+
+            if attempt == 0 {
+                DispatchQueue.main.async(execute: work)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.emojiInsertionRetryDelay, execute: work)
+            }
+        }
+
+        func updateFocusIfNeeded(for textView: UITextView) {
+            guard shouldFocus else { return }
+            if !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.shouldFocus = false
+            }
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            guard !isApplyingProgrammaticChange else { return }
+            commitMarkup(from: textView)
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            guard !isApplyingProgrammaticChange else { return }
+            let adjustedLocation = adjustedCaretLocation(for: textView.selectedRange.location, in: textView.attributedText)
+            guard adjustedLocation != textView.selectedRange.location else { return }
+
+            isApplyingProgrammaticChange = true
+            textView.selectedRange = NSRange(location: adjustedLocation, length: 0)
+            isApplyingProgrammaticChange = false
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText: String
+        ) -> Bool {
+            guard !isApplyingProgrammaticChange else { return true }
+
+            let adjustedRange = adjustedEditingRange(for: range, replacementText: replacementText, in: textView.attributedText)
+            guard adjustedRange != range else { return true }
+
+            let font = textView.font ?? .preferredFont(forTextStyle: .body)
+            let replacement = NSAttributedString(string: replacementText, attributes: Self.baseAttributes(for: font))
+            let mutable = NSMutableAttributedString(attributedString: textView.attributedText)
+            mutable.replaceCharacters(in: adjustedRange, with: replacement)
+
+            isApplyingProgrammaticChange = true
+            textView.attributedText = mutable
+            textView.typingAttributes = Self.baseAttributes(for: font)
+            let nextLocation = min(adjustedRange.location + replacement.length, textView.attributedText.length)
+            textView.selectedRange = NSRange(location: nextLocation, length: 0)
+            isApplyingProgrammaticChange = false
+            commitMarkup(from: textView)
+            return false
+        }
+
+        private func attributedText(from markup: String, font: UIFont, textView: UITextView) -> NSAttributedString {
+            let result = NSMutableAttributedString()
+            let baseAttributes = Self.baseAttributes(for: font)
+
+            for component in ReplyComposerRichTextEditor.parseComponents(from: markup) {
+                switch component {
+                case let .text(text):
+                    result.append(NSAttributedString(string: text, attributes: baseAttributes))
+                case let .emoji(emoji):
+                    result.append(Self.makeEmojiAttachment(for: emoji, font: font, textView: textView))
+                    result.append(NSAttributedString(string: ReplyComposerRichTextEditor.emojiAnchorCharacter, attributes: baseAttributes))
+                }
+            }
+
+            if result.length == 0 {
+                result.append(NSAttributedString(string: "", attributes: baseAttributes))
+            }
+            return result
+        }
+
+        private func serialize(_ attributedText: NSAttributedString) -> String {
+            let fullRange = NSRange(location: 0, length: attributedText.length)
+            var result = ""
+
+            attributedText.enumerateAttributes(in: fullRange, options: []) { attributes, range, _ in
+                if let markup = attributes[ReplyComposerRichTextEditor.emojiMarkupAttribute] as? String {
+                    result += markup
+                } else {
+                    result += attributedText.attributedSubstring(from: range).string
+                        .replacingOccurrences(of: ReplyComposerRichTextEditor.emojiAnchorCharacter, with: "")
+                }
+            }
+
+            return result
+        }
+
+        private func commitMarkup(from textView: UITextView) {
+            let serialized = serialize(textView.attributedText)
+            lastCommittedMarkup = serialized
+            text = serialized
+            hasInitializedTextView = true
+        }
+
+        private func adjustedCaretLocation(for location: Int, in attributedText: NSAttributedString) -> Int {
+            let length = attributedText.length
+            guard length > 0, location < length else { return location }
+
+            if isEmojiAnchor(at: location, in: attributedText), hasEmojiAttachment(at: location - 1, in: attributedText) {
+                return min(location + 1, length)
+            }
+
+            return location
+        }
+
+        private func adjustedEditingRange(
+            for range: NSRange,
+            replacementText: String,
+            in attributedText: NSAttributedString
+        ) -> NSRange {
+            guard replacementText.isEmpty, range.length == 1 else { return range }
+
+            let location = range.location
+            let length = attributedText.length
+            guard location >= 0, location < length else { return range }
+
+            if isEmojiAnchor(at: location, in: attributedText), hasEmojiAttachment(at: location - 1, in: attributedText) {
+                return NSRange(location: max(location - 1, 0), length: min(2, length - max(location - 1, 0)))
+            }
+
+            if hasEmojiAttachment(at: location, in: attributedText),
+               isEmojiAnchor(at: location + 1, in: attributedText) {
+                return NSRange(location: location, length: min(2, length - location))
+            }
+
+            return range
+        }
+
+        private func isEmojiAnchor(at location: Int, in attributedText: NSAttributedString) -> Bool {
+            guard location >= 0, location < attributedText.length else { return false }
+            let substring = attributedText.attributedSubstring(from: NSRange(location: location, length: 1)).string
+            return substring == ReplyComposerRichTextEditor.emojiAnchorCharacter
+        }
+
+        private func hasEmojiAttachment(at location: Int, in attributedText: NSAttributedString) -> Bool {
+            guard location >= 0, location < attributedText.length else { return false }
+            return attributedText.attribute(ReplyComposerRichTextEditor.emojiMarkupAttribute, at: location, effectiveRange: nil) != nil
+        }
+
+        static func baseAttributes(for font: UIFont) -> [NSAttributedString.Key: Any] {
+            [
+                .font: font,
+                .foregroundColor: UIColor(PaperTheme.secondaryInk)
+            ]
+        }
+
+        private static func makeEmojiAttachment(for emoji: NGAForumEmojiItem, font: UIFont, textView: UITextView) -> NSAttributedString {
+            let attachment = NSTextAttachment()
+            attachment.bounds = CGRect(x: 0, y: -4, width: font.lineHeight + 8, height: font.lineHeight + 8)
+            attachment.image = emoji.previewImage ?? placeholderEmojiImage(side: font.lineHeight + 8)
+            let result = NSMutableAttributedString(attachment: attachment)
+            result.addAttribute(ReplyComposerRichTextEditor.emojiMarkupAttribute, value: emoji.markup, range: NSRange(location: 0, length: result.length))
+            if emoji.previewImage == nil {
+                loadEmojiImageIfNeeded(for: attachment, emoji: emoji, textView: textView)
+            }
+            return result
+        }
+
+        private static func placeholderEmojiImage(side: CGFloat) -> UIImage {
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side))
+            return renderer.image { _ in
+                let rect = CGRect(origin: .zero, size: CGSize(width: side, height: side))
+                UIColor(PaperTheme.paperDeep).setFill()
+                UIBezierPath(roundedRect: rect, cornerRadius: 6).fill()
+
+                let config = UIImage.SymbolConfiguration(pointSize: side * 0.56, weight: .regular)
+                let image = UIImage(systemName: "face.smiling", withConfiguration: config)?
+                    .withTintColor(UIColor(PaperTheme.mutedText), renderingMode: .alwaysOriginal)
+                let imageRect = CGRect(x: side * 0.2, y: side * 0.2, width: side * 0.6, height: side * 0.6)
+                image?.draw(in: imageRect)
+            }
+        }
+
+        private static func loadEmojiImageIfNeeded(for attachment: NSTextAttachment, emoji: NGAForumEmojiItem, textView: UITextView) {
+            Task {
+                if let image = try? await NGAImageLoader.load(url: emoji.imageURL) {
+                    await MainActor.run {
+                        attachment.image = image
+                        let fullRange = NSRange(location: 0, length: textView.attributedText.length)
+                        textView.layoutManager.invalidateDisplay(forCharacterRange: fullRange)
+                        textView.layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+                        textView.setNeedsDisplay()
+                    }
+                }
+            }
         }
     }
 }
@@ -1741,6 +2485,70 @@ enum ThreadDetailPaginationPolicy {
     }
 }
 
+private struct SnapshotPreviewSheet: View {
+    let images: [UIImage]
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedIndex = 0
+    @State private var showsShareSheet = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if images.isEmpty {
+                    ContentUnavailableView(
+                        "暂无可预览图片",
+                        systemImage: "photo",
+                        description: Text("请返回后重试。")
+                    )
+                } else {
+                    TabView(selection: $selectedIndex) {
+                        ForEach(Array(images.enumerated()), id: \.offset) { index, image in
+                            GeometryReader { proxy in
+                                ScrollView([.horizontal, .vertical]) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(width: proxy.size.width, alignment: .center)
+                                        .frame(minHeight: proxy.size.height)
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(Color.black.opacity(0.92))
+                            }
+                            .tag(index)
+                        }
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: images.count > 1 ? .automatic : .never))
+                    .background(Color.black.opacity(0.92))
+                }
+            }
+            .navigationTitle(images.count > 1 ? "\(selectedIndex + 1) / \(images.count)" : "截图预览")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") {
+                        dismiss()
+                    }
+                    .foregroundStyle(.white)
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    if !images.isEmpty {
+                        Button("分享") {
+                            showsShareSheet = true
+                        }
+                        .foregroundStyle(.white)
+                    }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showsShareSheet) {
+            ActivityShareView(activityItems: images)
+                .presentationDetents([.medium, .large])
+        }
+    }
+}
+
 private struct ForumRichContentView: View {
     let blocks: [ForumContentBlock]
     let fontSize: CGFloat
@@ -1775,9 +2583,54 @@ private struct ForumRichContentView: View {
                         activeGIFPlaybackImageIDs: activeGIFPlaybackImageIDs,
                         scrollTrackingSpaceName: scrollTrackingSpaceName
                     )
+                case let .quote(quote):
+                    ForumQuoteBlockCard(quote: quote, fontSize: fontSize)
                 }
             }
         }
+    }
+}
+
+struct ForumQuoteBlockCard: View {
+    let quote: ForumQuoteBlock
+    let fontSize: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("+ R")
+                    .font(.caption.weight(.black))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(PaperTheme.accent.opacity(0.8), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                Text("by \(quote.author)")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(PaperTheme.ink)
+
+                if quote.createdAt.isUsefulForumValue {
+                    Text("(\(quote.createdAt))")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(PaperTheme.mutedText)
+                }
+            }
+
+            Text(quote.body)
+                .font(.system(size: max(fontSize - 1, 15), design: .serif))
+                .foregroundStyle(PaperTheme.secondaryInk)
+                .lineSpacing(fontSize >= 18 ? 5 : 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(0.035))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.black.opacity(0.06), lineWidth: 0.8)
+                )
+        )
     }
 }
 

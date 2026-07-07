@@ -133,7 +133,7 @@ struct WebForumParser {
 
         var replies = contentMatches.enumerated().compactMap { index, match -> Reply? in
             guard match.count >= 2 else { return nil }
-            let body = match[1].cleanedForumText
+            let body = match[1].structuredForumText
             guard body.count >= 2 else { return nil }
 
             return Reply(

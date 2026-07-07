@@ -6,6 +6,7 @@ import UIKit
 enum ThreadSnapshotScope {
     case mainPost
     case loadedContent
+    case singleReply(Reply)
 }
 
 @MainActor
@@ -17,7 +18,19 @@ enum ThreadSnapshotRenderer {
         replies: [Reply],
         scope: ThreadSnapshotScope
     ) async throws -> [UIImage] {
-        let includedReplies = scope == .mainPost ? [] : replies
+        let includedReplies: [Reply]
+        let includesMainPostOnFirstPage: Bool
+        switch scope {
+        case .mainPost:
+            includedReplies = []
+            includesMainPostOnFirstPage = true
+        case .loadedContent:
+            includedReplies = replies
+            includesMainPostOnFirstPage = true
+        case let .singleReply(reply):
+            includedReplies = [reply]
+            includesMainPostOnFirstPage = false
+        }
         let imageURLs = collectImageURLs(thread: thread, replies: includedReplies)
         let loadedImages = await loadImages(from: imageURLs)
         let chunks = replyChunks(includedReplies)
@@ -27,7 +40,7 @@ enum ThreadSnapshotRenderer {
                 thread: thread,
                 replies: replies,
                 loadedImages: loadedImages,
-                includesMainPost: index == 0,
+                includesMainPost: includesMainPostOnFirstPage && index == 0,
                 pageNumber: index + 1,
                 pageCount: chunks.count
             )
@@ -211,6 +224,8 @@ private struct SnapshotRichContent: View {
                             .background(PaperTheme.paperDeep.opacity(0.3))
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
+                case let .quote(quote):
+                    ForumQuoteBlockCard(quote: quote, fontSize: fontSize)
                 }
             }
         }

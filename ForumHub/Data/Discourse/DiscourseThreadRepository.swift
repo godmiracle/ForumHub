@@ -6,6 +6,7 @@ struct DiscourseThreadRepository: ThreadRepository {
         supportsSearch: true,
         supportsFavorites: false,
         supportsReply: false,
+        supportsReplyTargeting: false,
         supportsAuthentication: true,
         supportsFeedPagination: true
     )
@@ -123,7 +124,12 @@ struct DiscourseThreadRepository: ThreadRepository {
         throw ForumProviderError.unsupported("Discourse 站点当前未接入主题收藏。")
     }
 
-    func replyThread(tid: Int, content: String, attachments: [ReplyAttachmentUpload]) async throws {
+    func replyThread(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload]
+    ) async throws {
         throw ForumProviderError.unsupported("Discourse 站点当前未接入主题回复。")
     }
 
@@ -234,6 +240,7 @@ private enum DiscourseMapper {
                 ?? post.userID.flatMap { users[$0]?.avatarTemplate }
             return Reply(
                 id: post.id,
+                sourcePostID: post.id,
                 author: post.username,
                 createdAt: formattedTime(post.createdAt),
                 body: normalizedContent(post.cooked ?? post.raw ?? ""),

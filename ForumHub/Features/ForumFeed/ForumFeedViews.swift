@@ -269,7 +269,12 @@ struct BlockableThreadLink: View {
 
     var body: some View {
         NavigationLink {
-            ThreadDetailView(thread: thread, repository: repository, favoriteThreads: favoriteThreads)
+            ThreadDetailView(
+                thread: thread,
+                repository: repository,
+                blockedUsers: blockedUsers,
+                favoriteThreads: favoriteThreads
+            )
         } label: {
             ThreadRow(
                 thread: thread,

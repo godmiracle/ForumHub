@@ -82,6 +82,13 @@
 - Unified thread-detail image tap handling so GIFs and static images both reopen the same preview surface reliably
 - Refined thread-detail image preview actions so save and close sit together in a right-side centered floating group while link actions remain in the long-press menu
 - Reduced long-thread GIF energy cost by keeping inline animation active only for a few images near the visible viewport
+- Upgraded thread-detail replies to carry stable source post IDs, added a shared reply-target model, let the composer retarget from thread reply to per-floor reply through the same sheet flow, and render quoted floor replies with an inline reference card so readers can tell whether a post answers the thread or a specific floor
+- Removed the default "回复主题" badge from normal replies and added compatibility for legacy NGA reply headers like `Reply to Reply Post by ...`, so older floor-to-floor replies can also render more like structured references
+- Expanded the per-floor detail menu with user blocking and single-floor snapshot sharing, and wired blocked users into thread detail so blocked replies disappear immediately there as well
+- Restored per-floor snapshot behavior so both the main post and reply floors expose "截图此层", and changed snapshot generation back to a preview-first flow instead of jumping straight into the system share sheet
+- Added the first NGA reply-emoji flow in the composer: users can open grouped NG娘 / AC娘v1 / AC娘v2 pickers and append smile assets into the reply body as image UBB markup without touching the attachment upload pipeline
+- Upgraded the NGA reply composer from plain text to a rich emoji-aware editor so selected smile assets insert at the current caret position and render inline in the input area while still serializing back to the original body markup for posting
+- Stabilized inline emoji editing in the NGA reply composer by giving each inserted smile a hidden text anchor, preventing attachment-only input rows from rendering as blank while keeping outgoing markup unchanged
 
 ## How To Update
 

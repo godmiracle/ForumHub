@@ -14,6 +14,7 @@ It includes:
 - Floor labels
 - Favorites
 - Reply composer
+- Reply targeting for thread-level and per-floor reply flows
 - Rich image handling
 
 ## Key Files
@@ -38,5 +39,7 @@ It includes:
 - The page-anchor geometry path should stay lightweight and page-scoped. With roughly 20 replies per page, per-reply geometry listeners are unnecessary and can make long-thread scrolling feel heavier.
 - The page picker should feel visually related to the floating controls: compact glass surfaces, quick first/last-page shortcuts, and a lightweight confirmation row instead of a dense divider-heavy list.
 - Floor labels in NGA thread detail should prefer source-provided floor numbers and only fall back to page-aware local inference when the parser cannot recover them.
+- Reply composition should stay as one shared sheet. The main action bar opens a thread-level reply, while per-floor menus can retarget the same composer to a specific floor when the active source exposes stable reply identifiers.
+- When the source returns quote metadata, the detail body should render it as a dedicated inline quote card instead of flattening it into plain text, so users can immediately distinguish "回复主题" from "回复某层".
 - Reply pagination must protect against duplicate content from source-specific continuation pages.
 - Image handling mixes static images, GIF playback, preview, zoom, and save-to-photos behavior.

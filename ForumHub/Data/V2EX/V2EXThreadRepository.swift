@@ -6,6 +6,7 @@ struct V2EXThreadRepository: ThreadRepository {
         supportsSearch: false,
         supportsFavorites: false,
         supportsReply: false,
+        supportsReplyTargeting: false,
         supportsAuthentication: true,
         supportsFeedPagination: true
     )
@@ -172,7 +173,12 @@ struct V2EXThreadRepository: ThreadRepository {
         throw ForumProviderError.unsupported("V2EX 当前官方 API 未提供主题收藏接口。")
     }
 
-    func replyThread(tid: Int, content: String, attachments: [ReplyAttachmentUpload]) async throws {
+    func replyThread(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload]
+    ) async throws {
         throw ForumProviderError.unsupported("V2EX 当前官方 API 未提供主题回复接口。")
     }
 
@@ -320,6 +326,7 @@ enum V2EXMapper {
         let mappedReplies = replies.map { reply in
             Reply(
                 id: reply.id,
+                sourcePostID: reply.id,
                 author: reply.member?.username ?? "未知作者",
                 createdAt: formattedTime(reply.created),
                 body: normalizedContent(reply.contentRendered ?? reply.content ?? ""),

@@ -13,7 +13,12 @@ protocol ThreadRepository {
     func fetchThread(tid: Int, page: Int) async throws -> ThreadDetailFetchResult
     func addFavoriteThread(tid: Int) async throws
     func removeFavoriteThread(tid: Int) async throws
-    func replyThread(tid: Int, content: String, attachments: [ReplyAttachmentUpload]) async throws
+    func replyThread(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload]
+    ) async throws
 }
 
 struct NGALiveThreadRepository: ThreadRepository {
@@ -22,6 +27,7 @@ struct NGALiveThreadRepository: ThreadRepository {
         supportsSearch: true,
         supportsFavorites: true,
         supportsReply: true,
+        supportsReplyTargeting: true,
         supportsAuthentication: true,
         supportsFeedPagination: true
     )
@@ -282,24 +288,38 @@ struct NGALiveThreadRepository: ThreadRepository {
         }
     }
 
-    func replyThread(tid: Int, content: String, attachments: [ReplyAttachmentUpload]) async throws {
+    func replyThread(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload]
+    ) async throws {
         let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedContent.isEmpty else {
             throw NGARequestError.apiMessage("回复内容不能为空。")
         }
+        if case let .reply(targetReply) = target,
+           targetReply.sourcePostID == nil {
+            throw NGARequestError.apiMessage("当前楼层暂时缺少可回复的帖子标识。")
+        }
 
-        let context = try await fetchReplyContext(tid: tid)
+        let context = try await fetchReplyContext(tid: tid, target: target)
         let uploadedAttachments = try await uploadAttachments(attachments, context: context)
         let url = URL(string: "https://bbs.nga.cn/post.php")!
+        let composedContent = composedPostContent(trimmedContent, context: context)
         var form = [
             "step": "2",
-            "action": "reply",
+            "action": context.action.rawValue,
             "tid": "\(tid)",
             "fid": "\(context.fid)",
-            "post_content": trimmedContent,
+            "post_content": composedContent,
             "lite": "js",
             "__inchst": "UTF8"
         ]
+        if case let .reply(targetReply) = target,
+           let sourcePostID = targetReply.sourcePostID {
+            form["pid"] = "\(sourcePostID)"
+        }
         if !uploadedAttachments.attachments.isEmpty {
             form["attachments"] = uploadedAttachments.attachments.joined(separator: "\t")
             form["attachments_check"] = uploadedAttachments.attachmentChecks.joined(separator: "\t")
@@ -395,13 +415,26 @@ struct NGALiveThreadRepository: ThreadRepository {
         )
     }
 
-    private func fetchReplyContext(tid: Int) async throws -> NGAReplyContext {
+    private func fetchReplyContext(tid: Int, target: ThreadReplyTarget) async throws -> NGAReplyContext {
+        let action: NGAReplyPostAction = {
+            switch target {
+            case .thread:
+                return .reply
+            case .reply:
+                return .quote
+            }
+        }()
         var components = URLComponents(string: "https://bbs.nga.cn/post.php")!
-        components.queryItems = [
-            URLQueryItem(name: "action", value: "reply"),
+        var queryItems = [
+            URLQueryItem(name: "action", value: action.rawValue),
             URLQueryItem(name: "tid", value: "\(tid)"),
             URLQueryItem(name: "lite", value: "js")
         ]
+        if case let .reply(targetReply) = target,
+           let sourcePostID = targetReply.sourcePostID {
+            queryItems.append(URLQueryItem(name: "pid", value: "\(sourcePostID)"))
+        }
+        components.queryItems = queryItems
 
         guard let url = components.url else {
             throw NGARequestError.invalidResponse
@@ -420,6 +453,7 @@ struct NGALiveThreadRepository: ThreadRepository {
         }
 
         let auth = dataDictionary["auth"] as? String
+        let prefilledContent = (dataDictionary["content"] as? String)?.decodedUnicodeEscapes
         let attachURLRawValue = dataDictionary["attach_url"] as? String
         let attachURLBase = URL(string: "https://bbs.nga.cn/")
         let attachURL: URL?
@@ -435,7 +469,23 @@ struct NGALiveThreadRepository: ThreadRepository {
             attachURL = nil
         }
 
-        return NGAReplyContext(fid: fid, auth: auth, attachURL: attachURL)
+        return NGAReplyContext(
+            fid: fid,
+            auth: auth,
+            attachURL: attachURL,
+            action: action,
+            prefilledContent: prefilledContent
+        )
+    }
+
+    private func composedPostContent(_ trimmedContent: String, context: NGAReplyContext) -> String {
+        guard let prefilledContent = context.prefilledContent?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !prefilledContent.isEmpty
+        else {
+            return trimmedContent
+        }
+
+        return "\(prefilledContent)\n\n\(trimmedContent)"
     }
 
     private func uploadAttachments(
@@ -732,12 +782,26 @@ struct NGALiveThreadRepository: ThreadRepository {
     }
 }
 
+private enum NGAReplyPostAction: String {
+    case reply
+    case quote
+}
+
+private struct NGAReplyContext {
+    let fid: Int
+    let auth: String?
+    let attachURL: URL?
+    let action: NGAReplyPostAction
+    let prefilledContent: String?
+}
+
 struct MockThreadRepository: ThreadRepository {
     let source = ForumSource.nga
     let capabilities = ForumCapabilities(
         supportsSearch: true,
         supportsFavorites: true,
         supportsReply: true,
+        supportsReplyTargeting: true,
         supportsAuthentication: true,
         supportsFeedPagination: true
     )
@@ -820,7 +884,12 @@ struct MockThreadRepository: ThreadRepository {
 
     func removeFavoriteThread(tid: Int) async throws {}
 
-    func replyThread(tid: Int, content: String, attachments: [ReplyAttachmentUpload]) async throws {}
+    func replyThread(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload]
+    ) async throws {}
 }
 
 struct MockPagedThreadRepository: ThreadRepository {
@@ -829,6 +898,7 @@ struct MockPagedThreadRepository: ThreadRepository {
         supportsSearch: true,
         supportsFavorites: true,
         supportsReply: true,
+        supportsReplyTargeting: true,
         supportsAuthentication: false,
         supportsFeedPagination: true
     )
@@ -899,7 +969,12 @@ struct MockPagedThreadRepository: ThreadRepository {
 
     func removeFavoriteThread(tid: Int) async throws {}
 
-    func replyThread(tid: Int, content: String, attachments: [ReplyAttachmentUpload]) async throws {}
+    func replyThread(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload]
+    ) async throws {}
 
     private func pagedThread(page: Int) -> ForumThread {
         let clampedPage = max(page, 1)
@@ -908,6 +983,7 @@ struct MockPagedThreadRepository: ThreadRepository {
         let replies = (startFloor...endFloor).map { floor in
             Reply(
                 id: floor,
+                sourcePostID: floor,
                 author: floor % 3 == 0 ? "CJ" : "测试用户\(floor)",
                 createdAt: "2026-06-30 12:\(String(format: "%02d", floor % 60))",
                 body: "这是第 \(floor) 楼，用于分页与下滑翻页调试。",
@@ -945,12 +1021,6 @@ struct ThreadFetchResult {
 struct ThreadDetailFetchResult {
     let thread: ForumThread
     let rawText: String
-}
-
-private struct NGAReplyContext {
-    let fid: Int
-    let auth: String?
-    let attachURL: URL?
 }
 
 private struct NGAUploadedAttachments {

@@ -20,6 +20,7 @@ Current sources:
 - **Forum Subscription**: A locally persisted choice that controls which returned Forum Channels appear in the top navigation.
 - **Topic**: A forum thread summary shown in a Forum Feed.
 - **Thread Detail**: The first post and replies for a Topic, with local presentation options such as only-author filtering, reverse order, floor labels, image preview, and pagination.
+- **Thread Reply Target**: The destination for a reply submission inside Thread Detail. It can be the thread itself or a specific reply floor when the source supports targeted replies.
 - **Login Session**: Source-specific credentials. NGA and LINUX DO use WebKit cookies plus shared HTTP cookie storage; V2EX uses a Personal Access Token with API v2.
 - **Forum Provider**: The module behind the `ThreadRepository` seam. NGA, V2EX, and Discourse-based adapters map native data into shared domain models.
 - **Favorite Thread**: A locally persisted thread bookmark, optionally backed by a source-native favorite API when available.
@@ -32,6 +33,7 @@ Current sources:
 - Views consume domain models and do not parse NGA responses.
 - Source-specific field names, identifiers, encoding, and fallback rules stay inside their provider adapter.
 - NGA, V2EX, LINUX DO, and mock adapters satisfy the `ThreadRepository` interface.
+- Reply composition should keep one shared entry flow while letting each source adapter decide whether it supports thread-level reply only or reply-to-floor targeting.
 - Persisted member identities are scoped by Forum Source so same-name users do not collide.
 - The first launch subscribes to 网事杂谈 (`-7`), 大时代 (`706`), and 晴风村 (`-7955747`); at least one Forum Subscription remains active.
 - iCloud-backed sync is currently disabled and should not be treated as an active feature.
