@@ -173,7 +173,7 @@ Keep NGA thread fetching source-shaped, but let the detail screen accumulate con
 
 ### Status
 
-Proposed
+Accepted
 
 ### Date
 

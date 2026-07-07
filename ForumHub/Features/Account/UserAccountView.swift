@@ -22,6 +22,13 @@ struct UserAccountView: View {
     @State private var showsV2EXAccount = false
     @State private var showsLinuxDoAccount = false
     private let topAnchorID = "user-top-anchor"
+    private var authSessionRegistry: AuthSessionRegistry {
+        AuthSessionRegistry(
+            ngaLoginState: loginState,
+            v2exAuthStore: v2exAuthStore,
+            linuxDoAuthStore: linuxDoAuthStore
+        )
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -30,94 +37,20 @@ struct UserAccountView: View {
                     .frame(height: 1)
                     .id(topAnchorID)
 
+                let sessionDescriptors = authSessionRegistry.descriptors(for: availableSources)
+
                 VStack(alignment: .leading, spacing: 22) {
-                    if isAuthenticated {
-                        HStack(spacing: 14) {
-                            AvatarView(name: loginState.uid ?? "NGA")
+                    overviewCard(sessionDescriptors: sessionDescriptors)
 
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("NGA 用户")
-                                    .font(.system(size: 24, weight: .bold, design: .serif))
-                                    .foregroundStyle(PaperTheme.ink)
-                                Text("已登录")
-                                    .font(.subheadline)
-                                    .foregroundStyle(PaperTheme.mutedText)
-                            }
-                        }
+                    sectionHeader("社区账号")
 
-                        VStack(spacing: 0) {
-                            accountRow(title: "UID", value: loginState.uid ?? "未识别")
-                            Divider().overlay(PaperTheme.hairline)
-                            accountRow(title: "CID", value: maskedCID)
-                            Divider().overlay(PaperTheme.hairline)
-                            accountRow(title: "登录凭证", value: "已保存 \(loginState.cookieNames.count) 项")
-                        }
-                        .padding(.horizontal, 16)
-                        .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    } else {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Label("尚未登录 NGA", systemImage: "person.crop.circle.badge.questionmark")
-                                .font(.system(size: 22, weight: .bold, design: .serif))
-                                .foregroundStyle(PaperTheme.ink)
-
-                            Text("游客可以浏览公开内容。登录后可使用你的 NGA 会话访问需要身份的内容。")
-                                .font(.subheadline)
-                                .foregroundStyle(PaperTheme.mutedText)
-                                .lineSpacing(3)
-
-                            Button("登录 NGA") {
-                                onLogin()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(PaperTheme.accent)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(18)
-                        .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    }
-
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("社区连接")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(PaperTheme.mutedText)
-                            .padding(.bottom, 8)
-
-                        ForEach(availableSources) { source in
-                            Button {
-                                if source == .nga, !isAuthenticated {
-                                    onLogin()
-                                } else if source == .v2ex {
-                                    showsV2EXAccount = true
-                                } else if source == .linuxDo {
-                                    showsLinuxDoAccount = true
-                                }
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Circle()
-                                        .fill(sourceColor(source))
-                                        .frame(width: 10, height: 10)
-                                    Text(source.title)
-                                        .font(.headline)
-                                        .foregroundStyle(PaperTheme.ink)
-                                    Spacer()
-                                    Text(sourceStatus(source))
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(PaperTheme.mutedText)
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(PaperTheme.mutedText)
-                                }
-                                .padding(.vertical, 12)
-                            }
-                            .buttonStyle(.plain)
-
-                            if source != availableSources.last {
-                                Divider().overlay(PaperTheme.hairline)
-                            }
+                    VStack(spacing: 14) {
+                        ForEach(sessionDescriptors) { descriptor in
+                            sourceAccountCard(for: descriptor)
                         }
                     }
-                    .padding(16)
-                    .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                    sectionHeader("我的内容")
 
                     NavigationLink {
                         SavedThreadsView(
@@ -184,6 +117,8 @@ struct UserAccountView: View {
                     }
                     .buttonStyle(.plain)
 
+                    sectionHeader("应用与维护")
+
                     Button {
                         showsClearCacheConfirmation = true
                     } label: {
@@ -225,7 +160,7 @@ struct UserAccountView: View {
                         .buttonStyle(.bordered)
                         .tint(PaperTheme.accent)
 
-                        Text("退出后会清除本机 Keychain、WebView 和请求会话中的 NGA 登录 Cookie。")
+                        Text("退出后会移除本机保存的 NGA 登录会话。")
                             .font(.footnote)
                             .foregroundStyle(PaperTheme.mutedText)
                             .lineSpacing(3)
@@ -274,25 +209,117 @@ struct UserAccountView: View {
         }
     }
 
-    private var maskedCID: String {
-        guard let cid = loginState.cid, !cid.isEmpty else { return "未识别" }
-        guard cid.count > 8 else { return cid }
-        return "\(cid.prefix(4))...\(cid.suffix(4))"
+    private func overviewCard(sessionDescriptors: [AuthSessionDescriptor]) -> some View {
+        let connectedDescriptors = sessionDescriptors.filter(\.isAuthenticated)
+        let connectedTitles = connectedDescriptors.map(\.title).joined(separator: " · ")
+
+        return VStack(alignment: .leading, spacing: 14) {
+            Label("账号总览", systemImage: "person.crop.circle.badge.checkmark")
+                .font(.system(size: 22, weight: .bold, design: .serif))
+                .foregroundStyle(PaperTheme.ink)
+
+            Text(connectedDescriptors.isEmpty ? "当前未连接任何社区账号" : "已连接 \(connectedDescriptors.count) 个社区")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(PaperTheme.secondaryInk)
+
+            Text(
+                connectedDescriptors.isEmpty
+                    ? "你仍然可以浏览公开内容；有需要时再连接对应社区即可。"
+                    : "当前已连接：\(connectedTitles)。涉及账号能力时，会按各社区自己的登录方式处理。"
+            )
+            .font(.subheadline)
+            .foregroundStyle(PaperTheme.mutedText)
+            .lineSpacing(3)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private func sourceStatus(_ source: ForumSource) -> String {
-        switch source {
+    private func handleSessionAction(for descriptor: AuthSessionDescriptor) {
+        switch descriptor.source {
         case .nga:
-            return isAuthenticated ? "已登录 · Cookie" : "游客"
+            if descriptor.action == .login {
+                onLogin()
+            }
         case .v2ex:
-            return v2exAuthStore.isAuthenticated
-                ? "已连接 · \(v2exAuthStore.username ?? "V2EX")"
-                : "公开浏览"
+            showsV2EXAccount = true
         case .linuxDo:
-            return linuxDoAuthStore.isAuthenticated
-                ? "已连接 · \(linuxDoAuthStore.username ?? "LINUX DO")"
-                : "网页登录"
+            showsLinuxDoAccount = true
         }
+    }
+
+    @ViewBuilder
+    private func sourceAccountCard(for descriptor: AuthSessionDescriptor) -> some View {
+        let content = HStack(alignment: .top, spacing: 14) {
+            Circle()
+                .fill(sourceColor(descriptor.source))
+                .frame(width: 12, height: 12)
+                .padding(.top, 7)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 10) {
+                    Text(descriptor.title)
+                        .font(.headline)
+                        .foregroundStyle(PaperTheme.ink)
+
+                    Text(descriptor.statusText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(descriptor.isAuthenticated ? PaperTheme.accent : PaperTheme.mutedText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            (descriptor.isAuthenticated ? PaperTheme.accent.opacity(0.12) : PaperTheme.paperDeep.opacity(0.55)),
+                            in: Capsule()
+                        )
+                }
+
+                if let detailText = descriptor.detailText {
+                    Text(detailText)
+                        .font(.subheadline)
+                        .foregroundStyle(PaperTheme.secondaryInk)
+                }
+
+                Text("登录方式：\(descriptor.connectionKindText)")
+                    .font(.caption)
+                    .foregroundStyle(PaperTheme.mutedText)
+
+                if let actionTitle = descriptor.actionTitle {
+                    Text(actionTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(PaperTheme.accent)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            if descriptor.action != .none {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(PaperTheme.mutedText)
+                    .padding(.top, 6)
+            }
+        }
+        .padding(16)
+        .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+        if descriptor.action == .none {
+            content
+        } else {
+            Button {
+                handleSessionAction(for: descriptor)
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(PaperTheme.mutedText)
+            .padding(.horizontal, 2)
     }
 
     private func sourceColor(_ source: ForumSource) -> Color {
@@ -304,20 +331,6 @@ struct UserAccountView: View {
         case .linuxDo:
             return Color(red: 0.18, green: 0.48, blue: 0.38)
         }
-    }
-
-    private func accountRow(title: String, value: String) -> some View {
-        HStack(spacing: 16) {
-            Text(title)
-                .foregroundStyle(PaperTheme.secondaryInk)
-            Spacer()
-            Text(value)
-                .foregroundStyle(PaperTheme.mutedText)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .font(.system(size: 16, design: .serif))
-        .padding(.vertical, 15)
     }
 
     private func menuRow(icon: String, title: String, subtitle: String) -> some View {

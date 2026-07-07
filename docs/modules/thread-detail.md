@@ -20,6 +20,8 @@ It includes:
 ## Key Files
 
 - `ForumHub/Features/ThreadDetail/ThreadDetailView.swift`
+- `ForumHub/Features/ThreadDetail/ThreadDetailReplyComposer.swift`
+- `ForumHub/Features/ThreadDetail/ThreadDetailRichContent.swift`
 - `ForumHub/Features/ThreadDetail/ThreadSnapshotRenderer.swift`
 - `ForumHub/Domain/ForumModels.swift`
 

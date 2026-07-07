@@ -72,13 +72,11 @@ extension String {
 
     var cleanedForumText: String {
         decodedUnicodeEscapes
+            .decodedHTMLEntities
             .replacingOccurrences(of: "<br/>", with: "\n")
             .replacingOccurrences(of: "<br>", with: "\n")
             .replacingOccurrences(of: "<br />", with: "\n")
             .replacingOccurrences(of: "&nbsp;", with: " ")
-            .replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&lt;", with: "<")
-            .replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: #"\[img\](.*?)\[/img\]"#, with: "\n[图片] $1", options: .regularExpression)
             .replacingOccurrences(of: #"\[/?[a-zA-Z][^\]]*\]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
@@ -87,13 +85,11 @@ extension String {
 
     var structuredForumText: String {
         preservingQuoteMarkers
+            .decodedHTMLEntities
             .replacingOccurrences(of: "<br/>", with: "\n")
             .replacingOccurrences(of: "<br>", with: "\n")
             .replacingOccurrences(of: "<br />", with: "\n")
             .replacingOccurrences(of: "&nbsp;", with: " ")
-            .replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&lt;", with: "<")
-            .replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: #"\[img\](.*?)\[/img\]"#, with: "\n[图片] $1", options: .regularExpression)
             .replacingOccurrences(of: #"\[/?(?!引用\b)[a-zA-Z][^\]]*\]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
@@ -156,6 +152,28 @@ extension String {
         }
 
         return decoded
+    }
+
+    var decodedHTMLEntities: String {
+        var value = self
+        let replacements = [
+            "&nbsp;": " ",
+            "&amp;": "&",
+            "&lt;": "<",
+            "&gt;": ">",
+            "&quot;": "\"",
+            "&apos;": "'",
+            "&#39;": "'",
+            "&#34;": "\"",
+            "&#x27;": "'",
+            "&#x22;": "\""
+        ]
+
+        for (entity, replacement) in replacements {
+            value = value.replacingOccurrences(of: entity, with: replacement)
+        }
+
+        return value
     }
 }
 

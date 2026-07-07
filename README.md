@@ -47,7 +47,7 @@ ForumHub/
 - `ForumHub/Data`: source adapters and parsers
 - `ForumHub/Domain`: shared models and parsing helpers
 - `ForumHub/Features`: user-facing SwiftUI features
-- `ForumHub/Session`: login, cookies, and credential storage
+- `ForumHub/Session`: login, cookies, credential storage, and shared account-session descriptors
 - `ForumHub/Sync`: reserved area for sync-related work
 - `ForumHub/DesignSystem`: shared theme and visual components
 

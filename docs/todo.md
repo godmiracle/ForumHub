@@ -30,7 +30,5 @@
 
 ## Account And Session
 
-- Add a shared `AuthSessionDescriptor` model for `NGA`, `V2EX`, and `LINUX DO` session presentation state.
-- Add a lightweight shared auth protocol so source auth stores can expose one upper-layer session shape without flattening their login flows.
-- Add an auth registry to aggregate multi-source session restore and descriptor reads.
-- Refactor the account screen's `社区连接` section to render from shared descriptors instead of branching directly on each auth store's internal fields.
+- Verify the shared `AuthSessionDescriptor` and auth registry cover future session states such as expired tokens, partial cookie sync, and reconnect-required errors without reintroducing source-specific view branching.
+- Decide whether the top NGA account card should also migrate onto the shared session-descriptor path, or intentionally remain a source-native detail card.

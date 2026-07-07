@@ -22,6 +22,7 @@ Current sources:
 - **Thread Detail**: The first post and replies for a Topic, with local presentation options such as only-author filtering, reverse order, floor labels, image preview, and pagination.
 - **Thread Reply Target**: The destination for a reply submission inside Thread Detail. It can be the thread itself or a specific reply floor when the source supports targeted replies.
 - **Login Session**: Source-specific credentials. NGA and LINUX DO use WebKit cookies plus shared HTTP cookie storage; V2EX uses a Personal Access Token with API v2.
+- **Auth Session Descriptor**: A shared account-screen summary for one Forum Source. It describes how a source session should be presented in upper-layer UI without exposing raw cookie or token details.
 - **Forum Provider**: The module behind the `ThreadRepository` seam. NGA, V2EX, and Discourse-based adapters map native data into shared domain models.
 - **Favorite Thread**: A locally persisted thread bookmark, optionally backed by a source-native favorite API when available.
 - **Blocked User**: A local per-source suppression rule that hides content by username without mutating remote data.

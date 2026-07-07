@@ -121,6 +121,13 @@ struct NGALoginState {
         return "\(cid.prefix(6))...\(cid.suffix(4))"
     }
 
+    var identitySummary: String {
+        guard let uid, !uid.isEmpty else {
+            return "NGA 用户"
+        }
+        return "UID \(uid)"
+    }
+
     static let empty = NGALoginState(uid: nil, cid: nil, cookieNames: [])
 }
 

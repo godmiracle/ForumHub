@@ -21,6 +21,7 @@ final class ForumSubscriptionStore {
     private let sourceStorageKey = "subscribed-forum-channel-keys-v3"
     private let orderStorageKey = "subscribed-forum-channel-order-v1"
     private let migrationKey = "forum-subscriptions-defaults-v2"
+    private let v2exHotMigrationKey = "forum-subscriptions-v2ex-hot-default-v1"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -103,7 +104,7 @@ final class ForumSubscriptionStore {
         subscribedChannelKeys = subscribedChannelKeys.filter { !$0.hasPrefix(sourcePrefix) }
         let sourceDefaults = source == .nga
             ? channels.filter { Self.defaultChannelIDs.contains($0.id) }
-            : Array(channels.prefix(8))
+            : preferredDefaultChannels(for: channels)
         subscribedChannelKeys.formUnion(sourceDefaults.map(key))
         orderedChannelKeys.removeAll { $0.hasPrefix(sourcePrefix) }
         orderedChannelKeys.append(contentsOf: sourceDefaults.map(key))
@@ -112,18 +113,20 @@ final class ForumSubscriptionStore {
     }
 
     func prepareDefaults(for channels: [ForumChannel]) {
-        guard let source = channels.first?.source,
-              !channels.isEmpty,
-              !subscribedChannelKeys.contains(where: { $0.hasPrefix("\(source.rawValue):") })
-        else { return }
+        guard let source = channels.first?.source, !channels.isEmpty else { return }
 
-        let defaults = source == .nga
-            ? channels.filter { Self.defaultChannelIDs.contains($0.id) }
-            : Array(channels.prefix(8))
-        subscribedChannelKeys.formUnion(defaults.map(key))
-        orderedChannelKeys.append(contentsOf: defaults.map(key).filter { !orderedChannelKeys.contains($0) })
-        normalizeOrder()
-        persist()
+        if !subscribedChannelKeys.contains(where: { $0.hasPrefix("\(source.rawValue):") }) {
+            let defaults = source == .nga
+                ? channels.filter { Self.defaultChannelIDs.contains($0.id) }
+                : preferredDefaultChannels(for: channels)
+            subscribedChannelKeys.formUnion(defaults.map(key))
+            orderedChannelKeys.append(contentsOf: defaults.map(key).filter { !orderedChannelKeys.contains($0) })
+            normalizeOrder()
+            persist()
+            return
+        }
+
+        migrateV2EXHotDefaultIfNeeded(for: channels)
     }
 
     func moveSubscribedChannel(
@@ -187,5 +190,35 @@ final class ForumSubscriptionStore {
 
         let missingKeys = subscribedChannelKeys.subtracting(seen).sorted()
         orderedChannelKeys.append(contentsOf: missingKeys)
+    }
+
+    private func preferredDefaultChannels(for channels: [ForumChannel]) -> [ForumChannel] {
+        guard let source = channels.first?.source else { return [] }
+
+        switch source {
+        case .nga:
+            return channels.filter { Self.defaultChannelIDs.contains($0.id) }
+        case .v2ex:
+            let hotChannels = channels.filter { $0.nativeKey == "hot" }
+            let remaining = channels.filter { $0.nativeKey != "hot" }
+            return hotChannels + remaining.prefix(max(0, 8 - hotChannels.count))
+        case .linuxDo:
+            return Array(channels.prefix(8))
+        }
+    }
+
+    private func migrateV2EXHotDefaultIfNeeded(for channels: [ForumChannel]) {
+        guard channels.first?.source == .v2ex,
+              !defaults.bool(forKey: v2exHotMigrationKey),
+              let hotChannel = channels.first(where: { $0.nativeKey == "hot" })
+        else { return }
+
+        let hotKey = key(for: hotChannel)
+        subscribedChannelKeys.insert(hotKey)
+        orderedChannelKeys.removeAll { $0 == hotKey }
+        orderedChannelKeys.insert(hotKey, at: 0)
+        defaults.set(true, forKey: v2exHotMigrationKey)
+        normalizeOrder()
+        persist()
     }
 }

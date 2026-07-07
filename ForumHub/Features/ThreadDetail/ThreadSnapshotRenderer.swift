@@ -213,7 +213,7 @@ private struct SnapshotRichContent: View {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFit()
-                            .frame(maxHeight: 480)
+                            .frame(maxWidth: .infinity, alignment: .center)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     } else {
                         Label("图片未能加载", systemImage: "photo.badge.exclamationmark")

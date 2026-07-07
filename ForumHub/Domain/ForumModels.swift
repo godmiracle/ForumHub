@@ -149,8 +149,14 @@ struct ForumChannel: Identifiable, Equatable {
         ForumChannel(id: 706, title: "大时代"),
         ForumChannel(id: -7_955_747, title: "晴风村")
     ]
-    static let v2exLatest = ForumChannel(
+    static let v2exHot = ForumChannel(
         id: -20_001,
+        title: "最热",
+        source: .v2ex,
+        nativeKey: "hot"
+    )
+    static let v2exLatest = ForumChannel(
+        id: -20_002,
         title: "最新",
         source: .v2ex,
         nativeKey: "latest"

@@ -89,6 +89,19 @@
 - Added the first NGA reply-emoji flow in the composer: users can open grouped NG娘 / AC娘v1 / AC娘v2 pickers and append smile assets into the reply body as image UBB markup without touching the attachment upload pipeline
 - Upgraded the NGA reply composer from plain text to a rich emoji-aware editor so selected smile assets insert at the current caret position and render inline in the input area while still serializing back to the original body markup for posting
 - Stabilized inline emoji editing in the NGA reply composer by giving each inserted smile a hidden text anchor, preventing attachment-only input rows from rendering as blank while keeping outgoing markup unchanged
+- Fixed thread "截图此层/长图" rendering so vertically taller images also expand to the card width instead of appearing narrower than earlier images on the same snapshot
+- Refactored the account screen's "社区连接" area to render from shared auth session descriptors, unifying `NGA`, `V2EX`, and `LINUX DO` connection summaries without flattening their underlying auth flows
+- Redesigned the user screen to emphasize shared account summaries, hide low-level credential implementation details, and group account, personal data, and maintenance actions more clearly
+- Restored readable NGA identity text in the user screen so connected `NGA` sessions now show a user-facing `UID` summary just like other sources show their current account identity
+- Corrected the first `V2EX` top channel from `最新` to `最热` and wired it to the same hot-feed loading path as the source's `?tab=hot` web entry
+- Restored `V2EX` fixed top-channel switching so `最热` stays as the first entry while `最新` also remains available and readers can always switch back to the hot feed after browsing other nodes
+- Simplified the `V2EX` top-channel row again so only `最热` stays pinned; `最新` is no longer exposed as a separate tab because the shared "最新发帖" sort already covers that reading mode
+- Forced the `V2EX` `最热` channel to remain visible and pinned to the front of the home channel row, so saved local channel orders can no longer hide it behind nodes like `问与答`
+- Relaxed the `V2EX` `最热` handling so it is only used as the initial/default first channel and a one-time migration target; after that, manual drag reordering is respected normally
+- Fixed the `V2EX` default hot-channel selection state so entering the source highlights `最热` correctly again, and switched unauthenticated node lists like `问与答` back to web-page parsing so author names and avatars no longer collapse to placeholder-only metadata
+- Decoded common HTML text entities such as `&#39;` and `&quot;` in the shared forum-text cleaning layer so list cards, thread bodies, and quote blocks no longer leak raw entity codes into readable content
+- Replaced the custom floating bottom bar with a system `TabView` shell, restoring native tab-bar height and base glass behavior while keeping tab reselect scroll-to-top and refresh actions through a lightweight UIKit bridge
+- Refined the new system tab shell so root pages use a unified paper background and tab reselect handling listens at the `UITabBar` level, reducing layout gaps and making scroll-to-top recovery more reliable
 
 ## How To Update
 
