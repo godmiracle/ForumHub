@@ -169,6 +169,31 @@ Keep NGA thread fetching source-shaped, but let the detail screen accumulate con
 - Mid-thread reading stays visually uninterrupted, while the UI still has an explicit end-of-thread state when no more replies remain
 - Detail-state logic must keep page anchors and duplicate filtering stable while local presentation options remain layered on top
 
+## ADR-008 Auth Uses A Shared Session Descriptor But Keeps Source-Level Auth Stores
+
+### Status
+
+Proposed
+
+### Date
+
+2026-07
+
+### Context
+
+ForumHub already supports three different authentication styles: NGA cookie login, V2EX token validation, and LINUX DO web login plus cookie reuse. The current flows work, but the upper layer still reads too much source-specific auth detail directly when rendering account status and coordinating session restore.
+
+### Decision
+
+Add a thin shared auth presentation layer made of a shared session descriptor, a lightweight source-auth protocol, and an auth registry for aggregated restore and display. Keep concrete auth logic, cookie handling, token validation, and source-specific login entry flows inside each existing source auth store.
+
+### Consequences
+
+- The account layer gains one stable vocabulary for auth state across sources
+- Future sources can plug into the account UI with fewer custom branches
+- Source-specific auth behavior remains isolated instead of being flattened into one oversized global session store
+- The project must maintain a careful boundary so the shared descriptor never turns into a raw credential transport object
+
 ## Template
 
 Use this structure for future decisions:
