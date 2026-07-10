@@ -1,70 +1,70 @@
 # ForumHub
 
-ForumHub is a multi-community iOS reader built with SwiftUI.
-
-It currently integrates:
+ForumHub 是一个使用 SwiftUI 开发的多社区 iOS 阅读客户端，目前接入：
 
 - NGA
 - V2EX
 - LINUX DO
 
-The app focuses on fast reading, lightweight account capabilities, and source-specific adapters behind a shared domain model.
+项目目标是在统一领域模型和阅读体验之上，通过数据源适配器隔离各社区的接口、解析、登录和业务差异。
 
-## Supported Sources
+## 当前能力
 
-| Source | Feed | Detail | Login | Favorites | Reply |
+| 数据源 | 列表 | 详情 | 登录 | 收藏 | 回复 |
 | --- | --- | --- | --- | --- | --- |
-| NGA | Yes | Yes | Web + Cookies | Yes | Yes |
-| V2EX | Yes | Yes | Token | Local only | No |
-| LINUX DO | Yes | Yes | Web + Cookies | Local only | No |
+| NGA | 支持 | 支持 | Web + Cookie | 支持 | 支持 |
+| V2EX | 支持 | 支持 | Token | 仅本地 | 暂不支持 |
+| LINUX DO | 支持 | 支持 | Web + Cookie | 仅本地 | 暂不支持 |
 
-## Current Capabilities
+主要功能：
 
-- Multi-source home feed with channel switching
-- Channel subscription and manual reordering
-- Thread detail with floor labels, only-author mode, reverse order, and pagination
-- Thread favorites, blocked users, browsing history, and local persistence
-- NGA web login with cookie reuse
-- LINUX DO web login with cookie reuse
-- Thread reply support, including NGA image attachments
-- In-thread image preview, GIF playback, save-to-photos, and zoom
+- 多数据源首页与频道切换；
+- 频道订阅、显示管理和手动排序；
+- 帖子详情、楼层标签、只看楼主、倒序和连续分页；
+- 收藏、屏蔽用户、浏览历史和本地持久化；
+- NGA、LINUX DO Web 登录与 Cookie 复用；
+- V2EX Token 登录；
+- NGA 帖子回复和图片附件；
+- 帖内图片预览、GIF 播放、缩放与保存到相册。
 
-## Project Structure
+## 项目结构
 
 ```text
 ForumHub/
-├── ForumHub/                # App source
-├── ForumHubTests/           # Unit tests and fixtures
-├── ForumHubUITests/         # UI tests
-├── docs/                    # Product and engineering docs
-├── CONTEXT.md               # Domain language and invariants
-├── AGENTS.md                # AI/collaboration conventions
+├── ForumHub/                 # App 源码
+│   ├── Data/                 # 数据源适配、Repository、Parser、DTO 映射
+│   ├── Domain/               # 共享领域模型
+│   ├── Features/             # SwiftUI 功能页面
+│   ├── Session/              # 登录、Cookie、Token、Keychain
+│   ├── DesignSystem/         # 主题与可复用 UI
+│   └── Sync/                 # 同步扩展点
+├── ForumHubTests/            # 单元测试与 Fixtures
+├── ForumHubUITests/          # UI 测试
+├── docs/                     # 产品、架构、模块和 AI 协作文档
+├── CONTEXT.md                # 详细领域上下文与业务不变量
+├── AGENTS.md                 # AI Agent 全局协作规则
 └── README.md
 ```
 
-## Core Modules
+## 开始开发前
 
-- `ForumHub/Data`: source adapters and parsers
-- `ForumHub/Domain`: shared models and parsing helpers
-- `ForumHub/Features`: user-facing SwiftUI features
-- `ForumHub/Session`: login, cookies, credential storage, and shared account-session descriptors
-- `ForumHub/Sync`: reserved area for sync-related work
-- `ForumHub/DesignSystem`: shared theme and visual components
+建议按以下顺序阅读：
 
-## Run Locally
+1. [AGENTS.md](AGENTS.md)
+2. [docs/context.md](docs/context.md)
+3. [CONTEXT.md](CONTEXT.md)
+4. [docs/architecture.md](docs/architecture.md)
+5. [docs/decisions.md](docs/decisions.md)
+6. [docs/todo.md](docs/todo.md)
+7. 当前功能对应的 [docs/modules](docs/modules/) 文档
 
-1. Open [ForumHub.xcodeproj](ForumHub.xcodeproj).
-2. Select the `ForumHub` scheme.
-3. Build and run on a connected iOS device when one is available.
+执行代码 Review 时，额外阅读 [docs/review.md](docs/review.md)。常用 AI 提示词位于 [docs/prompts.md](docs/prompts.md)。
 
-## Common Workflows
+## 本地运行
 
-- Build app: run the `xcodebuild` command below
-- Read domain terms first: open [CONTEXT.md](CONTEXT.md)
-- Understand repository boundaries: open [docs/architecture.md](docs/architecture.md)
-- Continue feature work: open the relevant module note under [docs/modules](docs/modules/)
-
-Example device build command:
+1. 使用 Xcode 打开 [ForumHub.xcodeproj](ForumHub.xcodeproj)。
+2. 选择 `ForumHub` Scheme。
+3. 优先连接 iOS 真机进行构建和运行。
 
 ```sh
 /Applications/Xcode-beta.app/Contents/Developer/usr/bin/xcodebuild \
@@ -75,33 +75,44 @@ Example device build command:
   build
 ```
 
-If no iOS device is currently available, skip the build instead of falling back to a simulator build.
+当前没有可用真机时，可以记录“未执行构建”，不应把模拟器结果默认视为真机等价验证。
 
-## Documentation
+## 文档入口
 
-- [CONTEXT.md](CONTEXT.md)
-- [AGENTS.md](AGENTS.md)
-- [docs/architecture.md](docs/architecture.md)
-- [docs/decisions.md](docs/decisions.md)
-- [docs/roadmap.md](docs/roadmap.md)
-- [docs/changelog.md](docs/changelog.md)
-- [docs/modules](docs/modules/)
-- [docs/modules/feature-matrix.md](docs/modules/feature-matrix.md)
-- [docs/modules/search-and-discovery.md](docs/modules/search-and-discovery.md)
-- [docs/modules/image-handling.md](docs/modules/image-handling.md)
-- [docs/modules/testing-and-fixtures.md](docs/modules/testing-and-fixtures.md)
-- [docs/modules/persistence-and-sync.md](docs/modules/persistence-and-sync.md)
-- [docs/archive](docs/archive/)
+- [AI Agent 协作规范](AGENTS.md)
+- [项目上下文摘要](docs/context.md)
+- [完整领域上下文](CONTEXT.md)
+- [架构说明](docs/architecture.md)
+- [技术决策](docs/decisions.md)
+- [开发路线图](docs/roadmap.md)
+- [待办清单](docs/todo.md)
+- [代码 Review 规范](docs/review.md)
+- [常用 AI 提示词](docs/prompts.md)
+- [变更记录](docs/changelog.md)
+- [模块文档](docs/modules/)
+- [历史归档](docs/archive/)
 
-## High-Level Map
+## AI Review 使用方式
+
+可以直接向 Codex 或其他 Agent 输入：
+
+```txt
+请先阅读 README.md、AGENTS.md、docs/context.md、CONTEXT.md、docs/architecture.md、
+docs/decisions.md、docs/todo.md 和 docs/review.md。
+按照 docs/review.md 对当前改动进行 Review，所有分析、问题、待办和总结使用简体中文。
+将可执行问题同步到 docs/todo.md；只有代码已修改、验收标准满足并完成必要验证后，
+才能自动勾选对应待办。无法验证时保持未完成并标记原因。
+```
+
+## 高层架构
 
 ```mermaid
 flowchart TD
-    A["Remote Sources<br/>NGA / V2EX / LINUX DO"] --> B["Data Adapters<br/>repositories + parsers"]
-    B --> C["Domain Models<br/>ForumThread / Reply / ForumSummary"]
-    C --> D["Feature Layer<br/>Feed / Thread Detail / Account / Community"]
-    D --> E["SwiftUI Screens"]
-    D --> F["Local Stores<br/>favorites / history / blocked users / subscriptions"]
-    G["Session Layer<br/>cookies / token / Keychain"] --> B
+    A["远端社区<br/>NGA / V2EX / LINUX DO"] --> B["数据适配层<br/>Repository + Parser"]
+    B --> C["领域模型<br/>ForumThread / Reply / ForumSummary"]
+    C --> D["功能层<br/>首页 / 详情 / 搜索 / 账户 / 社区"]
+    D --> E["SwiftUI 页面"]
+    D --> F["本地状态<br/>收藏 / 历史 / 屏蔽 / 订阅"]
+    G["会话层<br/>Cookie / Token / Keychain"] --> B
     G --> D
 ```

@@ -1,55 +1,68 @@
-# Todo
+# ForumHub 待办清单
 
-## Thread Detail
+本文件用于记录可执行、可验证、可追踪的开发事项。AI Agent 在开始任务前必须读取本文件，并且只更新与当前任务直接相关的事项。
 
-### ForumHub Code Review Checklist
+## 待办状态规则
 
-- [x] Split `ThreadDetailView` presentation into focused UI components.
-- [x] Add cancellable content-load tasks and request generations for refresh, page jumps, and continuation loading.
-- [x] Cache displayed replies and page-entry presentation data to reduce repeated scroll-time derivation.
-- [x] Establish `ForumError` and use it as the first user-facing error model in thread detail.
-- [x] Introduce shared `ForumGlass` components and migrate thread-detail floating controls plus the feed refresh banner.
-- [x] Replace machine-specific README links with repository-relative documentation links.
-- [ ] Replace the thread-detail `.nga` pagination check with an explicit repository pagination capability.
-- [ ] Move thread-detail loading, pagination, reply, and favorite state into a dedicated `ThreadDetailViewModel`.
-- [ ] Run the implemented NGA pagination-merge regression tests for duplicate replies, main-post removal, and multi-page jumps after restoring the test target.
-- [ ] Extend `ForumError` presentation to feed, search, account, and media flows.
-- [ ] Fix test-target signing and restore the missing `ThreadDetailDirectPaginationAutoAdvancePolicy` test dependency so the full suite can run on device.
-- [ ] Measure long-thread non-lazy rendering and memory usage on a physical device.
+- `[ ]`：待处理或尚未完成验证；
+- `[x]`：代码已修改、验收标准已满足，并完成必要验证；
+- 代码已修改但当前环境无法验证时，保持 `[ ]`，并标记“状态：已修改，等待验证”或“状态：等待人工验证”；
+- 验证失败时保持 `[ ]`，记录失败原因；
+- 不得为了提高完成率删除、合并或隐藏未完成事项。
 
-### Deferred By Decision
+Review 新增事项应使用 `R-XXX` 唯一编号，并至少记录优先级、涉及文件、状态和验收标准。详细格式见 [review.md](review.md)。
 
-- Xcode project format compatibility: intentionally not planned. The project remains in the Xcode 27 beta format until a stable Xcode toolchain is installed and a separate migration decision is made.
 
-- Verify NGA continuous detail pagination against more real-world threads, especially mixed main-post plus continuation-page edge cases.
-- Verify the near-end-reply NGA auto-pagination and page-anchor visible-page tracking against long real threads to confirm repeated downward loading stays smooth and reliable.
-- Verify the continuous NGA reading flow stays visually seamless on device: no mid-stream load-next-page card, only a final end-of-thread state once no more replies remain.
-- Verify NGA per-floor reply submission on device against real threads to confirm the current `action=quote + pid + prefilled content` flow matches the live site contract across more quote formats.
-- Consider whether V2EX and LINUX DO need source-native reply pagination controls once their detail APIs expose stable page contracts.
-- Decide whether the page picker should remember the last manually selected page per thread during the same app session.
-- Decide how the floating page control should behave when only-author mode or reverse order hides some page anchors.
+## 帖子详情
 
-## Community And Sources
+### ForumHub 代码审查清单
 
-- Continue refining source switching and channel management polish.
-- Evaluate whether community management needs clearer distinction between subscribed channels and source-provided defaults.
+- [x] 将 `ThreadDetailView` 的展示逻辑拆分为职责明确的 UI 组件。
+- [x] 为刷新、跳页和连续加载增加可取消任务与请求代次控制。
+- [x] 缓存展示回复和分页入口数据，减少滚动期间的重复计算。
+- [x] 建立 `ForumError`，并优先用于帖子详情的用户可见错误展示。
+- [x] 引入共享 `ForumGlass` 组件，并迁移帖子详情悬浮控件及信息流刷新提示。
+- [x] 将 README 中依赖本机路径的链接替换为仓库相对链接。
+- [ ] 使用明确的 Repository 分页能力替代帖子详情中的 `.nga` 分页判断。
+- [ ] 将帖子详情的加载、分页、回复和收藏状态迁移到独立的 `ThreadDetailViewModel`。
+- [ ] 恢复测试 Target 后，运行 NGA 分页合并回归测试，覆盖重复回复、主楼移除和多页跳转。
+- [ ] 将 `ForumError` 的展示能力扩展到信息流、搜索、账户和媒体流程。
+- [ ] 修复测试 Target 签名，并恢复缺失的 `ThreadDetailDirectPaginationAutoAdvancePolicy` 测试依赖，使完整测试可在真机运行。
+- [ ] 在真机测量超长帖子非懒加载渲染及内存占用。
 
-## Feed
+### 根据既有决策暂缓
 
-- [x] Add cancellable feed-load tasks and request generations so stale Home/Hot responses cannot overwrite the active tab.
-- [x] Route TabView reselection as a target-specific action so Home and Hot return immediately to their own feed top while refreshing.
-- Evaluate whether the first forum-feed loading state should stay as a centered spinner or evolve into a lightweight skeleton if real-device startup still feels abrupt.
+- Xcode 项目格式兼容：当前明确暂不处理。项目继续使用 Xcode 27 Beta 格式，待安装稳定版工具链后再单独决策迁移。
 
-## Images And Media
+- [ ] 使用更多真实帖子验证 NGA 详情连续分页，重点覆盖主楼与后续分页混合的边界情况。
+- [ ] 使用真实长帖验证 NGA 接近末尾自动分页和页面锚点可见页追踪，确保持续向下加载平滑可靠。
+- [ ] 在真机验证 NGA 连续阅读视觉无断层：中间不显示“加载下一页”卡片，仅在全部回复加载完后显示帖子结束状态。
+- [ ] 在真实帖子和真机上验证 NGA 按楼层回复，确认当前 `action=quote + pid + prefilled content` 流程兼容更多引用格式。
+- [ ] 当 V2EX 和 LINUX DO 详情接口具备稳定分页合约后，评估是否需要数据源原生回复分页控件。
+- [ ] 决定页面选择器是否应在同一 App 会话中记住每个帖子的最后手动选择页。
+- [ ] 决定只看楼主或倒序导致部分页面锚点隐藏时，悬浮页码控件的行为。
 
-- Measure whether viewport-aware inline GIF throttling plus preview downsampling is enough, or whether the remaining active GIFs still need a lighter playback path than `WKWebView`.
+## 社区与数据源
 
-## Sync And Persistence
+- [ ] 继续优化数据源切换和频道管理体验。
+- [ ] 评估社区管理是否需要更清晰地区分已订阅频道和数据源默认频道。
 
-- Keep blocked users and favorites local-first until a real cross-device sync strategy is viable.
-- Define migration rules before re-enabling any cloud-backed sync path.
+## 信息流
 
-## Account And Session
+- [x] 增加可取消的信息流加载任务与请求代次，避免过期的首页或热榜响应覆盖当前标签页。
+- [x] 将 TabView 重复点击路由为目标专属动作，使首页和热榜可立即回到各自顶部并刷新。
+- [ ] 若真机首次加载仍显突兀，评估信息流初始加载应继续使用居中转圈，还是改为轻量骨架屏。
 
-- Verify the shared `AuthSessionDescriptor` and auth registry cover future session states such as expired tokens, partial cookie sync, and reconnect-required errors without reintroducing source-specific view branching.
-- Decide whether the top NGA account card should also migrate onto the shared session-descriptor path, or intentionally remain a source-native detail card.
+## 图片与媒体
+
+- [ ] 测量基于视口的行内 GIF 限流与预览降采样是否足够，评估剩余活动 GIF 是否仍需比 `WKWebView` 更轻量的播放方案。
+
+## 同步与持久化
+
+- [ ] 在可靠的跨设备同步方案可行前，继续保持屏蔽用户和收藏本地优先。
+- [ ] 重新启用任何云同步路径前，先定义数据迁移规则。
+
+## 账户与会话
+
+- [ ] 验证共享 `AuthSessionDescriptor` 和认证注册表能够覆盖 Token 过期、Cookie 部分同步、需要重新连接等未来会话状态，且不重新引入数据源专属 View 分支。
+- [ ] 决定顶部 NGA 账户卡片是否迁移到共享会话描述路径，或明确保留为数据源原生详情卡片。
