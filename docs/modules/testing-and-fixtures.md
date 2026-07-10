@@ -31,6 +31,7 @@ It includes:
 
 - NGA thread detail parsing and continuation-page behavior
 - Feed cancellation and refresh behavior
+- Tab reselection routing, including Home/Hot immediate-scroll-and-refresh behavior
 - Reply deduplication and pagination merging
 - Favorites, blocked users, and browsing history persistence rules
 - Source capability gating for unsupported actions

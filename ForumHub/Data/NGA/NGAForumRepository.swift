@@ -87,6 +87,7 @@ struct NGALiveThreadRepository: ThreadRepository {
             return ThreadFetchResult(payload: apiPayload, rawText: rawText)
         }
 
+        try Task.checkCancellation()
         let webResult = try await fetchWebForum(fid: fid, page: page)
         let combinedRawText = """
         app_api.php 没有解析出主题，已尝试网页兜底。
@@ -122,6 +123,7 @@ struct NGALiveThreadRepository: ThreadRepository {
         var rawSections: [String] = []
 
         for (name, url, form) in attempts {
+            try Task.checkCancellation()
             do {
                 let (data, rawText) = try await post(url: url, form: form)
                 rawSections.append("===== \(name) =====\n\(rawText)")
@@ -143,6 +145,9 @@ struct NGALiveThreadRepository: ThreadRepository {
                     return ThreadFetchResult(payload: hotPayload, rawText: rawSections.joined(separator: "\n\n"))
                 }
             } catch {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
                 rawSections.append("===== \(name) error =====\n\(error.localizedDescription)")
             }
         }

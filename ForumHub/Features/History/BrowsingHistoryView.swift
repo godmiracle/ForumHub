@@ -4,7 +4,7 @@ struct BrowsingHistoryView: View {
     @Bindable var history: BrowsingHistoryStore
     @Bindable var blockedUsers: BlockedUsersStore
     @Bindable var favoriteThreads: FavoriteThreadsStore
-    let scrollToTopTrigger: Int
+    let scrollRequest: TabScrollRequest?
     let repositoryForSource: (ForumSource) -> any ThreadRepository
     @State private var showsClearConfirmation = false
     private let topAnchorID = "history-top-anchor"
@@ -70,7 +70,8 @@ struct BrowsingHistoryView: View {
                     Color.clear.frame(height: 112)
                 }
             }
-            .onChange(of: scrollToTopTrigger) {
+            .onChange(of: scrollRequest) { _, request in
+                guard request?.targets(.history) == true else { return }
                 withAnimation(.snappy(duration: 0.28)) {
                     proxy.scrollTo(topAnchorID, anchor: .top)
                 }

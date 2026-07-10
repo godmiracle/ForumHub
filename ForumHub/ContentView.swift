@@ -21,11 +21,9 @@ struct ContentView: View {
     @State private var v2exAuthStore = V2EXAuthStore()
     @State private var linuxDoAuthStore = LinuxDoAuthStore()
     @State private var browsingHistory = BrowsingHistoryStore()
-    @State private var feedScrollToTopTrigger = 0
-    @State private var communityScrollToTopTrigger = 0
-    @State private var historyScrollToTopTrigger = 0
-    @State private var userScrollToTopTrigger = 0
-    @State private var showsFeedRetapRefreshIndicator = false
+    @State private var tabScrollRequest: TabScrollRequest?
+    @State private var tabScrollRequestGeneration = 0
+    @State private var feedRetapRefreshTab: FeedTab?
     @State private var feedRetapRefreshGeneration = 0
     @State private var feedSortMode: FeedSortMode = .lastReply
     @State private var showsPinnedThreads = true
@@ -151,7 +149,7 @@ struct ContentView: View {
             favoriteThreads: favoriteThreads,
             v2exAuthStore: v2exAuthStore,
             linuxDoAuthStore: linuxDoAuthStore,
-            scrollToTopTrigger: userScrollToTopTrigger,
+            scrollRequest: tabScrollRequest,
             repositoryForSource: { source in
                 viewModel.repository(for: source)
             },
@@ -173,7 +171,7 @@ struct ContentView: View {
             channels: viewModel.channels,
             isLoading: viewModel.isLoading,
             subscriptions: subscriptions,
-            scrollToTopTrigger: communityScrollToTopTrigger,
+            scrollRequest: tabScrollRequest,
             onChannelSelect: { channel in
                 selectedTab = .home
                 selectedChannelID = channel.id
@@ -189,7 +187,7 @@ struct ContentView: View {
             history: browsingHistory,
             blockedUsers: blockedUsers,
             favoriteThreads: favoriteThreads,
-            scrollToTopTrigger: historyScrollToTopTrigger,
+            scrollRequest: tabScrollRequest,
             repositoryForSource: { source in
                 viewModel.repository(for: source)
             }
@@ -264,6 +262,7 @@ struct ContentView: View {
             )
 
             ForumFeedContent(
+                tab: tab,
                 pinnedThreads: tab == .hot ? [] : displayedPinnedThreads,
                 threads: displayedThreads,
                 repository: viewModel.repository,
@@ -274,8 +273,8 @@ struct ContentView: View {
                 isLoadingMore: viewModel.isLoadingMore,
                 canLoadMore: viewModel.canLoadMore,
                 errorMessage: viewModel.errorMessage,
-                scrollToTopTrigger: feedScrollToTopTrigger,
-                showsRetapRefreshIndicator: showsFeedRetapRefreshIndicator,
+                scrollRequest: tabScrollRequest,
+                showsRetapRefreshIndicator: feedRetapRefreshTab == tab,
                 sortMode: feedSortMode,
                 showsPinnedThreads: showsPinnedThreads,
                 canTogglePinnedThreads: !viewModel.pinnedThreads.isEmpty && tab != .hot,
@@ -367,43 +366,43 @@ struct ContentView: View {
 
     private func handleTabSelection(_ tab: FeedTab, isReselection: Bool) async {
         if isReselection {
-            switch tab {
-            case .home, .hot:
+            switch TabReselectionPolicy.behavior(for: tab) {
+            case .scrollToTopAndRefresh:
+                requestScrollToTop(of: tab)
                 feedRetapRefreshGeneration += 1
                 let generation = feedRetapRefreshGeneration
                 withAnimation(.snappy(duration: 0.18)) {
-                    showsFeedRetapRefreshIndicator = true
+                    feedRetapRefreshTab = tab
                 }
-                feedScrollToTopTrigger += 1
-                async let reload: Void = viewModel.reload()
-                do {
-                    try await Task.sleep(for: .milliseconds(650))
-                    await reload
-                } catch {
-                    await reload
-                }
+                await viewModel.reload()
                 guard generation == feedRetapRefreshGeneration else { return }
-                withAnimation(.snappy(duration: 0.24)) {
-                    showsFeedRetapRefreshIndicator = false
+                if selectedTab == tab {
+                    // Refresh can replace the feed rows after the immediate scroll command.
+                    requestScrollToTop(of: tab)
                 }
-            case .community:
-                communityScrollToTopTrigger += 1
-            case .history:
-                historyScrollToTopTrigger += 1
-            case .user:
-                userScrollToTopTrigger += 1
+                withAnimation(.snappy(duration: 0.24)) {
+                    feedRetapRefreshTab = nil
+                }
+            case .scrollToTop:
+                requestScrollToTop(of: tab)
             }
             return
         }
 
         switch tab {
         case .community, .history, .user:
+            viewModel.suspendFeedLoading()
             return
         case .home, .hot:
             break
         }
 
         await viewModel.switchFeed(to: tab)
+    }
+
+    private func requestScrollToTop(of tab: FeedTab) {
+        tabScrollRequestGeneration += 1
+        tabScrollRequest = TabScrollRequest(id: tabScrollRequestGeneration, target: tab)
     }
 
 }
@@ -524,11 +523,12 @@ private struct ForumTabBarReselectionBridge: UIViewControllerRepresentable {
         controller.attachIfPossible()
     }
 
-    final class Coordinator: NSObject, UITabBarDelegate {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var currentTab: FeedTab
         var onReselect: (FeedTab) -> Void
         private weak var tabBar: UITabBar?
-        private weak var previousDelegate: UITabBarDelegate?
+        private var tapRecognizer: UITapGestureRecognizer?
+        private var beganOnSelectedTab = false
 
         init(currentTab: FeedTab, onReselect: @escaping (FeedTab) -> Void) {
             self.currentTab = currentTab
@@ -537,22 +537,72 @@ private struct ForumTabBarReselectionBridge: UIViewControllerRepresentable {
 
         func attach(to tabBar: UITabBar) {
             guard self.tabBar !== tabBar else { return }
-            previousDelegate = tabBar.delegate
+            if let previousTabBar = self.tabBar,
+               let tapRecognizer {
+                previousTabBar.removeGestureRecognizer(tapRecognizer)
+            }
+
+            let tapRecognizer = UITapGestureRecognizer(target: self, action: #selector(tabBarTapped))
+            tapRecognizer.cancelsTouchesInView = false
+            tapRecognizer.delaysTouchesBegan = false
+            tapRecognizer.delaysTouchesEnded = false
+            tapRecognizer.delegate = self
             self.tabBar = tabBar
-            tabBar.delegate = self
+            self.tapRecognizer = tapRecognizer
+            tabBar.addGestureRecognizer(tapRecognizer)
         }
 
-        func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
-            guard let items = tabBar.items,
-                  let index = items.firstIndex(of: item)
+        @objc private func tabBarTapped(_ recognizer: UITapGestureRecognizer) {
+            guard let tabBar,
+                  let tab = tab(at: recognizer.location(in: tabBar), in: tabBar)
             else { return }
-            let tabs = FeedTab.allCases
-            guard tabs.indices.contains(index) else { return }
-            let tab = tabs[index]
-            if tab == currentTab {
+
+            switch recognizer.state {
+            case .began:
+                beganOnSelectedTab = tab == currentTab
+            case .ended:
+                defer { beganOnSelectedTab = false }
+                guard beganOnSelectedTab, tab == currentTab else { return }
                 onReselect(tab)
+            case .cancelled, .failed:
+                beganOnSelectedTab = false
+            default:
+                break
             }
-            previousDelegate?.tabBar?(tabBar, didSelect: item)
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+
+        private func tab(at location: CGPoint, in tabBar: UITabBar) -> FeedTab? {
+            guard let items = tabBar.items,
+                  let index = itemIndex(at: location, in: tabBar, itemCount: items.count)
+            else { return nil }
+            let tabs = FeedTab.allCases
+            guard tabs.indices.contains(index) else { return nil }
+            return tabs[index]
+        }
+
+        private func itemIndex(at location: CGPoint, in tabBar: UITabBar, itemCount: Int) -> Int? {
+            let controls = tabBar.subviews
+                .compactMap { $0 as? UIControl }
+                .filter { !$0.isHidden && $0.alpha > 0 && $0.bounds.width > 0 }
+                .sorted { $0.frame.minX < $1.frame.minX }
+
+            if controls.count == itemCount,
+               let index = controls.firstIndex(where: { $0.frame.contains(location) }) {
+                return index
+            }
+
+            // Native tab buttons are normally UIControls; retain a geometric fallback
+            // if SwiftUI changes their internal view hierarchy in a future iOS release.
+            guard itemCount > 0, tabBar.bounds.width > 0 else { return nil }
+            let index = Int(location.x / (tabBar.bounds.width / CGFloat(itemCount)))
+            return (0..<itemCount).contains(index) ? index : nil
         }
     }
 

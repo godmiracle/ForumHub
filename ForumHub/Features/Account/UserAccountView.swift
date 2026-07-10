@@ -11,7 +11,7 @@ struct UserAccountView: View {
     @Bindable var favoriteThreads: FavoriteThreadsStore
     @Bindable var v2exAuthStore: V2EXAuthStore
     @Bindable var linuxDoAuthStore: LinuxDoAuthStore
-    let scrollToTopTrigger: Int
+    let scrollRequest: TabScrollRequest?
     let repositoryForSource: (ForumSource) -> any ThreadRepository
     let onLogin: () -> Void
     let onLogout: () async -> Void
@@ -170,7 +170,8 @@ struct UserAccountView: View {
                 .padding(.top, 28)
                 .padding(.bottom, 120)
             }
-            .onChange(of: scrollToTopTrigger) {
+            .onChange(of: scrollRequest) { _, request in
+                guard request?.targets(.user) == true else { return }
                 withAnimation(.snappy(duration: 0.28)) {
                     proxy.scrollTo(topAnchorID, anchor: .top)
                 }

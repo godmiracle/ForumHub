@@ -36,6 +36,8 @@
 
 ## Feed
 
+- [x] Add cancellable feed-load tasks and request generations so stale Home/Hot responses cannot overwrite the active tab.
+- [x] Route TabView reselection as a target-specific action so Home and Hot return immediately to their own feed top while refreshing.
 - Evaluate whether the first forum-feed loading state should stay as a centered spinner or evolve into a lightweight skeleton if real-device startup still feels abrupt.
 
 ## Images And Media

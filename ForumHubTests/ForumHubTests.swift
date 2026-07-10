@@ -80,6 +80,34 @@ struct ForumHubTests {
         #expect(thread.replies.first?.avatarURL?.absoluteString.contains("uid=66728361") == true)
     }
 
+    @Test func parserPreservesHTMLImagesInMainPost() throws {
+        let json = """
+        {
+          "result": [
+            {
+              "pid": 0,
+              "tid": 2001,
+              "subject": "带图片的主贴",
+              "author": { "username": "楼主" },
+              "content": "主贴正文<img src=\\"https://img.nga.178.com/attachments/main-post.jpg\\"/>结尾"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let thread = try #require(ThreadDetailParser.parse(
+            data: json,
+            fallbackText: String(decoding: json, as: UTF8.self),
+            tid: 2001
+        ))
+
+        #expect(thread.body.contains("[图片] https://img.nga.178.com/attachments/main-post.jpg"))
+        let expectedURL = try #require(URL(string: "https://img.nga.178.com/attachments/main-post.jpg"))
+        #expect(ForumContentParser.parse(thread.body).contains {
+            $0.content == .image(expectedURL)
+        })
+    }
+
     @Test func ngaAvatarResolverUpgradesKnownHTTPAvatarHost() {
         let url = ForumAvatarResolver.ngaAvatarURL(
             from: "http://img.nga.178.com/avatars/example.jpg?size=small"
@@ -209,6 +237,22 @@ struct ForumHubTests {
         #expect(FeedPaginationPolicy.shouldPrefetch(itemIndex: 17, itemCount: 20, canLoadMore: true))
         #expect(!FeedPaginationPolicy.shouldPrefetch(itemIndex: 17, itemCount: 20, canLoadMore: false))
         #expect(FeedPaginationPolicy.shouldPrefetch(itemIndex: 0, itemCount: 1, canLoadMore: true))
+    }
+
+    @Test func tabReselectionRoutesFeedRefreshSeparatelyFromOtherScreens() {
+        #expect(TabReselectionPolicy.behavior(for: .home) == .scrollToTopAndRefresh)
+        #expect(TabReselectionPolicy.behavior(for: .hot) == .scrollToTopAndRefresh)
+        #expect(TabReselectionPolicy.behavior(for: .community) == .scrollToTop)
+        #expect(TabReselectionPolicy.behavior(for: .history) == .scrollToTop)
+        #expect(TabReselectionPolicy.behavior(for: .user) == .scrollToTop)
+    }
+
+    @Test func tabScrollRequestTargetsOnlyItsOwnTab() {
+        let request = TabScrollRequest(id: 3, target: .hot)
+
+        #expect(request.targets(.hot))
+        #expect(!request.targets(.home))
+        #expect(!request.targets(.community))
     }
 
     @Test func guestCanLoadPublicForum() async {

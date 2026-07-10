@@ -77,6 +77,11 @@ extension String {
             .replacingOccurrences(of: "<br>", with: "\n")
             .replacingOccurrences(of: "<br />", with: "\n")
             .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(
+                of: #"<img[^>]+(?:src|data-src|data-original)=[\"']([^\"']+)[\"'][^>]*>"#,
+                with: "\n[图片] $1\n",
+                options: [.regularExpression, .caseInsensitive]
+            )
             .replacingOccurrences(of: #"\[img\](.*?)\[/img\]"#, with: "\n[图片] $1", options: .regularExpression)
             .replacingOccurrences(of: #"\[/?[a-zA-Z][^\]]*\]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
@@ -90,6 +95,11 @@ extension String {
             .replacingOccurrences(of: "<br>", with: "\n")
             .replacingOccurrences(of: "<br />", with: "\n")
             .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(
+                of: #"<img[^>]+(?:src|data-src|data-original)=[\"']([^\"']+)[\"'][^>]*>"#,
+                with: "\n[图片] $1\n",
+                options: [.regularExpression, .caseInsensitive]
+            )
             .replacingOccurrences(of: #"\[img\](.*?)\[/img\]"#, with: "\n[图片] $1", options: .regularExpression)
             .replacingOccurrences(of: #"\[/?(?!引用\b)[a-zA-Z][^\]]*\]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)

@@ -22,6 +22,8 @@ final class ForumViewModel {
     private var currentPage = 1
     private var feedTab: FeedTab = .home
     private var selectedForum: ForumChannel = .defaultForum
+    private var feedLoadGeneration = 0
+    private var feedLoadTask: Task<Void, Never>?
     private static let sourceStorageKey = "active-forum-source-v1"
 
     var repository: any ThreadRepository {
@@ -115,58 +117,48 @@ final class ForumViewModel {
     }
 
     func reload() async {
-        switch feedTab {
-        case .home, .community, .history, .user:
-            await reloadForum()
-        case .hot:
-            await reloadHot()
-        }
+        currentPage = 1
+        let request = makeFeedRequest(page: currentPage)
+        await replaceFeedLoad(with: request)
     }
 
-    private func reloadForum() async {
+    func suspendFeedLoading() {
+        feedLoadGeneration += 1
+        feedLoadTask?.cancel()
+        feedLoadTask = nil
+        isLoading = false
+        isLoadingMore = false
+    }
+
+    private func replaceFeedLoad(with request: FeedRequest) async {
+        feedLoadGeneration += 1
+        let generation = feedLoadGeneration
+        feedLoadTask?.cancel()
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performFeedLoad(request, generation: generation)
+        }
+        feedLoadTask = task
+        await task.value
+    }
+
+    private func performFeedLoad(_ request: FeedRequest, generation: Int) async {
+        defer {
+            if isCurrentFeedLoad(generation) {
+                isLoading = false
+                feedLoadTask = nil
+            }
+        }
 
         do {
-            currentPage = 1
-            if usesAggregatedChildForums {
-                let aggregated = try await fetchAggregatedForum(page: currentPage)
-                canLoadMore = aggregated.hasMore
-                pinnedThreads = aggregated.pinned
-                threads = aggregated.threads
-                forum = aggregated.forum
-            } else {
-                let result = try await repository.fetchForum(channel: selectedForum, page: currentPage)
-                canLoadMore = result.hasMore
-                if let payload = result.payload {
-                    let channelTitle = channels.first(where: { $0.id == payload.forum.id })?.title
-                        ?? (selectedForum.id == payload.forum.id ? selectedForum.title : payload.forum.title)
-                    forum = ForumSummary(
-                        id: payload.forum.id,
-                        title: channelTitle,
-                        subtitle: payload.forum.subtitle,
-                        todayPosts: payload.forum.todayPosts,
-                        onlineUsers: payload.forum.onlineUsers,
-                        source: source
-                    )
-                    if channels.count <= 1 {
-                        channels = payload.channels
-                    }
-                    pinnedThreads = payload.pinned.map { $0.withChannel(selectedForum) }
-                    threads = payload.threads.map { $0.withChannel(selectedForum) }
-                } else {
-                    pinnedThreads = []
-                    threads = []
-                    errorMessage = "请求成功，但还没完全匹配到响应结构。"
-                }
-            }
-            hasLoadedInitialFeed = true
+            let result = try await fetchFirstPage(for: request)
+            guard isCurrentFeedLoad(generation) else { return }
+            apply(result, for: request)
         } catch {
-            guard !error.isCancellationLike else {
-                errorMessage = nil
-                return
-            }
+            guard isCurrentFeedLoad(generation), !error.isCancellationLike else { return }
             canLoadMore = false
             pinnedThreads = []
             threads = []
@@ -175,50 +167,83 @@ final class ForumViewModel {
         }
     }
 
-    private func reloadHot() async {
-        isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
+    private func fetchFirstPage(for request: FeedRequest) async throws -> FeedFirstPageResult {
+        switch request.tab {
+        case .hot:
+            return .hot(try await request.repository.fetchHotThreads(page: request.page))
+        case .home, .community, .history, .user:
+            if request.usesAggregatedChildForums {
+                return .aggregated(try await fetchAggregatedForum(for: request))
+            }
+            return .forum(try await request.repository.fetchForum(channel: request.selectedForum, page: request.page))
+        }
+    }
 
-        do {
-            currentPage = 1
-            let result = try await repository.fetchHotThreads(page: currentPage)
+    private func apply(_ result: FeedFirstPageResult, for request: FeedRequest) {
+        switch result {
+        case let .aggregated(aggregated):
+            canLoadMore = aggregated.hasMore
+            pinnedThreads = aggregated.pinned
+            threads = aggregated.threads
+            forum = aggregated.forum
+        case let .forum(result):
             canLoadMore = result.hasMore
-            if let payload = result.payload {
-                forum = payload.forum
-                pinnedThreads = payload.pinned
-                threads = payload.threads
-            } else {
+            guard let payload = result.payload else {
+                pinnedThreads = []
+                threads = []
+                errorMessage = "请求成功，但还没完全匹配到响应结构。"
+                hasLoadedInitialFeed = true
+                return
+            }
+            let channelTitle = request.channels.first(where: { $0.id == payload.forum.id })?.title
+                ?? (request.selectedForum.id == payload.forum.id ? request.selectedForum.title : payload.forum.title)
+            forum = ForumSummary(
+                id: payload.forum.id,
+                title: channelTitle,
+                subtitle: payload.forum.subtitle,
+                todayPosts: payload.forum.todayPosts,
+                onlineUsers: payload.forum.onlineUsers,
+                source: request.source
+            )
+            if request.channels.count <= 1 {
+                channels = payload.channels
+            }
+            pinnedThreads = payload.pinned.map { $0.withChannel(request.selectedForum) }
+            threads = payload.threads.map { $0.withChannel(request.selectedForum) }
+        case let .hot(result):
+            canLoadMore = result.hasMore
+            guard let payload = result.payload else {
                 pinnedThreads = []
                 threads = []
                 errorMessage = "热门接口请求成功，但还没匹配到主题结构。"
-            }
-            hasLoadedInitialFeed = true
-        } catch {
-            guard !error.isCancellationLike else {
-                errorMessage = nil
+                hasLoadedInitialFeed = true
                 return
             }
-            canLoadMore = false
-            pinnedThreads = []
-            threads = []
-            errorMessage = error.localizedDescription
-            hasLoadedInitialFeed = true
+            forum = payload.forum
+            pinnedThreads = payload.pinned
+            threads = payload.threads
         }
+        hasLoadedInitialFeed = true
     }
 
     func loadNextPage() async {
         guard !isLoadingMore else { return }
 
+        let generation = feedLoadGeneration
         isLoadingMore = true
         errorMessage = nil
-        defer { isLoadingMore = false }
+        defer {
+            if isCurrentFeedLoad(generation) {
+                isLoadingMore = false
+            }
+        }
 
         do {
             let nextPage = currentPage + 1
             switch feedTab {
             case .hot:
                 let result = try await repository.fetchHotThreads(page: nextPage)
+                guard isCurrentFeedLoad(generation) else { return }
                 guard let payload = result.payload, !payload.threads.isEmpty else {
                     canLoadMore = false
                     return
@@ -234,6 +259,7 @@ final class ForumViewModel {
             case .home, .community, .history, .user:
                 if usesAggregatedChildForums {
                     let aggregated = try await fetchAggregatedForum(page: nextPage)
+                    guard isCurrentFeedLoad(generation) else { return }
                     guard !aggregated.threads.isEmpty else {
                         canLoadMore = false
                         return
@@ -243,6 +269,7 @@ final class ForumViewModel {
                     appendUniqueThreads(aggregated.threads)
                 } else {
                     let result = try await repository.fetchForum(channel: selectedForum, page: nextPage)
+                    guard isCurrentFeedLoad(generation) else { return }
                     guard let payload = result.payload, !payload.threads.isEmpty else {
                         canLoadMore = false
                         return
@@ -257,15 +284,13 @@ final class ForumViewModel {
                 }
             }
         } catch {
-            guard !error.isCancellationLike else {
-                errorMessage = nil
-                return
-            }
+            guard isCurrentFeedLoad(generation), !error.isCancellationLike else { return }
             errorMessage = error.localizedDescription
         }
     }
 
     func switchForum(to channel: ForumChannel) async {
+        suspendFeedLoading()
         forum = ForumSummary(
             id: channel.id,
             title: channel.title,
@@ -287,6 +312,7 @@ final class ForumViewModel {
     }
 
     func switchFeed(to tab: FeedTab) async {
+        suspendFeedLoading()
         feedTab = tab
         switch tab {
         case .home:
@@ -353,6 +379,7 @@ final class ForumViewModel {
     func switchSource(to newSource: ForumSource) async {
         guard newSource != source, let newRepository = repositories[newSource] else { return }
 
+        suspendFeedLoading()
         source = newSource
         UserDefaults.standard.set(newSource.rawValue, forKey: Self.sourceStorageKey)
         feedTab = .home
@@ -391,6 +418,7 @@ final class ForumViewModel {
     }
 
     func logout() async {
+        suspendFeedLoading()
         await NGAAuthStore.shared.logout()
         loginState = .empty
         isAuthenticated = false
@@ -422,13 +450,35 @@ final class ForumViewModel {
             && !selectedChildChannelIDs.isEmpty
     }
 
-    private func fetchAggregatedForum(page: Int) async throws -> AggregatedForumResult {
+    private func makeFeedRequest(page: Int) -> FeedRequest {
         let selectedChildren = availableChildChannels.filter { selectedChildChannelIDs.contains($0.id) }
-        let forumsToLoad = [selectedForum] + selectedChildren
+        return FeedRequest(
+            tab: feedTab,
+            source: source,
+            repository: repository,
+            selectedForum: selectedForum,
+            selectedChildChannels: selectedChildren,
+            channels: channels,
+            page: page,
+            usesAggregatedChildForums: usesAggregatedChildForums
+        )
+    }
+
+    private func isCurrentFeedLoad(_ generation: Int) -> Bool {
+        generation == feedLoadGeneration
+    }
+
+    private func fetchAggregatedForum(page: Int) async throws -> AggregatedForumResult {
+        try await fetchAggregatedForum(for: makeFeedRequest(page: page))
+    }
+
+    private func fetchAggregatedForum(for request: FeedRequest) async throws -> AggregatedForumResult {
+        let forumsToLoad = [request.selectedForum] + request.selectedChildChannels
 
         var results: [(channel: ForumChannel, result: ThreadFetchResult)] = []
         for channel in forumsToLoad {
-            let result = try await repository.fetchForum(channel: channel, page: page)
+            try Task.checkCancellation()
+            let result = try await request.repository.fetchForum(channel: channel, page: request.page)
             results.append((channel, result))
         }
 
@@ -438,10 +488,6 @@ final class ForumViewModel {
         }
         guard !payloads.isEmpty else {
             throw NSError(domain: "ForumViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "没有加载到子版内容。"])
-        }
-
-        if channels.count <= 1, let firstPayload = payloads.first {
-            channels = firstPayload.1.channels
         }
 
         let mergedPinned = deduplicatedThreads(
@@ -454,18 +500,18 @@ final class ForumViewModel {
                 payload.threads.map { $0.withChannel(channel) }
             }
         )
-        let subtitle = selectedChildren.isEmpty
-            ? "正在浏览 \(selectedForum.title)"
-            : "已包含 " + selectedChildren.map(\.title).joined(separator: "、")
+        let subtitle = request.selectedChildChannels.isEmpty
+            ? "正在浏览 \(request.selectedForum.title)"
+            : "已包含 " + request.selectedChildChannels.map(\.title).joined(separator: "、")
 
         return AggregatedForumResult(
             forum: ForumSummary(
-                id: selectedForum.id,
-                title: selectedForum.title,
+                id: request.selectedForum.id,
+                title: request.selectedForum.title,
                 subtitle: subtitle,
                 todayPosts: payloads.first?.1.forum.todayPosts ?? 0,
                 onlineUsers: payloads.reduce(0) { $0 + $1.1.forum.onlineUsers },
-                source: source
+                source: request.source
             ),
             pinned: mergedPinned,
             threads: mergedThreads,
@@ -515,4 +561,21 @@ private struct AggregatedForumResult {
     let pinned: [ForumThread]
     let threads: [ForumThread]
     let hasMore: Bool
+}
+
+private struct FeedRequest {
+    let tab: FeedTab
+    let source: ForumSource
+    let repository: any ThreadRepository
+    let selectedForum: ForumChannel
+    let selectedChildChannels: [ForumChannel]
+    let channels: [ForumChannel]
+    let page: Int
+    let usesAggregatedChildForums: Bool
+}
+
+private enum FeedFirstPageResult {
+    case forum(ThreadFetchResult)
+    case hot(ThreadFetchResult)
+    case aggregated(AggregatedForumResult)
 }

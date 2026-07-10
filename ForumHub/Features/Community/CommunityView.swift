@@ -6,7 +6,7 @@ struct CommunityView: View {
     let channels: [ForumChannel]
     let isLoading: Bool
     @Bindable var subscriptions: ForumSubscriptionStore
-    let scrollToTopTrigger: Int
+    let scrollRequest: TabScrollRequest?
     let onChannelSelect: (ForumChannel) async -> Void
     @State private var searchText = ""
     @State private var draggedChannelKey: String?
@@ -34,7 +34,8 @@ struct CommunityView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 24)
             }
-            .onChange(of: scrollToTopTrigger) {
+            .onChange(of: scrollRequest) { _, request in
+                guard request?.targets(.community) == true else { return }
                 withAnimation(.snappy(duration: 0.28)) {
                     proxy.scrollTo(topAnchorID, anchor: .top)
                 }

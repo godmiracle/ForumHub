@@ -72,6 +72,9 @@
 
 ### Stability And UX
 
+- Preserved HTML image sources in NGA main-post normalization so detail pages no longer drop those images before rendering.
+- Prevented stale feed responses from showing parse errors or replacing content after the reader switches tabs or sources.
+- Fixed Home and Hot tab reselection so each feed returns to its own list top immediately while refreshing in the background.
 - Hardened feed cancellation handling to avoid showing `cancelled` as a user-facing error
 - Continued refining thread pagination and loading-state behavior
 - Updated the dark and tinted iOS app-icon variants to the latest provided artwork

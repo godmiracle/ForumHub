@@ -27,7 +27,8 @@ It includes:
 - Home is the main place where users switch sources and browse content.
 - Feed content is source-agnostic at the view layer and depends on shared `ForumThread` models.
 - Sorting is currently a presentation concern applied after repository data is loaded.
-- Cancellation handling matters because feed refreshes, tab reselection, and source changes can overlap.
+- Feed loads use cancellable tasks plus request generations. A response may update feed state only when its generation is still current, preventing stale Home/Hot responses from surfacing errors after a tab or source change.
+- Tab reselection is observed without replacing `TabView`'s native delegate and routed as a target-specific scroll request. Home and Hot scroll immediately, refresh in the background, then confirm their own scroll position after refreshed data is installed; other tabs only receive a scroll request.
 - NGA child-channel aggregation is handled in the feed view model and must not leak parser details into views.
 - The first feed render should prefer a loading state until the initial request has completed once; an empty-state message is only valid after that first load resolves with no visible topics.
 

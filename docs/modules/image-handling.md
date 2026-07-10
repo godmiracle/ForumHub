@@ -23,6 +23,7 @@ It includes:
 ## Notes
 
 - Rich content images are rendered from parsed content blocks rather than embedded web content.
+- NGA post normalization preserves HTML image sources as shared `[图片] URL` markers before stripping residual HTML, so main-post images follow the same rendering path as reply images.
 - GIF support relies on a shared remote image pipeline plus WebKit-backed playback for both inline detail rendering and full-screen preview.
 - Inline thread-detail GIF playback is viewport-aware: only a small number of GIFs near the visible region stay animated, while off-screen items fall back to their first frame.
 - The pipeline uses in-memory reuse, local file caching, and downsampled preview decoding to reduce repeated downloads and oversized inline image decode work.

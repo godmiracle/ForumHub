@@ -194,6 +194,31 @@ Add a thin shared auth presentation layer made of a shared session descriptor, a
 - Source-specific auth behavior remains isolated instead of being flattened into one oversized global session store
 - The project must maintain a careful boundary so the shared descriptor never turns into a raw credential transport object
 
+## ADR-009 Feed Loads Use Cancellation And Request Generations
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+Home, Hot, source switching, channel switching, and tab reselection can start overlapping feed requests. Because the feed state is shared, a late NGA response could otherwise replace the active list or show a parse error after the reader had already moved elsewhere.
+
+### Decision
+
+Model each first-page feed load as an immutable request context. Starting a new context cancels the previous load and advances a generation; only the current generation may update feed state. Pagination also checks that generation before applying a result.
+
+### Consequences
+
+- A stale response cannot overwrite the active tab's content or error state
+- Cancellation is propagated through NGA's fallback paths where possible
+- Genuine parser failures remain visible when they belong to the currently active request
+- Feed loading code has a more explicit lifecycle, at the cost of maintaining request-context fields
+
 ## Template
 
 Use this structure for future decisions:

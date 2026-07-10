@@ -55,6 +55,7 @@ enum FeedSortMode: String, CaseIterable, Identifiable {
 }
 
 struct ForumFeedContent: View {
+    let tab: FeedTab
     let pinnedThreads: [ForumThread]
     let threads: [ForumThread]
     let repository: any ThreadRepository
@@ -65,7 +66,7 @@ struct ForumFeedContent: View {
     let isLoadingMore: Bool
     let canLoadMore: Bool
     let errorMessage: String?
-    let scrollToTopTrigger: Int
+    let scrollRequest: TabScrollRequest?
     let showsRetapRefreshIndicator: Bool
     let sortMode: FeedSortMode
     let showsPinnedThreads: Bool
@@ -78,7 +79,7 @@ struct ForumFeedContent: View {
     @State private var suppressesThreadNavigation = false
     @State private var tracksHorizontalSwipe = false
     @State private var suppressionGeneration = 0
-    private let topAnchorID = "feed-top-anchor"
+    private var topAnchorID: String { "feed-\(tab.rawValue)-top-anchor" }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -104,7 +105,8 @@ struct ForumFeedContent: View {
                     }
                 }
                 .simultaneousGesture(channelPagingGesture)
-                .onChange(of: scrollToTopTrigger) {
+                .onChange(of: scrollRequest) { _, request in
+                    guard request?.targets(tab) == true else { return }
                     withAnimation(.snappy(duration: 0.28)) {
                         proxy.scrollTo(topAnchorID, anchor: .top)
                     }
