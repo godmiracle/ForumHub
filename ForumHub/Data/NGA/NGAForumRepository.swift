@@ -29,7 +29,11 @@ struct NGALiveThreadRepository: ThreadRepository {
         supportsReply: true,
         supportsReplyTargeting: true,
         supportsAuthentication: true,
-        supportsFeedPagination: true
+        supportsFeedPagination: true,
+        threadPaginationStyle: .numbered(pageSize: 20),
+        supportsImageUpload: true,
+        supportsWebFallback: true,
+        requiresImageReferer: true
     )
     let defaultChannel = ForumChannel.defaultForum
 
@@ -243,13 +247,28 @@ struct NGALiveThreadRepository: ThreadRepository {
             ]
         )
 
-        if let thread = ThreadDetailParser.parse(
+        if let apiThread = ThreadDetailParser.parse(
             data: data,
             fallbackText: rawText,
             tid: tid,
             page: page
         ) {
-            return ThreadDetailFetchResult(thread: thread, rawText: rawText)
+            guard NGAThreadParseQuality.needsWebEnrichment(thread: apiThread, rawText: rawText) else {
+                return ThreadDetailFetchResult(thread: apiThread, rawText: rawText)
+            }
+
+            do {
+                let webResult = try await fetchWebThread(tid: tid, page: page, apiRawText: rawText)
+                return ThreadDetailFetchResult(
+                    thread: apiThread.enriched(with: webResult.thread),
+                    rawText: webResult.rawText
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // API data remains usable when the optional web enrichment fails.
+                return ThreadDetailFetchResult(thread: apiThread, rawText: rawText)
+            }
         }
 
         return try await fetchWebThread(tid: tid, page: page, apiRawText: rawText)
@@ -784,6 +803,70 @@ struct NGALiveThreadRepository: ThreadRepository {
 
     private func channelsForHot(_ parsedChannels: [ForumChannel]) -> [ForumChannel] {
         parsedChannels.isEmpty ? [.defaultForum] : parsedChannels
+    }
+}
+
+private enum NGAThreadParseQuality {
+    private static let rawImageMarkerPattern = #"(?i)(?:\[图片\]|\[img\]|<img\b)"#
+
+    static func needsWebEnrichment(thread: ForumThread, rawText: String) -> Bool {
+        let body = thread.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawImageCount = rawText.matches(pattern: rawImageMarkerPattern).count
+        let parsedImageCount = ForumContentParser.parse(thread.body).reduce(into: 0) { count, block in
+            if case .image = block.content {
+                count += 1
+            }
+        }
+
+        return body.isEmpty
+            || (thread.replyCount > 0 && thread.replies.isEmpty)
+            || parsedImageCount < rawImageCount
+    }
+}
+
+private extension ForumThread {
+    func enriched(with webThread: ForumThread) -> ForumThread {
+        let apiBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let webBody = webThread.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedBody = webBody.count > apiBody.count ? webThread.body : body
+        let resolvedReplies = replies.isEmpty ? webThread.replies : replies.appendingUnique(webThread.replies)
+
+        return ForumThread(
+            id: id,
+            title: title.isUsefulForumValue ? title : webThread.title,
+            summary: summary.isUsefulForumValue ? summary : webThread.summary,
+            author: author.isUsefulForumValue ? author : webThread.author,
+            authorAvatarURL: authorAvatarURL ?? webThread.authorAvatarURL,
+            createdAt: createdAt.isUsefulForumValue ? createdAt : webThread.createdAt,
+            lastReplyAt: lastReplyAt.isUsefulForumValue ? lastReplyAt : webThread.lastReplyAt,
+            replyCount: max(replyCount, webThread.replyCount, resolvedReplies.count),
+            viewCount: max(viewCount, webThread.viewCount),
+            body: resolvedBody,
+            replies: resolvedReplies,
+            source: source,
+            channelID: channelID,
+            channelTitle: channelTitle
+        )
+    }
+}
+
+private extension Array where Element == Reply {
+    func appendingUnique(_ additionalReplies: [Reply]) -> [Reply] {
+        var existingIDs = Set(map(\.id))
+        var existingSignatures = Set(map(\.signatureKey))
+        var result = self
+
+        for reply in additionalReplies {
+            guard !existingIDs.contains(reply.id),
+                  !existingSignatures.contains(reply.signatureKey)
+            else {
+                continue
+            }
+            existingIDs.insert(reply.id)
+            existingSignatures.insert(reply.signatureKey)
+            result.append(reply)
+        }
+        return result
     }
 }
 

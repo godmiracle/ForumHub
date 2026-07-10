@@ -1,18 +1,115 @@
+import Observation
 import SwiftUI
 
+@MainActor
+@Observable
+final class SearchThreadsViewModel {
+    var query: String
+    private(set) var searchedQuery: String
+    private(set) var threads: [ForumThread] = []
+    private(set) var isLoading = false
+    private(set) var isLoadingMore = false
+    private(set) var canLoadMore = false
+    private(set) var error: ForumError?
+
+    private let repository: any ThreadRepository
+    private var currentPage = 1
+    private var generation = 0
+    private var searchTask: Task<Void, Never>?
+    private var loadMoreTask: Task<Void, Never>?
+
+    init(initialQuery: String, repository: any ThreadRepository) {
+        self.query = initialQuery
+        self.searchedQuery = initialQuery
+        self.repository = repository
+    }
+
+    func submit(force: Bool = false) {
+        let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty,
+              force || keyword != searchedQuery || threads.isEmpty || error != nil
+        else {
+            return
+        }
+
+        generation += 1
+        let requestGeneration = generation
+        searchTask?.cancel()
+        loadMoreTask?.cancel()
+        isLoading = true
+        isLoadingMore = false
+        error = nil
+
+        searchTask = Task { [weak self, repository] in
+            do {
+                let result = try await repository.searchThreads(query: keyword, page: 1)
+                try Task.checkCancellation()
+                guard let self, self.generation == requestGeneration else { return }
+                self.threads = result.payload?.threads ?? []
+                self.canLoadMore = result.hasMore && !self.threads.isEmpty
+                self.searchedQuery = keyword
+                self.currentPage = 1
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, self.generation == requestGeneration else { return }
+                self.error = ForumError.resolve(error)
+            }
+            guard let self, self.generation == requestGeneration else { return }
+            self.isLoading = false
+            self.searchTask = nil
+        }
+    }
+
+    func loadNextPage() {
+        guard canLoadMore, !isLoading, !isLoadingMore, !searchedQuery.isEmpty else { return }
+
+        let requestGeneration = generation
+        let nextPage = currentPage + 1
+        let keyword = searchedQuery
+        isLoadingMore = true
+        error = nil
+
+        loadMoreTask = Task { [weak self, repository] in
+            do {
+                let result = try await repository.searchThreads(query: keyword, page: nextPage)
+                try Task.checkCancellation()
+                guard let self, self.generation == requestGeneration, self.searchedQuery == keyword else { return }
+                let newThreads = result.payload?.threads ?? []
+                self.threads.append(contentsOf: newThreads.filter { candidate in
+                    !self.threads.contains(where: { $0.id == candidate.id && $0.source == candidate.source })
+                })
+                self.canLoadMore = result.hasMore && !newThreads.isEmpty
+                self.currentPage = nextPage
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, self.generation == requestGeneration else { return }
+                self.error = ForumError.resolve(error)
+            }
+            guard let self, self.generation == requestGeneration else { return }
+            self.isLoadingMore = false
+            self.loadMoreTask = nil
+        }
+    }
+
+    func cancel() {
+        generation += 1
+        searchTask?.cancel()
+        loadMoreTask?.cancel()
+        searchTask = nil
+        loadMoreTask = nil
+        isLoading = false
+        isLoadingMore = false
+    }
+}
+
 struct SearchThreadsView: View {
-    let initialQuery: String
     let repository: any ThreadRepository
     @Bindable var blockedUsers: BlockedUsersStore
     @Bindable var favoriteThreads: FavoriteThreadsStore
-    @State private var query: String
-    @State private var searchedQuery: String
-    @State private var threads: [ForumThread] = []
-    @State private var currentPage = 1
-    @State private var isLoading = false
-    @State private var isLoadingMore = false
-    @State private var canLoadMore = false
-    @State private var errorMessage: String?
+    @State private var viewModel: SearchThreadsViewModel
+    @Environment(\.dismissSearch) private var dismissSearch
 
     init(
         initialQuery: String,
@@ -20,15 +117,15 @@ struct SearchThreadsView: View {
         blockedUsers: BlockedUsersStore,
         favoriteThreads: FavoriteThreadsStore
     ) {
-        self.initialQuery = initialQuery
         self.repository = repository
         self.blockedUsers = blockedUsers
         self.favoriteThreads = favoriteThreads
-        _query = State(initialValue: initialQuery)
-        _searchedQuery = State(initialValue: initialQuery)
+        _viewModel = State(initialValue: SearchThreadsViewModel(initialQuery: initialQuery, repository: repository))
     }
 
     var body: some View {
+        @Bindable var viewModel = viewModel
+
         ZStack {
             PaperBackground()
 
@@ -36,20 +133,20 @@ struct SearchThreadsView: View {
                 LazyVStack(spacing: 0) {
                     scopeNotice
 
-                    if let errorMessage {
-                        ErrorBanner(message: errorMessage)
+                    if let error = viewModel.error {
+                        ErrorBanner(message: error.userMessage)
                             .padding(.horizontal, 14)
                             .padding(.bottom, 10)
                     }
 
-                    if threads.isEmpty, isLoading {
-                        ProgressView("正在搜索 NGA")
+                    if viewModel.threads.isEmpty, viewModel.isLoading {
+                        ProgressView("正在搜索 \(repository.source.title)")
                             .tint(PaperTheme.accent)
                             .foregroundStyle(PaperTheme.mutedText)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 90)
-                    } else if threads.isEmpty {
-                        ContentUnavailableView.search(text: searchedQuery)
+                    } else if viewModel.threads.isEmpty {
+                        ContentUnavailableView.search(text: viewModel.searchedQuery)
                             .foregroundStyle(PaperTheme.secondaryInk)
                             .padding(.top, 70)
                     } else {
@@ -65,18 +162,18 @@ struct SearchThreadsView: View {
                                 blockedUsers: blockedUsers,
                                 favoriteThreads: favoriteThreads
                             )
-                            .task(id: threads.count) {
+                            .task(id: viewModel.threads.count) {
                                 if FeedPaginationPolicy.shouldPrefetch(
                                     itemIndex: index,
                                     itemCount: visibleThreads.count,
-                                    canLoadMore: canLoadMore
-                                ), !isLoadingMore {
-                                    await loadNextPage()
+                                    canLoadMore: viewModel.canLoadMore
+                                ) {
+                                    viewModel.loadNextPage()
                                 }
                             }
                         }
 
-                        if canLoadMore {
+                        if viewModel.canLoadMore, viewModel.isLoadingMore {
                             HStack(spacing: 10) {
                                 ProgressView()
                                 Text("正在加载更多")
@@ -91,31 +188,30 @@ struct SearchThreadsView: View {
                     Color.clear.frame(height: 40)
                 }
             }
-            .refreshable {
-                await search(reset: true)
-            }
+            .scrollDismissesKeyboard(.immediately)
+            .refreshable { viewModel.submit(force: true) }
         }
         .accessibilityIdentifier("search-results-screen")
-        .navigationTitle("搜索 NGA")
+        .navigationTitle("搜索 \(repository.source.title)")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(.regularMaterial, for: .navigationBar)
-        .searchable(text: $query, prompt: "搜索全站主题标题")
+        .searchable(text: $viewModel.query, prompt: "搜索全站主题标题")
         .onSubmit(of: .search) {
-            Task { await search(reset: true) }
+            dismissSearch()
+            viewModel.submit()
         }
-        .task {
-            await search(reset: true)
-        }
+        .task { viewModel.submit() }
+        .onDisappear { viewModel.cancel() }
     }
 
     private var visibleThreads: [ForumThread] {
-        blockedUsers.filtering(threads)
+        blockedUsers.filtering(viewModel.threads)
     }
 
     private var scopeNotice: some View {
         Label(
-            "覆盖普通版面与用户版面；仅搜索标题，需要已登录且威望大于 0。",
+            scopeNoticeText,
             systemImage: "magnifyingglass"
         )
         .font(.footnote)
@@ -124,52 +220,14 @@ struct SearchThreadsView: View {
         .padding(14)
     }
 
-    private func search(reset: Bool) async {
-        let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty, !isLoading else { return }
-
-        isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
-
-        do {
-            let page = reset ? 1 : currentPage
-            let result = try await repository.searchThreads(query: keyword, page: page)
-            threads = result.payload?.threads ?? []
-            canLoadMore = result.hasMore && !threads.isEmpty
-            searchedQuery = keyword
-            currentPage = page
-        } catch is CancellationError {
-            return
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func loadNextPage() async {
-        guard !isLoadingMore else { return }
-
-        isLoadingMore = true
-        errorMessage = nil
-        defer { isLoadingMore = false }
-
-        do {
-            let nextPage = currentPage + 1
-            let result = try await repository.searchThreads(query: searchedQuery, page: nextPage)
-            let newThreads = result.payload?.threads ?? []
-            guard !newThreads.isEmpty else {
-                canLoadMore = false
-                return
-            }
-            threads.append(contentsOf: newThreads.filter { newThread in
-                !threads.contains(where: { $0.id == newThread.id })
-            })
-            canLoadMore = result.hasMore
-            currentPage = nextPage
-        } catch is CancellationError {
-            return
-        } catch {
-            errorMessage = error.localizedDescription
+    private var scopeNoticeText: String {
+        switch repository.source {
+        case .nga:
+            return "覆盖普通版面与用户版面；仅搜索标题，需要已登录且威望大于 0。"
+        case .v2ex:
+            return "V2EX 当前未接入全站主题搜索。"
+        case .linuxDo:
+            return "搜索当前 LINUX DO 站点的公开主题。"
         }
     }
 }

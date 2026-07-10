@@ -57,6 +57,7 @@ ForumHub/
 5. [docs/decisions.md](docs/decisions.md)
 6. [docs/todo.md](docs/todo.md)
 7. 当前功能对应的 [docs/modules](docs/modules/) 文档
+8. [NGA-API-完整开发文档.md](docs/NGA-API-完整开发文档.md)(推测可能与真实有差异如果已实际为准)
 
 执行代码 Review 时，额外阅读 [docs/review.md](docs/review.md)。常用 AI 提示词位于 [docs/prompts.md](docs/prompts.md)。
 

@@ -104,6 +104,7 @@ struct ForumFeedContent: View {
                         Color.clear.frame(height: 112)
                     }
                 }
+                .scrollDismissesKeyboard(.interactively)
                 .simultaneousGesture(channelPagingGesture)
                 .onChange(of: scrollRequest) { _, request in
                     guard request?.targets(tab) == true else { return }
@@ -468,8 +469,10 @@ struct ThreadRow: View {
 }
 
 struct ForumTopBar: View {
-    @Binding var searchText: String
     @Binding var selectedChannelID: Int
+    let activeTab: FeedTab
+    @State private var searchDraft = ""
+    @FocusState private var isSearchFocused: Bool
     let selectedSource: ForumSource
     let availableSources: [ForumSource]
     let forum: ForumSummary
@@ -547,27 +550,35 @@ struct ForumTopBar: View {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(PaperTheme.mutedText)
-                    TextField(searchPlaceholder, text: $searchText)
+                    TextField(searchPlaceholder, text: $searchDraft)
                         .accessibilityIdentifier("forum-search-field")
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .focused($isSearchFocused)
                         .submitLabel(.search)
                         .onSubmit {
-                            if capabilities.supportsSearch {
-                                onSearch(searchText)
-                            }
+                            submitSearch()
                         }
                         .foregroundStyle(PaperTheme.ink)
                         .disabled(!capabilities.supportsSearch)
-                    if !searchText.isEmpty {
+                    if !searchDraft.isEmpty {
                         Button {
-                            searchText = ""
+                            searchDraft = ""
+                            isSearchFocused = false
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(PaperTheme.mutedText.opacity(0.72))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("清空搜索")
+                    }
+                }
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("完成") {
+                            isSearchFocused = false
+                        }
                     }
                 }
                 .font(.system(size: 17))
@@ -726,6 +737,16 @@ struct ForumTopBar: View {
                 .fill(PaperTheme.hairline)
                 .frame(height: 0.7)
         }
+        .onChange(of: activeTab) { _, _ in
+            isSearchFocused = false
+        }
+    }
+
+    private func submitSearch() {
+        let keyword = searchDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard capabilities.supportsSearch, !keyword.isEmpty else { return }
+        isSearchFocused = false
+        onSearch(keyword)
     }
 
     private var searchPlaceholder: String {

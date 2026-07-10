@@ -233,6 +233,12 @@ private struct SnapshotRichContent: View {
 }
 
 enum NGAImageLoader {
+    private static let trustedNGAImageHosts: Set<String> = [
+        "img.nga.178.com",
+        "img4.nga.178.com",
+        "bbs.nga.cn",
+        "nga.178.com"
+    ]
     private static let previewImageMaxPixelSize = max(
         Int(UIScreen.main.bounds.width * UIScreen.main.scale * 2),
         1_600
@@ -251,12 +257,15 @@ enum NGAImageLoader {
         request.cachePolicy = .returnCacheDataElseLoad
         request.timeoutInterval = 30
         request.setValue("image/avif,image/webp,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 NGAPrototype/1.0", forHTTPHeaderField: "User-Agent")
-        request.setValue("https://bbs.nga.cn/", forHTTPHeaderField: "Referer")
+        if let host = url.host?.lowercased(), trustedNGAImageHosts.contains(host) {
+            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 NGAPrototype/1.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("https://bbs.nga.cn/", forHTTPHeaderField: "Referer")
+            request.httpShouldHandleCookies = true
 
-        let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
-        for (field, value) in HTTPCookie.requestHeaderFields(with: cookies) {
-            request.setValue(value, forHTTPHeaderField: field)
+            let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
+            for (field, value) in HTTPCookie.requestHeaderFields(with: cookies) {
+                request.setValue(value, forHTTPHeaderField: field)
+            }
         }
 
         let (data, response) = try await URLSession.shared.data(for: request)

@@ -133,6 +133,54 @@ struct ForumHubTests {
         #expect(blocks[3].content == .image(try #require(URL(string: "https://img.nga.178.com/attachments/mon_202606/18/example-b.webp"))))
     }
 
+    @Test func contentParserSupportsInlineBBCodeAndNGAImageURLVariants() throws {
+        let content = "文字 [img]//img.nga.178.com/a.gif[/img] 说明 [图片] /attachments/mon_202607/b.jpg?name=a&amp;size=full"
+
+        let blocks = ForumContentParser.parse(content)
+
+        #expect(blocks.count == 4)
+        #expect(blocks[0].content == .text("文字"))
+        #expect(blocks[1].content == .image(try #require(URL(string: "https://img.nga.178.com/a.gif"))))
+        #expect(blocks[2].content == .text("说明"))
+        #expect(blocks[3].content == .image(try #require(URL(string: "https://img.nga.178.com/attachments/mon_202607/b.jpg?name=a&size=full"))))
+    }
+
+    @Test func structuredForumTextPreservesSizedNGAImageTags() throws {
+        let content = "正文[img=800x600]./mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg[/img]结尾"
+
+        let blocks = ForumContentParser.parse(content.structuredForumText)
+
+        #expect(blocks.contains {
+            if case let .image(url) = $0.content {
+                return url.absoluteString == "https://img.nga.178.com/attachments/mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg"
+            }
+            return false
+        })
+    }
+
+    @Test func contentParserPreservesNGARelativeMainPostImage() {
+        let content = "主贴正文[img]./mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg[/img]结尾"
+        let blocks = ForumContentParser.parse(content.structuredForumText)
+
+        #expect(blocks.contains {
+            if case let .image(url) = $0.content {
+                return url.absoluteString == "https://img.nga.178.com/attachments/mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg"
+            }
+            return false
+        })
+    }
+
+    @Test func forumImageURLResolverUpgradesTrustedNGAHTTPOnly() throws {
+        #expect(
+            ForumImageURLResolver.resolve("http://img.nga.178.com/a.jpg")
+                == try #require(URL(string: "https://img.nga.178.com/a.jpg"))
+        )
+        #expect(
+            ForumImageURLResolver.resolve("http://example.com/a.jpg")
+                == try #require(URL(string: "http://example.com/a.jpg"))
+        )
+    }
+
     @Test func forumSubscriptionsDefaultFilterAndPersist() throws {
         let suiteName = "ForumHubTests.forum-subscriptions.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

@@ -18,7 +18,7 @@ struct ForumQuoteBlock: Equatable {
 }
 
 enum ForumContentParser {
-    private static let tokenPattern = #"(?ms)\[引用 author="(.*?)" time="(.*?)"\](.*?)\[/引用\]|(?m)^[\t ]*\[图片\][\t ]*(https?://[^\s]+)[\t ]*$"#
+    private static let tokenPattern = #"(?ms)\[引用 author="(.*?)" time="(.*?)"\](.*?)\[/引用\]|(?:\[图片\]\s*|\[img(?:=[^\]]+)?\]\s*)((?:https?:)?//[^\s\[\]<>"']+|\.?/[^\s\[\]<>"']+)(?:\s*\[/img\])?"#
     private static let expression = try? NSRegularExpression(pattern: tokenPattern)
     private static let legacyLeadingQuotePattern = #"(?ms)\AReply(?: to Reply)? Post by (.*?) \((.*?)\)\s*(.*)\z"#
     private static let legacyLeadingQuoteExpression = try? NSRegularExpression(pattern: legacyLeadingQuotePattern)
@@ -71,7 +71,7 @@ enum ForumContentParser {
                     )
                 )
             } else if let urlRange = Range(match.range(at: 4), in: text),
-                      let url = URL(string: String(text[urlRange])) {
+                      let url = ForumImageURLResolver.resolve(String(text[urlRange])) {
                 blocks.append(ForumContentBlock(id: blocks.count, content: .image(url)))
             }
             cursor = matchRange.upperBound
@@ -126,6 +126,44 @@ enum ForumContentParser {
                 )
             )
         ]
+    }
+}
+
+enum ForumImageURLResolver {
+    private static let ngaImageBaseURL = "https://img.nga.178.com"
+    private static let trustedNGAHosts: Set<String> = [
+        "img.nga.178.com",
+        "img4.nga.178.com",
+        "bbs.nga.cn",
+        "nga.178.com"
+    ]
+
+    static func resolve(_ rawValue: String) -> URL? {
+        var value = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&#38;", with: "&")
+            .replacingOccurrences(of: "\\/", with: "/")
+
+        if value.hasPrefix("//") {
+            value = "https:" + value
+        } else if value.hasPrefix("./") {
+            value = ngaImageBaseURL + "/attachments/" + String(value.dropFirst(2))
+        } else if value.hasPrefix("/") {
+            value = ngaImageBaseURL + value
+        }
+
+        guard var components = URLComponents(string: value),
+              let host = components.host?.lowercased(),
+              components.scheme == "http" || components.scheme == "https"
+        else {
+            return nil
+        }
+
+        if components.scheme == "http", trustedNGAHosts.contains(host) {
+            components.scheme = "https"
+        }
+        return components.url
     }
 }
 

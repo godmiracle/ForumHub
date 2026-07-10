@@ -10,45 +10,21 @@ struct ThreadDetailView: View {
     private let topAnchorID = "thread-detail-top-anchor"
     private let replyTopAnchorID = "thread-detail-reply-top-anchor"
     private let scrollTrackingSpaceName = "thread-detail-scroll"
-    private let detailPageSize = 20
     private let directPaginationPrefetchReplyDistance = 6
     private let inlineGIFPlaybackViewportBuffer: CGFloat = 180
     private let maximumSimultaneousInlineGIFs = 3
-    @State private var detailThread: ForumThread
-    @State private var canonicalThread: ForumThread?
-    @State private var threadReplyTotalCount: Int
-    @State private var isLoading = false
-    @State private var isLoadingMore = false
-    @State private var contentError: ForumError?
     @State private var showsOnlyThreadAuthor = false
     @State private var showsRepliesInReverseOrder = false
-    @State private var currentPage = 1
-    @State private var hasMoreReplies = true
     @State private var isPreparingSnapshot = false
     @State private var snapshotImages: [UIImage] = []
     @State private var showsSnapshotPreview = false
     @State private var snapshotErrorMessage: String?
-    @State private var favoriteErrorMessage: String?
-    @State private var isUpdatingFavorite = false
-    @State private var showsReplyComposer = false
-    @State private var replyTarget: ThreadReplyTarget = .thread
     @State private var showsPagePicker = false
-    @State private var replyText = ""
-    @State private var replyAttachments: [ReplyComposerAttachment] = []
-    @State private var isSubmittingReply = false
-    @State private var replyErrorMessage: String?
-    @State private var replySuccessMessage: String?
+    @State private var detailViewModel: ThreadDetailViewModel
     @State private var showsScrollToTopButton = false
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var lastObservedScrollOffset: CGFloat = 0
-    @State private var visiblePage = 1
-    @State private var loadedPageStartReplyIndices: [Int: Int] = [1: 0]
-    @State private var pendingPageSelection = 1
-    @State private var deferredScrollTargetPage: Int?
-    @State private var lastAutoLoadedPage: Int?
     @State private var activeInlineGIFPlaybackIDs: Set<UUID> = []
-    @State private var contentLoadGeneration = 0
-    @State private var contentLoadTask: Task<Bool, Never>?
     @State private var cachedDisplayedReplies: [Reply] = []
     @State private var cachedDisplayedReplyEntries: [ThreadDetailDisplayedReplyEntry] = []
 
@@ -62,9 +38,72 @@ struct ThreadDetailView: View {
         self.repository = repository
         self.blockedUsers = blockedUsers
         self.favoriteThreads = favoriteThreads
-        _detailThread = State(initialValue: thread)
-        _threadReplyTotalCount = State(initialValue: thread.replyCount)
+        _detailViewModel = State(initialValue: ThreadDetailViewModel(thread: thread))
     }
+
+    private var actionState: ThreadDetailActionState { detailViewModel.actions }
+    private var paginationState: ThreadDetailPaginationState { detailViewModel.pagination }
+    private var contentLoadController: ThreadDetailContentLoadController { detailViewModel.contentLoader }
+    private var detailThread: ForumThread { get { detailViewModel.content.thread } nonmutating set { detailViewModel.content.thread = newValue } }
+    private var canonicalThread: ForumThread? { get { detailViewModel.content.canonicalThread } nonmutating set { detailViewModel.content.canonicalThread = newValue } }
+    private var threadReplyTotalCount: Int { get { detailViewModel.content.replyTotalCount } nonmutating set { detailViewModel.content.replyTotalCount = newValue } }
+    private var isLoading: Bool { get { detailViewModel.content.isLoading } nonmutating set { detailViewModel.content.isLoading = newValue } }
+    private var isLoadingMore: Bool { get { detailViewModel.content.isLoadingMore } nonmutating set { detailViewModel.content.isLoadingMore = newValue } }
+    private var contentError: ForumError? { get { detailViewModel.content.error } nonmutating set { detailViewModel.content.error = newValue } }
+
+    private var currentPage: Int {
+        get { paginationState.currentPage }
+        nonmutating set { paginationState.currentPage = newValue }
+    }
+
+    private var hasMoreReplies: Bool {
+        get { paginationState.hasMoreReplies }
+        nonmutating set { paginationState.hasMoreReplies = newValue }
+    }
+
+    private var visiblePage: Int {
+        get { paginationState.visiblePage }
+        nonmutating set { paginationState.visiblePage = newValue }
+    }
+
+    private var loadedPageStartReplyIndices: [Int: Int] {
+        get { paginationState.pageStartReplyIndices }
+        nonmutating set { paginationState.pageStartReplyIndices = newValue }
+    }
+
+    private var pendingPageSelection: Int {
+        get { paginationState.pendingPageSelection }
+        nonmutating set { paginationState.pendingPageSelection = newValue }
+    }
+
+    private var deferredScrollTargetPage: Int? {
+        get { paginationState.deferredScrollTargetPage }
+        nonmutating set { paginationState.deferredScrollTargetPage = newValue }
+    }
+
+    private var lastAutoLoadedPage: Int? {
+        get { paginationState.lastAutoLoadedPage }
+        nonmutating set { paginationState.lastAutoLoadedPage = newValue }
+    }
+
+    private var pendingPageSelectionBinding: Binding<Int> {
+        Binding(get: { paginationState.pendingPageSelection }, set: { paginationState.pendingPageSelection = $0 })
+    }
+
+    private var favoriteErrorMessage: String? { get { actionState.favoriteErrorMessage } nonmutating set { actionState.favoriteErrorMessage = newValue } }
+    private var isUpdatingFavorite: Bool { get { actionState.isUpdatingFavorite } nonmutating set { actionState.isUpdatingFavorite = newValue } }
+    private var showsReplyComposer: Bool { get { actionState.showsReplyComposer } nonmutating set { actionState.showsReplyComposer = newValue } }
+    private var replyTarget: ThreadReplyTarget { get { actionState.replyTarget } nonmutating set { actionState.replyTarget = newValue } }
+    private var replyText: String { get { actionState.replyText } nonmutating set { actionState.replyText = newValue } }
+    private var replyAttachments: [ReplyComposerAttachment] { get { actionState.replyAttachments } nonmutating set { actionState.replyAttachments = newValue } }
+    private var isSubmittingReply: Bool { get { actionState.isSubmittingReply } nonmutating set { actionState.isSubmittingReply = newValue } }
+    private var replyErrorMessage: String? { get { actionState.replyErrorMessage } nonmutating set { actionState.replyErrorMessage = newValue } }
+    private var replySuccessMessage: String? { get { actionState.replySuccessMessage } nonmutating set { actionState.replySuccessMessage = newValue } }
+
+    private var replyTargetBinding: Binding<ThreadReplyTarget> { Binding(get: { actionState.replyTarget }, set: { actionState.replyTarget = $0 }) }
+    private var replyTextBinding: Binding<String> { Binding(get: { actionState.replyText }, set: { actionState.replyText = $0 }) }
+    private var replyAttachmentsBinding: Binding<[ReplyComposerAttachment]> { Binding(get: { actionState.replyAttachments }, set: { actionState.replyAttachments = $0 }) }
+    private var showsReplyComposerBinding: Binding<Bool> { Binding(get: { actionState.showsReplyComposer }, set: { actionState.showsReplyComposer = $0 }) }
 
     var body: some View {
         let replyEntries = displayedReplyEntries
@@ -354,12 +393,13 @@ struct ThreadDetailView: View {
         } message: {
             Text(replySuccessMessage ?? "帖子内容已刷新。")
         }
-        .sheet(isPresented: $showsReplyComposer) {
+        .sheet(isPresented: showsReplyComposerBinding) {
             ReplyComposerSheet(
                 source: repository.source,
-                target: $replyTarget,
-                text: $replyText,
-                attachments: $replyAttachments,
+                capabilities: repository.capabilities,
+                target: replyTargetBinding,
+                text: replyTextBinding,
+                attachments: replyAttachmentsBinding,
                 isSubmitting: isSubmittingReply,
                 onCancel: {
                     showsReplyComposer = false
@@ -373,7 +413,7 @@ struct ThreadDetailView: View {
         }
         .sheet(isPresented: $showsPagePicker) {
             ThreadDetailPagePickerSheet(
-                pendingPageSelection: $pendingPageSelection,
+                pendingPageSelection: pendingPageSelectionBinding,
                 totalPageCount: totalPageCount,
                 onJump: jumpToPageFromPicker(_:),
                 onCancel: {
@@ -482,16 +522,23 @@ struct ThreadDetailView: View {
     }
 
     private func refreshDisplayedReplyCache() {
-        let replies = showsOnlyThreadAuthor ? detailThread.authorReplies : detailThread.replies
-        let visibleReplies = replies.filter { reply in
-            !blockedUsers.isBlocked(source: repository.source, username: reply.author)
-        }
-        let displayedReplies = showsRepliesInReverseOrder
-            ? Array(visibleReplies.reversed())
-            : visibleReplies
-
-        cachedDisplayedReplies = displayedReplies
-        cachedDisplayedReplyEntries = makeDisplayedReplyEntries(from: displayedReplies)
+        cachedDisplayedReplies = ThreadDetailPresentationBuilder.displayedReplies(
+            thread: detailThread,
+            showsOnlyThreadAuthor: showsOnlyThreadAuthor,
+            showsRepliesInReverseOrder: showsRepliesInReverseOrder,
+            source: repository.source,
+            isBlocked: { source, username in
+                blockedUsers.isBlocked(source: source, username: username)
+            }
+        )
+        cachedDisplayedReplyEntries = ThreadDetailPresentationBuilder.displayedReplyEntries(
+            displayedReplies: cachedDisplayedReplies,
+            allReplies: detailThread.replies,
+            pageStartReplyIndices: loadedPageStartReplyIndices,
+            supportsDirectPagination: supportsDirectPagination,
+            pageSize: detailPageSize,
+            prefetchReplyDistance: directPaginationPrefetchReplyDistance
+        )
     }
 
     private var replyScrollTargetID: String {
@@ -499,48 +546,28 @@ struct ThreadDetailView: View {
     }
 
     private var supportsDirectPagination: Bool {
-        repository.source == .nga
+        ThreadPaginationPolicy.supportsDirectPagination(for: repository.capabilities)
+    }
+
+    private var detailPageSize: Int {
+        ThreadPaginationPolicy.pageSize(for: repository.capabilities) ?? 20
     }
 
     private var displayedReplyEntries: [ThreadDetailDisplayedReplyEntry] {
         cachedDisplayedReplyEntries
     }
 
-    private func makeDisplayedReplyEntries(
-        from displayedReplies: [Reply]
-    ) -> [ThreadDetailDisplayedReplyEntry] {
-        let sortedPageStarts = loadedPageStartReplyIndices.sorted { $0.value < $1.value }
-        let replyIndices = Dictionary(uniqueKeysWithValues: detailThread.replies.enumerated().map { ($1.id, $0) })
-        var firstVisibleReplyIDByPage: [Int: Int] = [:]
-
-        let prefetchStartIndex = max(displayedReplies.count - directPaginationPrefetchReplyDistance, 0)
-
-        return displayedReplies.enumerated().map { visualIndex, reply in
-            let replyIndex = replyIndices[reply.id]
-            let page = resolvedPage(forReplyIndex: replyIndex, sortedPageStarts: sortedPageStarts)
-            let showsPageAnchor = firstVisibleReplyIDByPage[page] == nil
-            if showsPageAnchor {
-                firstVisibleReplyIDByPage[page] = reply.id
-            }
-
-            return ThreadDetailDisplayedReplyEntry(
-                reply: reply,
-                page: page,
-                showsPageAnchor: showsPageAnchor,
-                floorLabel: resolvedFloorLabel(replyIndex: replyIndex, page: page, floorNumber: reply.floorNumber),
-                loadsNextPageWhenAppearing: visualIndex >= prefetchStartIndex
-            )
-        }
-    }
 
     private var displayedAnchorPages: Set<Int> {
         Set(displayedReplyEntries.lazy.filter(\.showsPageAnchor).map(\.page))
     }
 
     private var totalPageCount: Int {
-        let totalReplies = max(threadReplyTotalCount, thread.replyCount)
-        let totalPosts = max(totalReplies + 1, 1)
-        return max(1, Int(ceil(Double(totalPosts) / Double(detailPageSize))))
+        ThreadPaginationPolicy.totalPageCount(
+            replyCount: threadReplyTotalCount,
+            fallbackReplyCount: thread.replyCount,
+            capabilities: repository.capabilities
+        )
     }
 
     private var replySectionTitle: String {
@@ -607,74 +634,19 @@ struct ThreadDetailView: View {
     private func startContentLoad(
         _ operation: @escaping @MainActor (Int) async -> Bool
     ) async -> Bool {
-        cancelContentLoad()
-        let generation = contentLoadGeneration
-        let task = Task { @MainActor in
-            await operation(generation)
-        }
-        contentLoadTask = task
-
-        let didComplete = await task.value
-        if contentLoadGeneration == generation {
-            contentLoadTask = nil
-        }
-        return didComplete
+        await contentLoadController.start(operation)
     }
 
     private func cancelContentLoad() {
-        contentLoadTask?.cancel()
-        contentLoadTask = nil
-        contentLoadGeneration &+= 1
+        contentLoadController.cancel()
     }
 
     private func isCurrentContentLoad(_ generation: Int) -> Bool {
-        !Task.isCancelled && contentLoadGeneration == generation
+        contentLoadController.isCurrent(generation)
     }
 
     private func refreshDetail() async {
-        await startContentLoad { generation in
-            await refreshDetail(generation: generation)
-        }
-    }
-
-    private func refreshDetail(generation: Int) async -> Bool {
-        guard isCurrentContentLoad(generation) else { return false }
-
-        isLoading = true
-        contentError = nil
-        defer {
-            if isCurrentContentLoad(generation) {
-                isLoading = false
-            }
-        }
-
-        do {
-            let result = try await repository.fetchThread(tid: thread.id, page: 1)
-            guard isCurrentContentLoad(generation) else { return false }
-
-            let loadedThread = result.thread
-            let mergedThread = loadedThread.mergingMetadataFallback(from: thread)
-            let resolvedReplyTotal = max(threadReplyTotalCount, thread.replyCount, mergedThread.replyCount)
-            detailThread = mergedThread
-            canonicalThread = mergedThread
-            threadReplyTotalCount = resolvedReplyTotal
-            currentPage = 1
-            visiblePage = 1
-            loadedPageStartReplyIndices = [1: 0]
-            pendingPageSelection = 1
-            lastAutoLoadedPage = nil
-            hasMoreReplies = supportsDirectPagination
-                ? totalPageCount > 1
-                : shouldTryAnotherPage(
-                    loadedCount: loadedThread.replies.count,
-                    totalCount: resolvedReplyTotal
-                )
-            return true
-        } catch {
-            guard isCurrentContentLoad(generation) else { return false }
-            contentError = ForumError.resolve(error)
-            return false
-        }
+        _ = await detailViewModel.refresh(thread: thread, repository: repository)
     }
 
     @discardableResult
@@ -701,160 +673,20 @@ struct ThreadDetailView: View {
             return true
         }
 
-        return await startContentLoad { generation in
-            await loadSpecificPage(
-                targetPage,
-                generation: generation,
-                proxy: proxy,
-                shouldScrollAfterLoad: shouldScrollAfterLoad,
-                updatesPageSelection: updatesPageSelection
-            )
-        }
-    }
-
-    private func loadSpecificPage(
-        _ targetPage: Int,
-        generation: Int,
-        proxy: ScrollViewProxy?,
-        shouldScrollAfterLoad: Bool,
-        updatesPageSelection: Bool
-    ) async -> Bool {
-        guard isCurrentContentLoad(generation) else { return false }
-
-        isLoadingMore = true
-        contentError = nil
-        defer {
-            if isCurrentContentLoad(generation) {
-                isLoadingMore = false
-            }
-        }
-
-        do {
-            var workingThread = detailThread
-            var workingCanonicalThread = canonicalThread ?? detailThread.mergingMetadataFallback(from: thread)
-            var resolvedReplyTotal = threadReplyTotalCount
-            var nextPageStarts = loadedPageStartReplyIndices
-
-            for nextPage in (currentPage + 1)...targetPage {
-                guard isCurrentContentLoad(generation) else { return false }
-                let result = try await repository.fetchThread(tid: thread.id, page: nextPage)
-                guard isCurrentContentLoad(generation) else { return false }
-                resolvedReplyTotal = max(resolvedReplyTotal, thread.replyCount, result.thread.replyCount)
-
-                if nextPage == 1 {
-                    let mergedThread = result.thread.mergingMetadataFallback(from: thread)
-                    workingThread = mergedThread
-                    workingCanonicalThread = mergedThread
-                    nextPageStarts = [1: 0]
-                    continue
-                }
-
-                let mergeResult = ThreadDetailPaginationMerger.merge(
-                    currentThread: workingThread,
-                    continuationThread: result.thread,
-                    replyTotalCount: resolvedReplyTotal
-                )
-                workingThread = mergeResult.thread
-                nextPageStarts[nextPage] = mergeResult.pageStartReplyIndex
-            }
-
-            guard isCurrentContentLoad(generation) else { return false }
-            detailThread = workingThread.replacingReplies(
-                workingThread.replies,
-                lastReplyAt: workingThread.lastReplyAt,
-                replyCount: resolvedReplyTotal
-            )
-            canonicalThread = workingCanonicalThread
-            threadReplyTotalCount = resolvedReplyTotal
-            currentPage = targetPage
-            loadedPageStartReplyIndices = nextPageStarts
-            if updatesPageSelection {
-                pendingPageSelection = targetPage
-            }
-            hasMoreReplies = currentPage < totalPageCount
-
-            if let proxy {
-                visiblePage = targetPage
-                scrollToPage(targetPage, proxy: proxy)
-            } else if shouldScrollAfterLoad {
-                visiblePage = targetPage
-                deferredScrollTargetPage = targetPage
-            }
-            return true
-        } catch {
-            guard isCurrentContentLoad(generation) else { return false }
-            lastAutoLoadedPage = nil
-            contentError = ForumError.resolve(error)
-            return false
-        }
+        let didLoad = await detailViewModel.loadThroughPage(targetPage, thread: thread, repository: repository)
+        guard didLoad else { return false }
+        if updatesPageSelection { pendingPageSelection = targetPage }
+        if let proxy { visiblePage = targetPage; scrollToPage(targetPage, proxy: proxy) }
+        else if shouldScrollAfterLoad { visiblePage = targetPage; deferredScrollTargetPage = targetPage }
+        return true
     }
 
     private func loadNextPage() async {
-        guard hasMoreReplies, !isLoading, !isLoadingMore else { return }
-
-        _ = await startContentLoad { generation in
-            await loadNextPage(generation: generation)
-        }
-    }
-
-    private func loadNextPage(generation: Int) async -> Bool {
-        guard isCurrentContentLoad(generation) else { return false }
-
-        isLoadingMore = true
-        contentError = nil
-        defer {
-            if isCurrentContentLoad(generation) {
-                isLoadingMore = false
-            }
-        }
-
-        do {
-            let authorReplyCountBeforeLoad = detailThread.authorReplies.count
-            var scannedPageCount = 0
-
-            repeat {
-                guard isCurrentContentLoad(generation) else { return false }
-                let nextPage = currentPage + 1
-                let result = try await repository.fetchThread(tid: thread.id, page: nextPage)
-                guard isCurrentContentLoad(generation) else { return false }
-                let resolvedReplyTotal = max(threadReplyTotalCount, detailThread.replyCount, result.thread.replyCount)
-                let mergeResult = ThreadDetailPaginationMerger.merge(
-                    currentThread: detailThread,
-                    continuationThread: result.thread,
-                    replyTotalCount: resolvedReplyTotal
-                )
-                scannedPageCount += 1
-
-                guard !mergeResult.continuationReplies.isEmpty, mergeResult.didAppendReplies else {
-                    hasMoreReplies = false
-                    break
-                }
-
-                detailThread = mergeResult.thread
-                threadReplyTotalCount = resolvedReplyTotal
-                currentPage = nextPage
-                hasMoreReplies = shouldTryAnotherPage(
-                    loadedCount: mergeResult.continuationReplies.count,
-                    totalCount: detailThread.replyCount,
-                    accumulatedCount: detailThread.replies.count
-                )
-
-                guard ThreadDetailPaginationPolicy.shouldContinueAutomaticLoading(
-                    showsOnlyAuthor: showsOnlyThreadAuthor,
-                    authorReplyCountBeforeLoad: authorReplyCountBeforeLoad,
-                    authorReplyCountAfterLoad: detailThread.authorReplies.count,
-                    hasMoreReplies: hasMoreReplies,
-                    scannedPageCount: scannedPageCount
-                ) else {
-                    break
-                }
-            } while hasMoreReplies
-            return true
-        } catch {
-            guard isCurrentContentLoad(generation) else { return false }
-            contentError = ForumError.resolve(error)
-            return false
-        }
+        await detailViewModel.loadNextPage(
+            thread: thread,
+            repository: repository,
+            showsOnlyAuthor: showsOnlyThreadAuthor
+        )
     }
 
     private func shouldTryAnotherPage(
@@ -867,28 +699,11 @@ struct ThreadDetailView: View {
     }
 
     private func toggleFavorite() async {
-        guard !isUpdatingFavorite else { return }
-
-        isUpdatingFavorite = true
-        favoriteErrorMessage = nil
-        defer { isUpdatingFavorite = false }
-
-        do {
-            if repository.capabilities.supportsFavorites {
-                if favoriteThreads.contains(detailThread) {
-                    try await repository.removeFavoriteThread(tid: detailThread.id)
-                    favoriteThreads.remove(detailThread)
-                } else {
-                    try await repository.addFavoriteThread(tid: detailThread.id)
-                    favoriteThreads.save(detailThread)
-                }
-                return
-            }
-
-            favoriteThreads.toggle(detailThread)
-        } catch {
-            favoriteErrorMessage = userFacingMessage(for: error)
-        }
+        _ = await detailViewModel.toggleFavorite(
+            thread: detailThread,
+            repository: repository,
+            favoriteThreads: favoriteThreads
+        )
     }
 
     private func resolvedPage(
@@ -939,56 +754,15 @@ struct ThreadDetailView: View {
     }
 
     private func submitReply() async {
-        guard !isSubmittingReply else { return }
-
-        let trimmedReply = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedReply.isEmpty else {
-            replyErrorMessage = "回复内容不能为空。"
-            return
-        }
-
-        if repository.source == .nga {
-            let loginState = await NGAAuthStore.shared.currentLoginState()
-            guard loginState.isLoggedIn else {
-                replyErrorMessage = "登录 NGA 后才能发送回复。"
-                return
-            }
-        }
-
-        isSubmittingReply = true
-        replyErrorMessage = nil
-        defer { isSubmittingReply = false }
-
-        do {
-            let submittedTarget = replyTarget
-            try await repository.replyThread(
-                tid: detailThread.id,
-                target: submittedTarget,
-                content: trimmedReply,
-                attachments: replyAttachments.map(\.upload)
-            )
-            replyText = ""
-            replyAttachments = []
-            showsReplyComposer = false
-            replyTarget = .thread
-            await refreshDetail()
-            replySuccessMessage = successMessage(for: submittedTarget)
-        } catch {
-            replyErrorMessage = userFacingMessage(for: error)
-        }
+        await detailViewModel.submitReply(
+            thread: detailThread,
+            repository: repository,
+            refreshDetail: { await refreshDetail() }
+        )
     }
 
     private func userFacingMessage(for error: any Error) -> String {
-        ForumError.resolve(error)?.userMessage ?? "操作已取消。"
-    }
-
-    private func successMessage(for target: ThreadReplyTarget) -> String {
-        switch target {
-        case .thread:
-            return "回复已发送，帖子内容已刷新。"
-        case let .reply(targetReply):
-            return "已回复 \(targetReply.displayFloorLabel)，帖子内容已刷新。"
-        }
+        ForumError.resolve(error)?.userMessage ?? "操作未完成，请稍后重试。"
     }
 
 }

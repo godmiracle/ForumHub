@@ -16,6 +16,12 @@ enum ForumSource: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum ThreadPaginationStyle: Equatable {
+    case none
+    case numbered(pageSize: Int)
+    case cursor
+}
+
 struct ForumCapabilities: Equatable {
     let supportsSearch: Bool
     let supportsFavorites: Bool
@@ -23,6 +29,34 @@ struct ForumCapabilities: Equatable {
     let supportsReplyTargeting: Bool
     let supportsAuthentication: Bool
     let supportsFeedPagination: Bool
+    let threadPaginationStyle: ThreadPaginationStyle
+    let supportsImageUpload: Bool
+    let supportsWebFallback: Bool
+    let requiresImageReferer: Bool
+
+    init(
+        supportsSearch: Bool,
+        supportsFavorites: Bool,
+        supportsReply: Bool,
+        supportsReplyTargeting: Bool,
+        supportsAuthentication: Bool,
+        supportsFeedPagination: Bool,
+        threadPaginationStyle: ThreadPaginationStyle = .none,
+        supportsImageUpload: Bool = false,
+        supportsWebFallback: Bool = false,
+        requiresImageReferer: Bool = false
+    ) {
+        self.supportsSearch = supportsSearch
+        self.supportsFavorites = supportsFavorites
+        self.supportsReply = supportsReply
+        self.supportsReplyTargeting = supportsReplyTargeting
+        self.supportsAuthentication = supportsAuthentication
+        self.supportsFeedPagination = supportsFeedPagination
+        self.threadPaginationStyle = threadPaginationStyle
+        self.supportsImageUpload = supportsImageUpload
+        self.supportsWebFallback = supportsWebFallback
+        self.requiresImageReferer = requiresImageReferer
+    }
 }
 
 struct ReplyAttachmentUpload {

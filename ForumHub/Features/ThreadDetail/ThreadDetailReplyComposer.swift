@@ -4,6 +4,7 @@ import UIKit
 
 struct ReplyComposerSheet: View {
     let source: ForumSource
+    let capabilities: ForumCapabilities
     @Binding var target: ThreadReplyTarget
     @Binding var text: String
     @Binding var attachments: [ReplyComposerAttachment]
@@ -55,7 +56,7 @@ struct ReplyComposerSheet: View {
                     )
                 }
 
-                if source == .nga {
+                if capabilities.supportsImageUpload {
                     HStack(spacing: 12) {
                         PhotosPicker(
                             selection: $selectedPhotoItems,

@@ -176,7 +176,7 @@ struct ThreadDetailParser {
     }
 
     private static func makeReply(from dictionary: [String: Any], fallbackID: Int) -> Reply? {
-        guard let body = string(for: ["content", "postcontent", "body", "comment"], in: dictionary)?
+        guard let body = contentText(in: dictionary)?
             .structuredForumText,
             !body.isEmpty
         else {
@@ -261,6 +261,29 @@ struct ThreadDetailParser {
             }
         }
 
+        return nil
+    }
+
+    private static func contentText(in dictionary: [String: Any]) -> String? {
+        if let direct = string(for: ["content", "postcontent", "body", "comment", "post_content"], in: dictionary) {
+            return direct
+        }
+
+        for key in ["content", "postcontent", "body", "comment", "post_content"] {
+            if let lines = dictionary[key] as? [String] {
+                return lines.joined(separator: "\n")
+            }
+            if let values = dictionary[key] as? [Any] {
+                let lines = values.compactMap { value -> String? in
+                    if let line = value as? String { return line }
+                    if let segment = value as? [String: Any] {
+                        return string(for: ["text", "content", "body"], in: segment)
+                    }
+                    return nil
+                }
+                if !lines.isEmpty { return lines.joined(separator: "\n") }
+            }
+        }
         return nil
     }
 

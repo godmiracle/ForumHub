@@ -10,7 +10,6 @@ import WebKit
 struct ContentView: View {
     @State private var viewModel: ForumViewModel
     @State private var showsLogin = false
-    @State private var searchText = ""
     @State private var submittedSearchText = ""
     @State private var showsSearchResults = false
     @State private var selectedChannelID = ForumChannel.defaultForum.id
@@ -25,7 +24,6 @@ struct ContentView: View {
     @State private var tabScrollRequestGeneration = 0
     @State private var feedRetapRefreshTab: FeedTab?
     @State private var feedRetapRefreshGeneration = 0
-    @State private var feedSortMode: FeedSortMode = .lastReply
     @State private var showsPinnedThreads = true
 
     init() {
@@ -90,48 +88,44 @@ struct ContentView: View {
         ZStack {
             PaperBackground()
 
-            TabView(selection: $selectedTab) {
-                feedTabContent(for: .home)
-                    .tag(FeedTab.home)
-                    .tabItem {
-                        Label(FeedTab.home.title, systemImage: FeedTab.home.systemImage)
-                    }
+            VStack(spacing: 0) {
+                if selectedTab == .home || selectedTab == .hot {
+                    feedTopBar
+                }
 
-                feedTabContent(for: .hot)
-                    .tag(FeedTab.hot)
-                    .tabItem {
-                        Label(FeedTab.hot.title, systemImage: FeedTab.hot.systemImage)
-                    }
+                TabView(selection: $selectedTab) {
+                    feedTabContent(for: .home)
+                        .tag(FeedTab.home)
+                        .tabItem { Label(FeedTab.home.title, systemImage: FeedTab.home.systemImage) }
 
-                communityTabContent
-                    .tag(FeedTab.community)
-                    .tabItem {
-                        Label(FeedTab.community.title, systemImage: FeedTab.community.systemImage)
-                    }
+                    feedTabContent(for: .hot)
+                        .tag(FeedTab.hot)
+                        .tabItem { Label(FeedTab.hot.title, systemImage: FeedTab.hot.systemImage) }
 
-                historyTabContent
-                    .tag(FeedTab.history)
-                    .tabItem {
-                        Label(FeedTab.history.title, systemImage: FeedTab.history.systemImage)
-                    }
+                    communityTabContent
+                        .tag(FeedTab.community)
+                        .tabItem { Label(FeedTab.community.title, systemImage: FeedTab.community.systemImage) }
 
-                userTabContent
-                    .tag(FeedTab.user)
-                    .tabItem {
-                        Label(FeedTab.user.title, systemImage: FeedTab.user.systemImage)
-                    }
-            }
-            .toolbarBackground(.visible, for: .tabBar)
-            .toolbarBackground(.automatic, for: .tabBar)
-            .background(ForumTabBarAppearanceInstaller(accentColor: UIColor(PaperTheme.accent)))
-            .background {
-                ForumTabBarReselectionBridge(currentTab: selectedTab) { tab in
-                    Task {
-                        await handleTabSelection(tab, isReselection: true)
+                    historyTabContent
+                        .tag(FeedTab.history)
+                        .tabItem { Label(FeedTab.history.title, systemImage: FeedTab.history.systemImage) }
+
+                    userTabContent
+                        .tag(FeedTab.user)
+                        .tabItem { Label(FeedTab.user.title, systemImage: FeedTab.user.systemImage) }
+                }
+                .toolbarBackground(.visible, for: .tabBar)
+                .toolbarBackground(.automatic, for: .tabBar)
+                .background(ForumTabBarAppearanceInstaller(accentColor: UIColor(PaperTheme.accent)))
+                .background {
+                    ForumTabBarReselectionBridge(currentTab: selectedTab) { tab in
+                        Task {
+                            await handleTabSelection(tab, isReselection: true)
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .preferredColorScheme(.light)
@@ -197,15 +191,58 @@ struct ContentView: View {
     }
 
     private func feedTabContent(for tab: FeedTab) -> some View {
-        VStack(spacing: 0) {
-            ForumTopBar(
-                searchText: $searchText,
+        ForumFeedContent(
+                tab: tab,
+                pinnedThreads: tab == .hot ? [] : displayedPinnedThreads,
+                threads: displayedThreads,
+                repository: viewModel.repository,
+                blockedUsers: blockedUsers,
+                favoriteThreads: favoriteThreads,
+                isLoading: viewModel.isLoading,
+                hasLoadedInitialFeed: viewModel.hasLoadedInitialFeed,
+                isLoadingMore: viewModel.isLoadingMore,
+                canLoadMore: viewModel.canLoadMore,
+                errorMessage: viewModel.errorMessage,
+                scrollRequest: tabScrollRequest,
+                showsRetapRefreshIndicator: feedRetapRefreshTab == tab,
+                sortMode: viewModel.feedSortMode,
+                showsPinnedThreads: showsPinnedThreads,
+                canTogglePinnedThreads: !viewModel.pinnedThreads.isEmpty && tab != .hot,
+                onSortChange: { mode in
+                    withAnimation(.snappy(duration: 0.22)) { viewModel.feedSortMode = mode }
+                },
+                onPinnedVisibilityChange: { isVisible in
+                    withAnimation(.snappy(duration: 0.22)) { showsPinnedThreads = isVisible }
+                },
+                onLoadNextPage: { await viewModel.loadNextPage() },
+                onOpenThread: { browsingHistory.record($0) },
+                onSwipeChannel: { direction in
+                    guard tab == .home,
+                          !viewModel.isLoading,
+                          let destination = ChannelPagingPolicy.destination(
+                            currentID: selectedChannelID,
+                            channels: visibleChannels,
+                            direction: direction
+                          )
+                    else { return }
+                    withAnimation(.snappy(duration: 0.28)) { selectedChannelID = destination.id }
+                    Task { await viewModel.switchForum(to: destination) }
+                }
+            )
+            .refreshable { await viewModel.reload() }
+            .background(PaperTheme.paper)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var feedTopBar: some View {
+        ForumTopBar(
                 selectedChannelID: $selectedChannelID,
+                activeTab: selectedTab,
                 selectedSource: viewModel.source,
                 availableSources: viewModel.availableSources,
                 forum: viewModel.forum,
-                channels: tab == .hot ? [] : visibleChannels,
-                childChannels: tab == .home ? availableChildChannels : [],
+                channels: selectedTab == .hot ? [] : visibleChannels,
+                childChannels: selectedTab == .home ? availableChildChannels : [],
                 selectedChildChannelIDs: viewModel.selectedChildChannelIDs,
                 isLoading: viewModel.isLoading,
                 isAuthenticated: viewModel.isAuthenticated,
@@ -215,7 +252,6 @@ struct ContentView: View {
                 onSourceSelect: { source in
                     Task {
                         guard source != viewModel.source else { return }
-                        searchText = ""
                         await viewModel.switchSource(to: source)
                         subscriptions.prepareDefaults(for: viewModel.channels)
                         selectedChannelID = viewModel.forum.id
@@ -260,64 +296,6 @@ struct ContentView: View {
                 },
                 onCompose: {}
             )
-
-            ForumFeedContent(
-                tab: tab,
-                pinnedThreads: tab == .hot ? [] : displayedPinnedThreads,
-                threads: displayedThreads,
-                repository: viewModel.repository,
-                blockedUsers: blockedUsers,
-                favoriteThreads: favoriteThreads,
-                isLoading: viewModel.isLoading,
-                hasLoadedInitialFeed: viewModel.hasLoadedInitialFeed,
-                isLoadingMore: viewModel.isLoadingMore,
-                canLoadMore: viewModel.canLoadMore,
-                errorMessage: viewModel.errorMessage,
-                scrollRequest: tabScrollRequest,
-                showsRetapRefreshIndicator: feedRetapRefreshTab == tab,
-                sortMode: feedSortMode,
-                showsPinnedThreads: showsPinnedThreads,
-                canTogglePinnedThreads: !viewModel.pinnedThreads.isEmpty && tab != .hot,
-                onSortChange: { mode in
-                    withAnimation(.snappy(duration: 0.22)) {
-                        feedSortMode = mode
-                    }
-                },
-                onPinnedVisibilityChange: { isVisible in
-                    withAnimation(.snappy(duration: 0.22)) {
-                        showsPinnedThreads = isVisible
-                    }
-                },
-                onLoadNextPage: {
-                    await viewModel.loadNextPage()
-                },
-                onOpenThread: { thread in
-                    browsingHistory.record(thread)
-                },
-                onSwipeChannel: { direction in
-                    guard tab == .home,
-                          !viewModel.isLoading,
-                          let destination = ChannelPagingPolicy.destination(
-                            currentID: selectedChannelID,
-                            channels: visibleChannels,
-                            direction: direction
-                          )
-                    else { return }
-
-                    withAnimation(.snappy(duration: 0.28)) {
-                        selectedChannelID = destination.id
-                    }
-                    Task {
-                        await viewModel.switchForum(to: destination)
-                    }
-                }
-            )
-            .refreshable {
-                await viewModel.reload()
-            }
-        }
-        .background(PaperTheme.paper)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var visibleChannels: [ForumChannel] {
@@ -327,36 +305,11 @@ struct ContentView: View {
 
     private var displayedPinnedThreads: [ForumThread] {
         guard showsPinnedThreads, selectedTab != .hot else { return [] }
-        return sortedThreads(viewModel.pinnedThreads)
+        return viewModel.displayedPinnedThreads
     }
 
     private var displayedThreads: [ForumThread] {
-        sortedThreads(viewModel.threads)
-    }
-
-    private func sortedThreads(_ threads: [ForumThread]) -> [ForumThread] {
-        threads.sorted { lhs, rhs in
-            switch feedSortMode {
-            case .lastReply:
-                let leftDate = lhs.lastReplySortDate ?? lhs.createdAtSortDate
-                let rightDate = rhs.lastReplySortDate ?? rhs.createdAtSortDate
-                if let leftDate, let rightDate, leftDate != rightDate {
-                    return leftDate > rightDate
-                }
-            case .latestPost:
-                let leftDate = lhs.createdAtSortDate ?? lhs.lastReplySortDate
-                let rightDate = rhs.createdAtSortDate ?? rhs.lastReplySortDate
-                if let leftDate, let rightDate, leftDate != rightDate {
-                    return leftDate > rightDate
-                }
-            }
-
-            if lhs.replyCount != rhs.replyCount {
-                return lhs.replyCount > rhs.replyCount
-            }
-
-            return lhs.id > rhs.id
-        }
+        viewModel.displayedThreads
     }
 
     private var availableChildChannels: [ForumChannel] {
@@ -528,7 +481,6 @@ private struct ForumTabBarReselectionBridge: UIViewControllerRepresentable {
         var onReselect: (FeedTab) -> Void
         private weak var tabBar: UITabBar?
         private var tapRecognizer: UITapGestureRecognizer?
-        private var beganOnSelectedTab = false
 
         init(currentTab: FeedTab, onReselect: @escaping (FeedTab) -> Void) {
             self.currentTab = currentTab
@@ -553,22 +505,13 @@ private struct ForumTabBarReselectionBridge: UIViewControllerRepresentable {
         }
 
         @objc private func tabBarTapped(_ recognizer: UITapGestureRecognizer) {
-            guard let tabBar,
+            guard recognizer.state == .ended,
+                  let tabBar,
                   let tab = tab(at: recognizer.location(in: tabBar), in: tabBar)
             else { return }
 
-            switch recognizer.state {
-            case .began:
-                beganOnSelectedTab = tab == currentTab
-            case .ended:
-                defer { beganOnSelectedTab = false }
-                guard beganOnSelectedTab, tab == currentTab else { return }
-                onReselect(tab)
-            case .cancelled, .failed:
-                beganOnSelectedTab = false
-            default:
-                break
-            }
+            guard tab == currentTab else { return }
+            onReselect(tab)
         }
 
         func gestureRecognizer(

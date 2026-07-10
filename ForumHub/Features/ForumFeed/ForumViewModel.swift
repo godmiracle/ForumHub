@@ -5,8 +5,11 @@ import Observation
 @Observable
 final class ForumViewModel {
     var forum = ForumSummary.defaultForum
-    var pinnedThreads: [ForumThread] = []
-    var threads: [ForumThread] = []
+    var pinnedThreads: [ForumThread] = [] { didSet { rebuildDisplayedThreads() } }
+    var threads: [ForumThread] = [] { didSet { rebuildDisplayedThreads() } }
+    private(set) var displayedPinnedThreads: [ForumThread] = []
+    private(set) var displayedThreads: [ForumThread] = []
+    var feedSortMode: FeedSortMode = .lastReply { didSet { rebuildDisplayedThreads() } }
     var isLoading = false
     var hasLoadedInitialFeed = false
     var isAuthenticated = false
@@ -36,6 +39,29 @@ final class ForumViewModel {
 
     var availableSources: [ForumSource] {
         ForumSource.allCases.filter { repositories[$0] != nil }
+    }
+
+    private func rebuildDisplayedThreads() {
+        displayedPinnedThreads = sorted(pinnedThreads)
+        displayedThreads = sorted(threads)
+    }
+
+    private func sorted(_ threads: [ForumThread]) -> [ForumThread] {
+        threads.sorted { lhs, rhs in
+            let leftDate: Date?
+            let rightDate: Date?
+            switch feedSortMode {
+            case .lastReply:
+                leftDate = lhs.lastReplySortDate ?? lhs.createdAtSortDate
+                rightDate = rhs.lastReplySortDate ?? rhs.createdAtSortDate
+            case .latestPost:
+                leftDate = lhs.createdAtSortDate ?? lhs.lastReplySortDate
+                rightDate = rhs.createdAtSortDate ?? rhs.lastReplySortDate
+            }
+            if let leftDate, let rightDate, leftDate != rightDate { return leftDate > rightDate }
+            if lhs.replyCount != rhs.replyCount { return lhs.replyCount > rhs.replyCount }
+            return lhs.id > rhs.id
+        }
     }
 
     func repository(for source: ForumSource) -> any ThreadRepository {
