@@ -260,7 +260,7 @@ struct NGALiveThreadRepository: ThreadRepository {
             do {
                 let webResult = try await fetchWebThread(tid: tid, page: page, apiRawText: rawText)
                 return ThreadDetailFetchResult(
-                    thread: apiThread.enriched(with: webResult.thread),
+                    thread: NGAThreadDetailMerger.merge(apiThread: apiThread, webThread: webResult.thread),
                     rawText: webResult.rawText
                 )
             } catch is CancellationError {
@@ -824,49 +824,100 @@ private enum NGAThreadParseQuality {
     }
 }
 
-private extension ForumThread {
-    func enriched(with webThread: ForumThread) -> ForumThread {
-        let apiBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        let webBody = webThread.body.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedBody = webBody.count > apiBody.count ? webThread.body : body
-        let resolvedReplies = replies.isEmpty ? webThread.replies : replies.appendingUnique(webThread.replies)
+enum NGAThreadDetailMerger {
+    nonisolated static func merge(apiThread: ForumThread, webThread: ForumThread) -> ForumThread {
+        let resolvedBody = mergedBody(apiBody: apiThread.body, webBody: webThread.body)
+        let resolvedReplies = mergedReplies(apiReplies: apiThread.replies, webReplies: webThread.replies)
 
         return ForumThread(
-            id: id,
-            title: title.isUsefulForumValue ? title : webThread.title,
-            summary: summary.isUsefulForumValue ? summary : webThread.summary,
-            author: author.isUsefulForumValue ? author : webThread.author,
-            authorAvatarURL: authorAvatarURL ?? webThread.authorAvatarURL,
-            createdAt: createdAt.isUsefulForumValue ? createdAt : webThread.createdAt,
-            lastReplyAt: lastReplyAt.isUsefulForumValue ? lastReplyAt : webThread.lastReplyAt,
-            replyCount: max(replyCount, webThread.replyCount, resolvedReplies.count),
-            viewCount: max(viewCount, webThread.viewCount),
+            id: apiThread.id,
+            title: apiThread.title.isUsefulForumValue ? apiThread.title : webThread.title,
+            summary: apiThread.summary.isUsefulForumValue ? apiThread.summary : webThread.summary,
+            author: apiThread.author.isUsefulForumValue ? apiThread.author : webThread.author,
+            authorAvatarURL: apiThread.authorAvatarURL ?? webThread.authorAvatarURL,
+            createdAt: apiThread.createdAt.isUsefulForumValue ? apiThread.createdAt : webThread.createdAt,
+            lastReplyAt: apiThread.lastReplyAt.isUsefulForumValue ? apiThread.lastReplyAt : webThread.lastReplyAt,
+            replyCount: max(apiThread.replyCount, webThread.replyCount, resolvedReplies.count),
+            viewCount: max(apiThread.viewCount, webThread.viewCount),
             body: resolvedBody,
             replies: resolvedReplies,
-            source: source,
-            channelID: channelID,
-            channelTitle: channelTitle
+            source: apiThread.source,
+            channelID: apiThread.channelID,
+            channelTitle: apiThread.channelTitle
         )
     }
-}
 
-private extension Array where Element == Reply {
-    func appendingUnique(_ additionalReplies: [Reply]) -> [Reply] {
-        var existingIDs = Set(map(\.id))
-        var existingSignatures = Set(map(\.signatureKey))
-        var result = self
+    private nonisolated static func mergedBody(apiBody: String, webBody: String) -> String {
+        let apiValue = apiBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        let webValue = webBody.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        for reply in additionalReplies {
-            guard !existingIDs.contains(reply.id),
-                  !existingSignatures.contains(reply.signatureKey)
+        guard !apiValue.isEmpty else { return webValue }
+        guard !webValue.isEmpty else { return apiValue }
+
+        let normalizedAPI = normalized(apiValue)
+        let normalizedWeb = normalized(webValue)
+        if normalizedAPI.contains(normalizedWeb) {
+            return apiValue
+        }
+        if normalizedWeb.contains(normalizedAPI) {
+            return webValue
+        }
+
+        var knownUnits = Set(contentUnits(in: apiValue).map(normalized))
+        var missingUnits: [String] = []
+        for unit in contentUnits(in: webValue) {
+            let key = normalized(unit)
+            guard !key.isEmpty,
+                  !normalizedAPI.contains(key),
+                  knownUnits.insert(key).inserted
             else {
                 continue
             }
-            existingIDs.insert(reply.id)
-            existingSignatures.insert(reply.signatureKey)
-            result.append(reply)
+            missingUnits.append(unit)
         }
-        return result
+
+        guard !missingUnits.isEmpty else { return apiValue }
+        return ([apiValue] + missingUnits).joined(separator: "\n")
+    }
+
+    private nonisolated static func contentUnits(in body: String) -> [String] {
+        body
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private nonisolated static func normalized(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: "", options: .regularExpression)
+            .lowercased()
+    }
+
+    private nonisolated static func mergedReplies(
+        apiReplies: [Reply],
+        webReplies: [Reply]
+    ) -> [Reply] {
+        var merged = apiReplies
+        for reply in webReplies where !merged.contains(where: { existingReply in
+            existingReply.id == reply.id
+                || existingReply.signatureKey == reply.signatureKey
+                || isSameReplyWithIncompleteWebMetadata(existingReply, reply)
+        }) {
+            merged.append(reply)
+        }
+        return merged
+    }
+
+    private nonisolated static func isSameReplyWithIncompleteWebMetadata(
+        _ apiReply: Reply,
+        _ webReply: Reply
+    ) -> Bool {
+        guard normalized(apiReply.body) == normalized(webReply.body) else { return false }
+
+        return !webReply.author.isUsefulForumValue
+            || !webReply.createdAt.isUsefulForumValue
+            || apiReply.author.caseInsensitiveCompare(webReply.author) == .orderedSame
     }
 }
 

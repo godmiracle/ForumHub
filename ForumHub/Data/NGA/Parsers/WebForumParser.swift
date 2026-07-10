@@ -118,7 +118,7 @@ struct WebForumParser {
         .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let contentMatches = html.matches(
-            pattern: #"<(?:span|div|td)[^>]+(?:id|class)=['"][^'"]*(?:postcontent|post_content|postbody|postbody|content)[^'"]*['"][^>]*>(.*?)</(?:span|div|td)>"#,
+            pattern: #"<(?:p|span|div|td)[^>]+(?:id|class)=['"][^'"]*(?:postcontent|post_content|postbody|content)[^'"]*['"][^>]*>(.*?)</(?:p|span|div|td)>"#,
             options: [.caseInsensitive, .dotMatchesLineSeparators]
         )
 

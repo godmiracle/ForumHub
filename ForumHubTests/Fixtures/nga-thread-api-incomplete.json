@@ -1,0 +1,19 @@
+{
+  "result": [
+    {
+      "pid": 0,
+      "tid": 47151166,
+      "lou": 1,
+      "subject": "API/Web 补全测试",
+      "author": { "username": "楼主" },
+      "content": "API 正文第一段\n[图片] https://img.nga.178.com/attachments/api.jpg"
+    },
+    {
+      "pid": 200,
+      "tid": 47151166,
+      "lou": 2,
+      "author": { "username": "回复作者" },
+      "content": "API 已有回复"
+    }
+  ]
+}

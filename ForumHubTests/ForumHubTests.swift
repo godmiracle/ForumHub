@@ -170,6 +170,58 @@ struct ForumHubTests {
         })
     }
 
+    @Test func webThreadParserPreservesMainPostParagraphAndImage() throws {
+        let html = """
+        <html><head><title>测试主贴 - NGA玩家社区</title></head><body>
+        <p id='postcontent0' class='postcontent ubbcode'>[img]./mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg[/img]l<br/>来源:数码闲聊站<br/>完整正文</p>
+        <span id='postcontent1' class='postcontent ubbcode'>第一条回复</span>
+        </body></html>
+        """
+
+        let thread = try #require(WebForumParser.parseThreadHTML(html, tid: 47151166))
+        #expect(thread.body.contains("来源:数码闲聊站"))
+        #expect(thread.body.contains("完整正文"))
+        #expect(ForumContentParser.parse(thread.body).contains {
+            if case let .image(url) = $0.content {
+                return url.absoluteString == "https://img.nga.178.com/attachments/mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg"
+            }
+            return false
+        })
+        #expect(thread.replies.count == 1)
+    }
+
+    @Test func ngaThreadMergerSupplementsAPIContentWithoutReplacingOrDuplicating() throws {
+        let bundle = Bundle(for: FixtureLocator.self)
+        let apiURL = try #require(
+            bundle.url(forResource: "nga-thread-api-incomplete", withExtension: "json", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "nga-thread-api-incomplete", withExtension: "json")
+        )
+        let webURL = try #require(
+            bundle.url(forResource: "nga-thread-web-enrichment", withExtension: "html", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "nga-thread-web-enrichment", withExtension: "html")
+        )
+        let apiData = try Data(contentsOf: apiURL)
+        let apiThread = try #require(ThreadDetailParser.parse(
+            data: apiData,
+            fallbackText: String(decoding: apiData, as: UTF8.self),
+            tid: 47151166
+        ))
+        let webThread = try #require(WebForumParser.parseThreadHTML(
+            String(decoding: try Data(contentsOf: webURL), as: UTF8.self),
+            tid: 47151166
+        ))
+
+        let merged = NGAThreadDetailMerger.merge(apiThread: apiThread, webThread: webThread)
+
+        #expect(merged.body.contains("API 正文第一段"))
+        #expect(merged.body.contains("网页补全第二段"))
+        #expect(ForumContentParser.parse(merged.body).compactMap { block -> URL? in
+            if case let .image(url) = block.content { return url }
+            return nil
+        }.count == 2)
+        #expect(merged.replies.map(\.body) == ["API 已有回复", "网页补充回复"])
+    }
+
     @Test func forumImageURLResolverUpgradesTrustedNGAHTTPOnly() throws {
         #expect(
             ForumImageURLResolver.resolve("http://img.nga.178.com/a.jpg")

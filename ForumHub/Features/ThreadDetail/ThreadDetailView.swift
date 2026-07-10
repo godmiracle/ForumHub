@@ -130,6 +130,7 @@ struct ThreadDetailView: View {
                             activeInlineGIFPlaybackIDs: activeInlineGIFPlaybackIDs,
                             scrollTrackingSpaceName: scrollTrackingSpaceName
                         )
+                        .id(detailThread.body)
 
                         if isLoading {
                             ThreadDetailCard {
