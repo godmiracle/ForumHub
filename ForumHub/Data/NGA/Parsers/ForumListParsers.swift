@@ -177,9 +177,7 @@ struct ForumPayloadParser {
             for: ["avatar", "avatar_url", "avatar_normal", "avatar_middle", "portrait", "face"],
             in: dictionary
         ),
-           let url = URL(string: direct),
-           let scheme = url.scheme?.lowercased(),
-           ["http", "https"].contains(scheme) {
+           let url = ForumAvatarResolver.ngaAvatarURL(from: direct) {
             return url
         }
 

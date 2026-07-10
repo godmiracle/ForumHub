@@ -44,4 +44,9 @@ It includes:
 - Reply composition should stay as one shared sheet. The main action bar opens a thread-level reply, while per-floor menus can retarget the same composer to a specific floor when the active source exposes stable reply identifiers.
 - When the source returns quote metadata, the detail body should render it as a dedicated inline quote card instead of flattening it into plain text, so users can immediately distinguish "回复主题" from "回复某层".
 - Reply pagination must protect against duplicate content from source-specific continuation pages.
+- Refresh, explicit page jumps, and automatic continuation loading share one cancellable content-load task. A monotonically increasing generation prevents a stale request from committing state after a newer load has begun.
+- Reply filtering, ordering, and page-anchor entries are cached as derived presentation state and refreshed only when their source replies, paging metadata, filter settings, or blocked-user list changes.
+- Thread detail converts repository and transport errors into `ForumError` before presentation, keeping raw transport and parser descriptions out of user-visible error cards.
+- Floating controls and page selection surfaces use the shared `ForumGlass` DesignSystem components, keeping iOS 26 glass rendering and older material fallbacks visually aligned.
+- NGA continuation pages are merged through `ThreadDetailPaginationMerger`; it removes repeated main-post payloads and deduplicates replies by both source identifier and reply signature before the view updates pagination state.
 - Image handling mixes static images, GIF playback, preview, zoom, and save-to-photos behavior.

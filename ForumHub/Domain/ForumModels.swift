@@ -508,6 +508,23 @@ struct Reply: Identifiable, Equatable {
 }
 
 enum ForumAvatarResolver {
+    static func ngaAvatarURL(from rawValue: String) -> URL? {
+        guard let url = URL(string: rawValue),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme)
+        else {
+            return nil
+        }
+
+        guard scheme == "http", url.host?.lowercased() == "img.nga.178.com" else {
+            return url
+        }
+
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.scheme = "https"
+        return components?.url
+    }
+
     static func ngaAvatarURL(uid: Int?) -> URL? {
         guard let uid, uid > 0 else { return nil }
         var components = URLComponents(string: "https://img4.nga.178.com/ngabbs/nga_classic/f/app/uc_server/avatar.php")

@@ -248,12 +248,7 @@ private struct RetapRefreshBanner: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay {
-            Capsule()
-                .stroke(PaperTheme.hairline, lineWidth: 0.9)
-        }
-        .shadow(color: PaperTheme.ink.opacity(0.12), radius: 12, x: 0, y: 8)
+        .forumGlass(in: Capsule(), isElevated: true)
     }
 }
 

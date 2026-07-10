@@ -2,6 +2,25 @@
 
 ## Thread Detail
 
+### ForumHub Code Review Checklist
+
+- [x] Split `ThreadDetailView` presentation into focused UI components.
+- [x] Add cancellable content-load tasks and request generations for refresh, page jumps, and continuation loading.
+- [x] Cache displayed replies and page-entry presentation data to reduce repeated scroll-time derivation.
+- [x] Establish `ForumError` and use it as the first user-facing error model in thread detail.
+- [x] Introduce shared `ForumGlass` components and migrate thread-detail floating controls plus the feed refresh banner.
+- [x] Replace machine-specific README links with repository-relative documentation links.
+- [ ] Replace the thread-detail `.nga` pagination check with an explicit repository pagination capability.
+- [ ] Move thread-detail loading, pagination, reply, and favorite state into a dedicated `ThreadDetailViewModel`.
+- [ ] Run the implemented NGA pagination-merge regression tests for duplicate replies, main-post removal, and multi-page jumps after restoring the test target.
+- [ ] Extend `ForumError` presentation to feed, search, account, and media flows.
+- [ ] Fix test-target signing and restore the missing `ThreadDetailDirectPaginationAutoAdvancePolicy` test dependency so the full suite can run on device.
+- [ ] Measure long-thread non-lazy rendering and memory usage on a physical device.
+
+### Deferred By Decision
+
+- Xcode project format compatibility: intentionally not planned. The project remains in the Xcode 27 beta format until a stable Xcode toolchain is installed and a separate migration decision is made.
+
 - Verify NGA continuous detail pagination against more real-world threads, especially mixed main-post plus continuation-page edge cases.
 - Verify the near-end-reply NGA auto-pagination and page-anchor visible-page tracking against long real threads to confirm repeated downward loading stays smooth and reliable.
 - Verify the continuous NGA reading flow stays visually seamless on device: no mid-stream load-next-page card, only a final end-of-thread state once no more replies remain.

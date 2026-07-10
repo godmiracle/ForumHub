@@ -229,9 +229,7 @@ struct ThreadDetailParser {
             ],
             in: dictionary
         ),
-           let url = URL(string: direct),
-           let scheme = url.scheme?.lowercased(),
-           ["http", "https"].contains(scheme) {
+           let url = ForumAvatarResolver.ngaAvatarURL(from: direct) {
             return url
         }
 

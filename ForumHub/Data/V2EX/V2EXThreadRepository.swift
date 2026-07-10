@@ -283,6 +283,19 @@ enum ForumProviderError: LocalizedError {
     }
 }
 
+extension ForumProviderError: ForumErrorConvertible {
+    var forumError: ForumError {
+        switch self {
+        case .invalidResponse:
+            return .malformedResponse
+        case let .httpStatus(statusCode):
+            return ForumError.fromHTTPStatus(statusCode)
+        case let .unsupported(message):
+            return .unsupported(message)
+        }
+    }
+}
+
 enum V2EXMapper {
     static func channel(_ node: V2EXNodeDTO) -> ForumChannel {
         ForumChannel(

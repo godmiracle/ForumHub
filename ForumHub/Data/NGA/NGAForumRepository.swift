@@ -1050,3 +1050,16 @@ enum NGARequestError: LocalizedError {
         }
     }
 }
+
+extension NGARequestError: ForumErrorConvertible {
+    var forumError: ForumError {
+        switch self {
+        case .invalidResponse, .unparsedResponse:
+            return .malformedResponse
+        case let .httpStatus(statusCode, _):
+            return ForumError.fromHTTPStatus(statusCode)
+        case .apiMessage:
+            return .sourceUnavailable
+        }
+    }
+}

@@ -28,6 +28,7 @@ It includes:
 - The pipeline uses in-memory reuse, local file caching, and downsampled preview decoding to reduce repeated downloads and oversized inline image decode work.
 - Full-screen preview keeps a lightweight right-side centered action group: save plus close. Outbound link actions stay in the inline long-press menu so the preview surface does not become overcrowded.
 - Thread snapshot export uses static image loading behavior and should not depend on interactive preview state.
+- NGA avatar URLs from the known legacy `img.nga.178.com` HTTP host are upgraded to HTTPS before `AsyncImage` receives them, so avatar loading remains compatible with App Transport Security without enabling broad HTTP exceptions.
 
 ## Current Risks
 

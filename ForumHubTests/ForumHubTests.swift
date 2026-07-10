@@ -6,6 +6,33 @@ import UIKit
 @MainActor
 struct ForumHubTests {
 
+    @Test func forumErrorClassifiesTransportAndProviderFailures() {
+        #expect(ForumError.resolve(URLError(.notConnectedToInternet)) == .offline)
+        #expect(ForumError.resolve(URLError(.timedOut)) == .timeout)
+        #expect(ForumError.resolve(ForumProviderError.httpStatus(401)) == .authenticationExpired)
+        #expect(ForumError.resolve(ForumProviderError.httpStatus(429)) == .rateLimited)
+        #expect(ForumError.resolve(ForumProviderError.invalidResponse) == .malformedResponse)
+        #expect(ForumError.resolve(CancellationError()) == nil)
+    }
+
+    private func paginationThread(
+        replies: [Reply],
+        replyCount: Int
+    ) -> ForumThread {
+        ForumThread(
+            id: 100,
+            title: "分页测试主题",
+            summary: "",
+            author: "楼主",
+            createdAt: "09:00",
+            lastReplyAt: replies.last?.createdAt ?? "09:00",
+            replyCount: replyCount,
+            viewCount: 0,
+            body: "首楼内容",
+            replies: replies
+        )
+    }
+
     @Test func parserExtractsSimpleThreadList() async throws {
         let json = """
         {
@@ -51,6 +78,14 @@ struct ForumHubTests {
         #expect(thread.replies.first?.author == "回复作者")
         #expect(thread.authorAvatarURL?.absoluteString.contains("uid=60459868") == true)
         #expect(thread.replies.first?.avatarURL?.absoluteString.contains("uid=66728361") == true)
+    }
+
+    @Test func ngaAvatarResolverUpgradesKnownHTTPAvatarHost() {
+        let url = ForumAvatarResolver.ngaAvatarURL(
+            from: "http://img.nga.178.com/avatars/example.jpg?size=small"
+        )
+
+        #expect(url?.absoluteString == "https://img.nga.178.com/avatars/example.jpg?size=small")
     }
 
     @Test func contentParserSeparatesTextAndImages() throws {
@@ -347,6 +382,91 @@ struct ForumHubTests {
         #expect(page.replies.map(\.id) == [301, 302])
         #expect(page.replies.map(\.body) == ["第二页第一条", "第二页第二条"])
         #expect(page.replies.map(\.floorNumber) == [21, 22])
+    }
+
+    @Test func paginationMergerDropsRepeatedMainPostAndDuplicateReplies() {
+        let currentThread = paginationThread(
+            replies: [
+                Reply(id: 101, author: "用户 A", createdAt: "10:00", body: "已有回复"),
+                Reply(id: 102, author: "用户 B", createdAt: "10:01", body: "最后一条旧回复")
+            ],
+            replyCount: 4
+        )
+        let continuationThread = paginationThread(
+            replies: [
+                Reply(id: 0, author: "楼主", createdAt: "09:00", body: "首楼内容"),
+                Reply(id: 102, author: "用户 B", createdAt: "10:01", body: "最后一条旧回复"),
+                Reply(id: 202, author: "用户 A", createdAt: "10:00", body: "已有回复"),
+                Reply(id: 203, author: "用户 C", createdAt: "10:02", body: "新的回复")
+            ],
+            replyCount: 4
+        )
+
+        let result = ThreadDetailPaginationMerger.merge(
+            currentThread: currentThread,
+            continuationThread: continuationThread,
+            replyTotalCount: 4
+        )
+
+        #expect(result.pageStartReplyIndex == 2)
+        #expect(result.continuationReplies.map(\.id) == [102, 202, 203])
+        #expect(result.appendedReplies.map(\.id) == [203])
+        #expect(result.thread.replies.map(\.id) == [101, 102, 203])
+        #expect(result.thread.lastReplyAt == "10:02")
+    }
+
+    @Test func paginationMergerPreservesPageOrderAcrossMultiPageJump() {
+        let firstPage = paginationThread(
+            replies: [Reply(id: 101, author: "用户 A", createdAt: "10:00", body: "第一页")],
+            replyCount: 3
+        )
+        let secondPage = paginationThread(
+            replies: [Reply(id: 201, author: "用户 B", createdAt: "10:01", body: "第二页")],
+            replyCount: 3
+        )
+        let thirdPage = paginationThread(
+            replies: [Reply(id: 301, author: "用户 C", createdAt: "10:02", body: "第三页")],
+            replyCount: 3
+        )
+
+        let secondPageResult = ThreadDetailPaginationMerger.merge(
+            currentThread: firstPage,
+            continuationThread: secondPage,
+            replyTotalCount: 3
+        )
+        let thirdPageResult = ThreadDetailPaginationMerger.merge(
+            currentThread: secondPageResult.thread,
+            continuationThread: thirdPage,
+            replyTotalCount: 3
+        )
+
+        #expect(secondPageResult.pageStartReplyIndex == 1)
+        #expect(thirdPageResult.pageStartReplyIndex == 2)
+        #expect(thirdPageResult.thread.replies.map(\.id) == [101, 201, 301])
+    }
+
+    @Test func paginationMergerDoesNotAppendAnEmptyOrDuplicateContinuationPage() {
+        let currentThread = paginationThread(
+            replies: [Reply(id: 101, author: "用户 A", createdAt: "10:00", body: "已有回复")],
+            replyCount: 1
+        )
+        let continuationThread = paginationThread(
+            replies: [
+                Reply(id: 0, author: "楼主", createdAt: "09:00", body: "首楼内容"),
+                Reply(id: 101, author: "用户 A", createdAt: "10:00", body: "已有回复")
+            ],
+            replyCount: 1
+        )
+
+        let result = ThreadDetailPaginationMerger.merge(
+            currentThread: currentThread,
+            continuationThread: continuationThread,
+            replyTotalCount: 1
+        )
+
+        #expect(result.continuationReplies.map(\.id) == [101])
+        #expect(!result.didAppendReplies)
+        #expect(result.thread.replies == currentThread.replies)
     }
 
     @Test func onlyAuthorPaginationContinuesUntilVisibleReplyOrSafetyLimit() {

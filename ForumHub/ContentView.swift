@@ -45,18 +45,18 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             mainContent
+                .navigationDestination(isPresented: $showsSearchResults) {
+                    SearchThreadsView(
+                        initialQuery: submittedSearchText,
+                        repository: viewModel.repository,
+                        blockedUsers: blockedUsers,
+                        favoriteThreads: favoriteThreads
+                    )
+                }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(selectedTab == .user ? .visible : .hidden, for: .navigationBar)
-        .navigationDestination(isPresented: $showsSearchResults) {
-            SearchThreadsView(
-                initialQuery: submittedSearchText,
-                repository: viewModel.repository,
-                blockedUsers: blockedUsers,
-                favoriteThreads: favoriteThreads
-            )
-        }
         .sheet(isPresented: $showsLogin) {
             NGALoginSheet {
                 showsLogin = false

@@ -53,16 +53,16 @@ ForumHub/
 
 ## Run Locally
 
-1. Open [ForumHub.xcodeproj](/Users/v/XBP/ForumHub/ForumHub.xcodeproj).
+1. Open [ForumHub.xcodeproj](ForumHub.xcodeproj).
 2. Select the `ForumHub` scheme.
 3. Build and run on a connected iOS device when one is available.
 
 ## Common Workflows
 
 - Build app: run the `xcodebuild` command below
-- Read domain terms first: open [CONTEXT.md](/Users/v/XBP/ForumHub/CONTEXT.md)
-- Understand repository boundaries: open [docs/architecture.md](/Users/v/XBP/ForumHub/docs/architecture.md)
-- Continue feature work: open the relevant module note under [docs/modules](/Users/v/XBP/ForumHub/docs/modules)
+- Read domain terms first: open [CONTEXT.md](CONTEXT.md)
+- Understand repository boundaries: open [docs/architecture.md](docs/architecture.md)
+- Continue feature work: open the relevant module note under [docs/modules](docs/modules/)
 
 Example device build command:
 
@@ -79,19 +79,19 @@ If no iOS device is currently available, skip the build instead of falling back 
 
 ## Documentation
 
-- [CONTEXT.md](/Users/v/XBP/ForumHub/CONTEXT.md)
-- [AGENTS.md](/Users/v/XBP/ForumHub/AGENTS.md)
-- [docs/architecture.md](/Users/v/XBP/ForumHub/docs/architecture.md)
-- [docs/decisions.md](/Users/v/XBP/ForumHub/docs/decisions.md)
-- [docs/roadmap.md](/Users/v/XBP/ForumHub/docs/roadmap.md)
-- [docs/changelog.md](/Users/v/XBP/ForumHub/docs/changelog.md)
-- [docs/modules](/Users/v/XBP/ForumHub/docs/modules)
-- [docs/modules/feature-matrix.md](/Users/v/XBP/ForumHub/docs/modules/feature-matrix.md)
-- [docs/modules/search-and-discovery.md](/Users/v/XBP/ForumHub/docs/modules/search-and-discovery.md)
-- [docs/modules/image-handling.md](/Users/v/XBP/ForumHub/docs/modules/image-handling.md)
-- [docs/modules/testing-and-fixtures.md](/Users/v/XBP/ForumHub/docs/modules/testing-and-fixtures.md)
-- [docs/modules/persistence-and-sync.md](/Users/v/XBP/ForumHub/docs/modules/persistence-and-sync.md)
-- [docs/archive](/Users/v/XBP/ForumHub/docs/archive)
+- [CONTEXT.md](CONTEXT.md)
+- [AGENTS.md](AGENTS.md)
+- [docs/architecture.md](docs/architecture.md)
+- [docs/decisions.md](docs/decisions.md)
+- [docs/roadmap.md](docs/roadmap.md)
+- [docs/changelog.md](docs/changelog.md)
+- [docs/modules](docs/modules/)
+- [docs/modules/feature-matrix.md](docs/modules/feature-matrix.md)
+- [docs/modules/search-and-discovery.md](docs/modules/search-and-discovery.md)
+- [docs/modules/image-handling.md](docs/modules/image-handling.md)
+- [docs/modules/testing-and-fixtures.md](docs/modules/testing-and-fixtures.md)
+- [docs/modules/persistence-and-sync.md](docs/modules/persistence-and-sync.md)
+- [docs/archive](docs/archive/)
 
 ## High-Level Map
 
