@@ -169,7 +169,6 @@ struct NGALiveThreadRepository: ThreadRepository {
                 "__output": "14"
             ]
         )
-
         guard let parsed = ForumPayloadParser.parse(
             data: data,
             fallbackText: rawText,
@@ -246,7 +245,6 @@ struct NGALiveThreadRepository: ThreadRepository {
                 "__output": "14"
             ]
         )
-
         if let apiThread = ThreadDetailParser.parse(
             data: data,
             fallbackText: rawText,
@@ -1039,11 +1037,12 @@ struct MockPagedThreadRepository: ThreadRepository {
         supportsReply: true,
         supportsReplyTargeting: true,
         supportsAuthentication: false,
-        supportsFeedPagination: true
+        supportsFeedPagination: true,
+        threadPaginationStyle: .numbered(pageSize: 20)
     )
     let defaultChannel = ForumChannel.defaultForum
     private let detailPageSize = 20
-    private let totalReplyCount = 120
+    private let totalReplyCount = 139
 
     var previewThread: ForumThread {
         pagedThread(page: 1)

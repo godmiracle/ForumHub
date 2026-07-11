@@ -2,17 +2,20 @@ import Foundation
 import SwiftUI
 import UIKit
 
+private enum ThreadDetailScrollAnchor: Hashable {
+    case top
+}
+
 struct ThreadDetailView: View {
     let thread: ForumThread
     let repository: any ThreadRepository
     @Bindable var blockedUsers: BlockedUsersStore
     @Bindable var favoriteThreads: FavoriteThreadsStore
-    private let topAnchorID = "thread-detail-top-anchor"
+    private let topAnchorID = ThreadDetailScrollAnchor.top
     private let replyTopAnchorID = "thread-detail-reply-top-anchor"
     private let scrollTrackingSpaceName = "thread-detail-scroll"
     private let directPaginationPrefetchReplyDistance = 6
-    private let inlineGIFPlaybackViewportBuffer: CGFloat = 180
-    private let maximumSimultaneousInlineGIFs = 3
+    private let inlineGIFPlaybackCoordinator = InlineGIFPlaybackCoordinator()
     @State private var showsOnlyThreadAuthor = false
     @State private var showsRepliesInReverseOrder = false
     @State private var isPreparingSnapshot = false
@@ -22,6 +25,8 @@ struct ThreadDetailView: View {
     @State private var showsPagePicker = false
     @State private var detailViewModel: ThreadDetailViewModel
     @State private var showsScrollToTopButton = false
+    @State private var isReturningToTop = false
+    @State private var scrollToTopRequestGeneration = 0
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var lastObservedScrollOffset: CGFloat = 0
     @State private var activeInlineGIFPlaybackIDs: Set<UUID> = []
@@ -113,16 +118,8 @@ struct ThreadDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         Color.clear
-                            .frame(height: 1)
+                            .frame(height: 0)
                             .id(topAnchorID)
-                            .background(
-                                GeometryReader { proxy in
-                                    Color.clear.preference(
-                                        key: ThreadDetailScrollOffsetPreferenceKey.self,
-                                        value: proxy.frame(in: .named(scrollTrackingSpaceName)).minY
-                                    )
-                                }
-                            )
 
                         ThreadDetailHeaderSection(
                             thread: detailThread,
@@ -130,7 +127,14 @@ struct ThreadDetailView: View {
                             activeInlineGIFPlaybackIDs: activeInlineGIFPlaybackIDs,
                             scrollTrackingSpaceName: scrollTrackingSpaceName
                         )
-                        .id(detailThread.body)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: ThreadDetailScrollOffsetPreferenceKey.self,
+                                    value: proxy.frame(in: .named(scrollTrackingSpaceName)).minY
+                                )
+                            }
+                        )
 
                         if isLoading {
                             ThreadDetailCard {
@@ -298,14 +302,10 @@ struct ThreadDetailView: View {
                         floatingControlTransition: floatingControlTransition,
                         floatingControlAnimation: floatingControlAnimation,
                         onScrollToTop: {
-                            withAnimation(.easeInOut(duration: 0.18)) {
-                                showsScrollToTopButton = false
-                                visiblePage = 1
-                                pendingPageSelection = 1
-                            }
-                            withAnimation(.snappy(duration: 0.28)) {
-                                proxy.scrollTo(topAnchorID, anchor: .top)
-                            }
+                            isReturningToTop = true
+                            visiblePage = 1
+                            pendingPageSelection = 1
+                            scrollToTopRequestGeneration += 1
                         },
                         onNavigateToPreviousPage: {
                             Task { await navigateToAdjacentVisiblePage(-1, proxy: proxy) }
@@ -318,6 +318,7 @@ struct ThreadDetailView: View {
                             showsPagePicker = true
                         }
                     )
+                    .zIndex(1)
                 }
                 .onAppear {
                     scrollViewportHeight = listGeometry.size.height
@@ -349,6 +350,18 @@ struct ThreadDetailView: View {
                 }
                 .onPreferenceChange(ThreadDetailGIFFramePreferenceKey.self) { candidates in
                     handleGIFFrameCandidatesChange(candidates)
+                }
+                .onChange(of: scrollToTopRequestGeneration) { _, generation in
+                    Task { @MainActor in
+                        await Task.yield()
+                        guard generation == scrollToTopRequestGeneration else { return }
+                        withAnimation(.snappy(duration: 0.28)) {
+                            proxy.scrollTo(topAnchorID, anchor: .top)
+                        }
+                        try? await Task.sleep(for: .milliseconds(350))
+                        guard generation == scrollToTopRequestGeneration else { return }
+                        isReturningToTop = false
+                    }
                 }
                 .onChange(of: deferredScrollTargetPage) { _, page in
                     guard let page else { return }
@@ -428,6 +441,12 @@ struct ThreadDetailView: View {
         let shouldShow = offset < -220
         lastObservedScrollOffset = offset
 
+        if isReturningToTop, offset >= -24 {
+            isReturningToTop = false
+            visiblePage = 1
+            pendingPageSelection = 1
+        }
+
         if shouldShow != showsScrollToTopButton {
             withAnimation(.easeInOut(duration: 0.18)) {
                 showsScrollToTopButton = shouldShow
@@ -437,6 +456,7 @@ struct ThreadDetailView: View {
 
     private func handlePageAnchorOffsetsChange(_ offsets: [Int: CGFloat]) {
         guard supportsDirectPagination else { return }
+        guard !isReturningToTop else { return }
         guard currentPage > 1 || !displayedReplies.isEmpty else {
             visiblePage = 1
             return
@@ -465,20 +485,9 @@ struct ThreadDetailView: View {
     }
 
     private func handleGIFFrameCandidatesChange(_ candidates: [ThreadDetailGIFFrameCandidate]) {
-        let viewportHeight = max(scrollViewportHeight, 1)
-        let expandedTop = -inlineGIFPlaybackViewportBuffer
-        let expandedBottom = viewportHeight + inlineGIFPlaybackViewportBuffer
-
-        let nextActiveIDs = Set(
-            candidates
-                .filter { candidate in
-                    candidate.frame.maxY >= expandedTop && candidate.frame.minY <= expandedBottom
-                }
-                .sorted { lhs, rhs in
-                    abs(lhs.frame.midY - viewportHeight / 2) < abs(rhs.frame.midY - viewportHeight / 2)
-                }
-                .prefix(maximumSimultaneousInlineGIFs)
-                .map(\.id)
+        let nextActiveIDs = inlineGIFPlaybackCoordinator.activePlaybackIDs(
+            from: candidates,
+            viewportHeight: scrollViewportHeight
         )
 
         guard nextActiveIDs != activeInlineGIFPlaybackIDs else { return }
@@ -540,10 +549,6 @@ struct ThreadDetailView: View {
             pageSize: detailPageSize,
             prefetchReplyDistance: directPaginationPrefetchReplyDistance
         )
-    }
-
-    private var replyScrollTargetID: String {
-        displayedReplies.isEmpty ? topAnchorID : replyTopAnchorID
     }
 
     private var supportsDirectPagination: Bool {

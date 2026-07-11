@@ -81,7 +81,8 @@ struct ThreadDetailParser {
             lastReplyAt: firstPost.createdAt,
             replyCount: max(
                 replies.count,
-                int(for: ["replies", "reply_count", "postnum"], in: firstDictionary) ?? 0
+                int(for: ["replies", "reply_count", "replys"], in: firstDictionary) ?? 0,
+                max((int(for: ["postnum"], in: firstDictionary) ?? 1) - 1, 0)
             ),
             viewCount: int(for: ["views", "view_count", "hits"], in: firstDictionary) ?? 0,
             body: firstPost.body,

@@ -6,6 +6,13 @@ import UIKit
 @MainActor
 struct ForumHubTests {
 
+    private func testURL(_ value: String) -> URL {
+        guard let url = URL(string: value) else {
+            fatalError("测试 URL 无效：\(value)")
+        }
+        return url
+    }
+
     @Test func forumErrorClassifiesTransportAndProviderFailures() {
         #expect(ForumError.resolve(URLError(.notConnectedToInternet)) == .offline)
         #expect(ForumError.resolve(URLError(.timedOut)) == .timeout)
@@ -57,6 +64,121 @@ struct ForumHubTests {
         #expect(payload?.threads.first?.replyCount == 12)
     }
 
+    @Test func forumListDoesNotGenerateAvatarURLFromAuthorID() throws {
+        let json = """
+        {
+          "items": [
+            {
+              "tid": 1001,
+              "subject": "头像归属测试",
+              "author": "楼主",
+              "authorid": 60459868,
+              "lastposter": "最后回复用户",
+              "avatar": "https://example.com/last-replier.png"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let thread = try #require(ForumPayloadParser.parse(
+            data: json,
+            fallbackText: "",
+            fid: 722
+        )?.threads.first)
+
+        #expect(thread.author == "楼主")
+        #expect(thread.authorAvatarURL == nil)
+    }
+
+    @Test func forumListUsesAuthorAvatarFromUserDictionary() throws {
+        let json = """
+        {
+          "data": {
+            "__T": {
+              "1001": {
+                "tid": 1001,
+                "subject": "头像映射测试",
+                "author": "一剑霜寒 NGA",
+                "authorid": 60459868
+              }
+            },
+            "__U": {
+              "60459868": {
+                "uid": 60459868,
+                "username": "一剑霜寒 NGA",
+                "avatar": "https://img.nga.178.com/avatars/60459868.jpg"
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let thread = try #require(ForumPayloadParser.parse(
+            data: json,
+            fallbackText: "",
+            fid: 722
+        )?.threads.first)
+
+        #expect(thread.author == "一剑霜寒 NGA")
+        #expect(thread.authorAvatarURL?.absoluteString == "https://img.nga.178.com/avatars/60459868.jpg")
+    }
+
+    @Test func ngaPostnumExcludesTheMainPostBeforePagination() throws {
+        let listJSON = """
+        {
+          "items": [
+            {
+              "tid": 1001,
+              "subject": "共 60 楼的主题",
+              "author": "CJ",
+              "postnum": 60
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let detailJSON = """
+        {
+          "result": [
+            {
+              "pid": 1,
+              "subject": "共 60 楼的主题",
+              "postnum": 60,
+              "author": { "username": "CJ" },
+              "content": "主楼"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let listThread = try #require(ForumPayloadParser.parse(
+            data: listJSON,
+            fallbackText: "",
+            fid: 722
+        )?.threads.first)
+        let detailThread = try #require(ThreadDetailParser.parse(
+            data: detailJSON,
+            fallbackText: String(decoding: detailJSON, as: UTF8.self),
+            tid: 1001
+        ))
+        let capabilities = ForumCapabilities(
+            supportsSearch: false,
+            supportsFavorites: false,
+            supportsReply: false,
+            supportsReplyTargeting: false,
+            supportsAuthentication: false,
+            supportsFeedPagination: true,
+            threadPaginationStyle: .numbered(pageSize: 20)
+        )
+
+        #expect(listThread.replyCount == 59)
+        #expect(detailThread.replyCount == 59)
+        #expect(ThreadPaginationPolicy.totalPageCount(
+            replyCount: detailThread.replyCount,
+            fallbackReplyCount: listThread.replyCount,
+            capabilities: capabilities
+        ) == 3)
+    }
+
     @Test func parserExtractsRealPostListShape() throws {
         let bundle = Bundle(for: FixtureLocator.self)
         let fixtureURL = try #require(
@@ -102,7 +224,7 @@ struct ForumHubTests {
         ))
 
         #expect(thread.body.contains("[图片] https://img.nga.178.com/attachments/main-post.jpg"))
-        let expectedURL = try #require(URL(string: "https://img.nga.178.com/attachments/main-post.jpg"))
+        let expectedURL = testURL("https://img.nga.178.com/attachments/main-post.jpg")
         #expect(ForumContentParser.parse(thread.body).contains {
             $0.content == .image(expectedURL)
         })
@@ -128,9 +250,9 @@ struct ForumHubTests {
 
         #expect(blocks.count == 4)
         #expect(blocks[0].content == .text("第一段正文"))
-        #expect(blocks[1].content == .image(try #require(URL(string: "https://img.nga.178.com/attachments/mon_202606/18/example-a.jpg"))))
+        #expect(blocks[1].content == .image(testURL("https://img.nga.178.com/attachments/mon_202606/18/example-a.jpg")))
         #expect(blocks[2].content == .text("第二段正文"))
-        #expect(blocks[3].content == .image(try #require(URL(string: "https://img.nga.178.com/attachments/mon_202606/18/example-b.webp"))))
+        #expect(blocks[3].content == .image(testURL("https://img.nga.178.com/attachments/mon_202606/18/example-b.webp")))
     }
 
     @Test func contentParserSupportsInlineBBCodeAndNGAImageURLVariants() throws {
@@ -140,9 +262,9 @@ struct ForumHubTests {
 
         #expect(blocks.count == 4)
         #expect(blocks[0].content == .text("文字"))
-        #expect(blocks[1].content == .image(try #require(URL(string: "https://img.nga.178.com/a.gif"))))
+        #expect(blocks[1].content == .image(testURL("https://img.nga.178.com/a.gif")))
         #expect(blocks[2].content == .text("说明"))
-        #expect(blocks[3].content == .image(try #require(URL(string: "https://img.nga.178.com/attachments/mon_202607/b.jpg?name=a&size=full"))))
+        #expect(blocks[3].content == .image(testURL("https://img.nga.178.com/attachments/mon_202607/b.jpg?name=a&size=full")))
     }
 
     @Test func structuredForumTextPreservesSizedNGAImageTags() throws {
@@ -225,11 +347,11 @@ struct ForumHubTests {
     @Test func forumImageURLResolverUpgradesTrustedNGAHTTPOnly() throws {
         #expect(
             ForumImageURLResolver.resolve("http://img.nga.178.com/a.jpg")
-                == try #require(URL(string: "https://img.nga.178.com/a.jpg"))
+                == testURL("https://img.nga.178.com/a.jpg")
         )
         #expect(
             ForumImageURLResolver.resolve("http://example.com/a.jpg")
-                == try #require(URL(string: "http://example.com/a.jpg"))
+                == testURL("http://example.com/a.jpg")
         )
     }
 
@@ -369,6 +491,14 @@ struct ForumHubTests {
 
         #expect(result.payload?.forum.title == "我的收藏")
         #expect(result.payload?.threads.isEmpty == false)
+    }
+
+    @Test func mockPagedThreadRepositoryBuildsFinalPartialPageWithoutCrashing() async throws {
+        let finalPage = try await MockPagedThreadRepository().fetchThread(tid: 991001, page: 7)
+
+        #expect(finalPage.thread.replies.count == 19)
+        #expect(finalPage.thread.replies.first?.floorNumber == 122)
+        #expect(finalPage.thread.replies.last?.floorNumber == 140)
     }
 
     @Test func mockRepositorySearchesThreads() async throws {
@@ -630,59 +760,23 @@ struct ForumHubTests {
         ))
     }
 
-    @Test func directPaginationAutoAdvanceRequiresArmedCurrentPage() {
-        #expect(ThreadDetailDirectPaginationAutoAdvancePolicy.scrolledDistance(
-            baselineOffset: 0,
-            currentOffset: -180
-        ) == 180)
-        #expect(ThreadDetailDirectPaginationAutoAdvancePolicy.isNearBottom(
-            footerMinY: 540,
-            viewportHeight: 520
-        ))
-        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.isNearBottom(
-            footerMinY: 620,
-            viewportHeight: 520
-        ))
-        #expect(ThreadDetailDirectPaginationAutoAdvancePolicy.shouldArmCurrentPage(
-            scrolledDistance: 180,
-            isNearBottom: true,
-            currentPage: 1,
-            totalPageCount: 3
-        ))
-        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.shouldArmCurrentPage(
-            scrolledDistance: 80,
-            isNearBottom: true,
-            currentPage: 1,
-            totalPageCount: 3
-        ))
-        #expect(ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
-            currentPage: 1,
-            totalPageCount: 3,
-            isLoadingMore: false,
-            armedPage: 1,
-            isNearBottom: true
-        ))
-        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
-            currentPage: 2,
-            totalPageCount: 3,
-            isLoadingMore: false,
-            armedPage: 1,
-            isNearBottom: true
-        ))
-        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
-            currentPage: 2,
-            totalPageCount: 3,
-            isLoadingMore: false,
-            armedPage: nil,
-            isNearBottom: true
-        ))
-        #expect(!ThreadDetailDirectPaginationAutoAdvancePolicy.shouldAutoAdvance(
-            currentPage: 1,
-            totalPageCount: 3,
-            isLoadingMore: false,
-            armedPage: 1,
-            isNearBottom: false
-        ))
+    @Test func directPaginationPreloadsNearEndReplyEntries() {
+        let replies = (1...20).map {
+            Reply(id: $0, author: "用户 \($0)", createdAt: "", body: "回复 \($0)")
+        }
+
+        let entries = ThreadDetailPresentationBuilder.displayedReplyEntries(
+            displayedReplies: replies,
+            allReplies: replies,
+            pageStartReplyIndices: [1: 0],
+            supportsDirectPagination: true,
+            pageSize: 20,
+            prefetchReplyDistance: 3
+        )
+
+        #expect(entries.filter(\.loadsNextPageWhenAppearing).map(\.reply.id) == [18, 19, 20])
+        #expect(entries.first?.showsPageAnchor == true)
+        #expect(entries.dropFirst().allSatisfy { !$0.showsPageAnchor })
     }
 
     @Test func snapshotRendererSplitsLoadedRepliesIntoSafeImages() {

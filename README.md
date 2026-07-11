@@ -87,6 +87,7 @@ ForumHub/
 - [技术决策](docs/decisions.md)
 - [开发路线图](docs/roadmap.md)
 - [待办清单](docs/todo.md)
+- [测试策略](docs/testing.md)
 - [代码 Review 规范](docs/review.md)
 - [常用 AI 提示词](docs/prompts.md)
 - [变更记录](docs/changelog.md)

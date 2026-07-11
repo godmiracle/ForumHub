@@ -12,6 +12,8 @@ It includes:
 - Build verification commands
 - Recommended seams for regression tests
 
+正式的分层策略、运行命令和真实会话限制见 [../testing.md](../testing.md)。
+
 ## Key Paths
 
 - `ForumHubTests`

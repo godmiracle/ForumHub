@@ -108,8 +108,7 @@ struct DiscourseThreadRepository: ThreadRepository {
         }
 
         let data = try await getJSON(path: "t/\(tid).json")
-        let detail = try JSONDecoder().decode(DiscourseTopicDetailResponse.self, from: data)
-        let thread = DiscourseMapper.threadDetail(source: source, detail: detail)
+        let thread = try LinuxDoDiscourseParser.threadDetail(from: data)
         return ThreadDetailFetchResult(
             thread: thread,
             rawText: String(decoding: data, as: UTF8.self)
@@ -158,6 +157,13 @@ struct DiscourseThreadRepository: ThreadRepository {
             throw ForumProviderError.httpStatus(httpResponse.statusCode)
         }
         return data
+    }
+}
+
+enum LinuxDoDiscourseParser {
+    static func threadDetail(from data: Data) throws -> ForumThread {
+        let detail = try JSONDecoder().decode(DiscourseTopicDetailResponse.self, from: data)
+        return DiscourseMapper.threadDetail(source: .linuxDo, detail: detail)
     }
 }
 

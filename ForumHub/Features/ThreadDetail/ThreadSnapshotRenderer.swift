@@ -252,7 +252,7 @@ enum NGAImageLoader {
         try await loadAsset(url: url).previewImage
     }
 
-    fileprivate static func fetchAsset(url: URL) async throws -> ForumRemoteImageAsset {
+    static func makeRequest(url: URL) -> URLRequest {
         var request = URLRequest(url: url)
         request.cachePolicy = .returnCacheDataElseLoad
         request.timeoutInterval = 30
@@ -267,6 +267,11 @@ enum NGAImageLoader {
                 request.setValue(value, forHTTPHeaderField: field)
             }
         }
+        return request
+    }
+
+    fileprivate static func fetchAsset(url: URL) async throws -> ForumRemoteImageAsset {
+        let request = makeRequest(url: url)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let mimeType = response.mimeType?.lowercased()

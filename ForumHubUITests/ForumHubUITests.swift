@@ -85,7 +85,7 @@ final class ForumHubUITests: XCTestCase {
         app.launchArguments.append("UITEST_PAGED_THREAD")
         app.launch()
 
-        let threadRow = app.otherElements["thread-row-991001"]
+        let threadRow = app.buttons["thread-row-991001"]
         if !threadRow.waitForExistence(timeout: 2) {
             for _ in 0..<4 where !threadRow.exists {
                 app.swipeUp()
@@ -97,19 +97,83 @@ final class ForumHubUITests: XCTestCase {
         let detailScrollView = app.scrollViews["thread-detail-scroll"]
         XCTAssertTrue(detailScrollView.waitForExistence(timeout: 8))
 
-        let currentPageLabel = app.staticTexts["thread-detail-current-page"]
-        XCTAssertTrue(currentPageLabel.waitForExistence(timeout: 5))
-        XCTAssertEqual(currentPageLabel.label, "1 / 7")
+        let currentPageControl = app.buttons["thread-detail-current-page"]
+        XCTAssertTrue(currentPageControl.waitForExistence(timeout: 5))
+        XCTAssertEqual(currentPageControl.value as? String, "1 / 7")
 
         var reachedSecondPage = false
         for _ in 0..<8 {
             detailScrollView.swipeUp()
-            if currentPageLabel.waitForExistence(timeout: 1), currentPageLabel.label == "2 / 7" {
+            if currentPageControl.waitForExistence(timeout: 1), currentPageControl.value as? String == "2 / 7" {
                 reachedSecondPage = true
                 break
             }
         }
 
         XCTAssertTrue(reachedSecondPage, "继续上滑后应该自动切到第 2 页。")
+    }
+
+    @MainActor
+    func testThreadDetailScrollToTopReturnsToFirstPage() throws {
+        let app = XCUIApplication()
+        app.launchArguments.append("UITEST_PAGED_THREAD")
+        app.launch()
+
+        let threadRow = app.buttons["thread-row-991001"]
+        if !threadRow.waitForExistence(timeout: 2) {
+            for _ in 0..<4 where !threadRow.exists {
+                app.swipeUp()
+            }
+        }
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 5))
+        threadRow.tap()
+
+        let detailScrollView = app.scrollViews["thread-detail-scroll"]
+        XCTAssertTrue(detailScrollView.waitForExistence(timeout: 8))
+
+        let currentPageControl = app.buttons["thread-detail-current-page"]
+        XCTAssertTrue(currentPageControl.waitForExistence(timeout: 5))
+
+        var reachedSecondPage = false
+        for _ in 0..<8 {
+            detailScrollView.swipeUp()
+            if currentPageControl.waitForExistence(timeout: 1), currentPageControl.value as? String == "2 / 7" {
+                reachedSecondPage = true
+                break
+            }
+        }
+        XCTAssertTrue(reachedSecondPage, "继续上滑后应该自动切到第 2 页。")
+
+        let scrollToTopButton = app.buttons["thread-detail-scroll-to-top"]
+        XCTAssertTrue(scrollToTopButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(scrollToTopButton.isHittable, "回顶按钮出现后必须可点击。")
+        scrollToTopButton.tap()
+
+        let returnsToFirstPage = NSPredicate(format: "value == %@", "1 / 7")
+        let firstReturn = XCTNSPredicateExpectation(
+            predicate: returnsToFirstPage,
+            object: currentPageControl
+        )
+        wait(for: [firstReturn], timeout: 5)
+
+        var reachedSecondPageAgain = false
+        for _ in 0..<8 {
+            detailScrollView.swipeUp()
+            if currentPageControl.waitForExistence(timeout: 1), currentPageControl.value as? String == "2 / 7" {
+                reachedSecondPageAgain = true
+                break
+            }
+        }
+        XCTAssertTrue(reachedSecondPageAgain, "第二次下滑后应该再次切到第 2 页。")
+
+        XCTAssertTrue(scrollToTopButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(scrollToTopButton.isHittable, "第二次回顶按钮出现后必须可点击。")
+        scrollToTopButton.tap()
+
+        let secondReturn = XCTNSPredicateExpectation(
+            predicate: returnsToFirstPage,
+            object: currentPageControl
+        )
+        wait(for: [secondReturn], timeout: 5)
     }
 }

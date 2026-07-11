@@ -341,8 +341,10 @@ struct ThreadDetailFloatingControls: View {
                     .forumGlass(in: Circle())
                 }
                 .buttonStyle(.plain)
+                .contentShape(Circle())
                 .transition(floatingControlTransition)
                 .accessibilityLabel("回到顶部")
+                .accessibilityIdentifier("thread-detail-scroll-to-top")
             }
 
             if supportsDirectPagination, totalPageCount > 1, !isLoading {
@@ -387,7 +389,6 @@ struct ThreadDetailFloatingPaginationControl: View {
                 VStack(spacing: 1) {
                     Text("\(visiblePage) / \(totalPageCount)")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .accessibilityIdentifier("thread-detail-current-page")
                     Text("PAGE")
                         .font(.system(size: 8, weight: .heavy, design: .rounded))
                         .tracking(0.8)
@@ -405,6 +406,9 @@ struct ThreadDetailFloatingPaginationControl: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("thread-detail-current-page")
+            .accessibilityLabel("当前页码")
+            .accessibilityValue("\(visiblePage) / \(totalPageCount)")
 
             paginationIconButton(
                 systemImage: "chevron.right",

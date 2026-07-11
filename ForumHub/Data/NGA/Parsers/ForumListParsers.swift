@@ -6,7 +6,8 @@ struct ForumPayloadParser {
             return nil
         }
 
-        let candidates = collectCandidates(in: object)
+        let userAvatarURLs = collectUserAvatarURLs(in: object)
+        let candidates = collectCandidates(in: object, userAvatarURLs: userAvatarURLs)
         guard !candidates.isEmpty else {
             return nil
         }
@@ -85,24 +86,27 @@ struct ForumPayloadParser {
         return ForumChannel(id: id, title: title)
     }
 
-    private static func collectCandidates(in object: Any) -> [ThreadCandidate] {
+    private static func collectCandidates(
+        in object: Any,
+        userAvatarURLs: [Int: URL]
+    ) -> [ThreadCandidate] {
         var results: [ThreadCandidate] = []
 
         if let dictionary = object as? [String: Any] {
-            if let candidate = makeCandidate(from: dictionary) {
+            if let candidate = makeCandidate(from: dictionary, userAvatarURLs: userAvatarURLs) {
                 results.append(candidate)
             }
 
             for value in dictionary.values {
-                results.append(contentsOf: collectCandidates(in: value))
+                results.append(contentsOf: collectCandidates(in: value, userAvatarURLs: userAvatarURLs))
             }
         } else if let array = object as? [Any] {
             for item in array {
-                results.append(contentsOf: collectCandidates(in: item))
+                results.append(contentsOf: collectCandidates(in: item, userAvatarURLs: userAvatarURLs))
             }
         } else if let string = object as? String,
                   let nestedObject = NGAJSONParser.object(from: Data(), fallbackText: string) {
-            results.append(contentsOf: collectCandidates(in: nestedObject))
+            results.append(contentsOf: collectCandidates(in: nestedObject, userAvatarURLs: userAvatarURLs))
         }
 
         var seen = Set<Int>()
@@ -116,7 +120,10 @@ struct ForumPayloadParser {
         }
     }
 
-    private static func makeCandidate(from dictionary: [String: Any]) -> ThreadCandidate? {
+    private static func makeCandidate(
+        from dictionary: [String: Any],
+        userAvatarURLs: [Int: URL]
+    ) -> ThreadCandidate? {
         let title = string(for: ["subject", "title", "t", "topic", "post_subject", "topic_title", "_subject"], in: dictionary)?
             .cleanedForumText
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -135,10 +142,13 @@ struct ForumPayloadParser {
             title: title,
             summary: string(for: ["content", "intro", "subject", "title", "post_subject"], in: dictionary)?.cleanedForumText ?? title,
             author: authorName(in: dictionary) ?? "未知作者",
-            authorAvatarURL: avatarURL(in: dictionary),
+            authorAvatarURL: avatarURL(in: dictionary, userAvatarURLs: userAvatarURLs),
             createdAt: string(for: ["postdate", "timestamp", "created_at", "post_time", "time"], in: dictionary) ?? "未知时间",
             lastReplyAt: string(for: ["lastpost", "postdate", "timestamp", "last_reply_time", "lastmodify"], in: dictionary) ?? "未知时间",
-            replyCount: int(for: ["replies", "reply_count", "postnum", "replys"], in: dictionary) ?? 0,
+            replyCount: max(
+                int(for: ["replies", "reply_count", "replys"], in: dictionary) ?? 0,
+                max((int(for: ["postnum"], in: dictionary) ?? 1) - 1, 0)
+            ),
             viewCount: int(for: ["views", "view_count", "hits"], in: dictionary) ?? 0
         )
     }
@@ -172,27 +182,86 @@ struct ForumPayloadParser {
         return nil
     }
 
-    private static func avatarURL(in dictionary: [String: Any]) -> URL? {
-        if let direct = string(
-            for: ["avatar", "avatar_url", "avatar_normal", "avatar_middle", "portrait", "face"],
-            in: dictionary
-        ),
-           let url = ForumAvatarResolver.ngaAvatarURL(from: direct) {
+    private static func avatarURL(
+        in dictionary: [String: Any],
+        userAvatarURLs: [Int: URL]
+    ) -> URL? {
+        if let author = dictionary["author"] as? [String: Any] {
+            if let direct = directAvatarURL(in: author) {
+                return direct
+            }
+            if let url = userAvatarURLs[int(for: ["uid", "id"], in: author) ?? 0] {
+                return url
+            }
+        }
+
+        if let url = userAvatarURLs[int(for: ["authorid", "author_id"], in: dictionary) ?? 0] {
             return url
         }
 
-        for key in ["author", "user", "author_info", "poster_info", "userInfo"] {
+        if let direct = directAvatarURL(in: dictionary),
+           int(for: ["authorid", "author_id"], in: dictionary) == nil {
+            return direct
+        }
+
+        for key in ["user", "author_info", "poster_info", "userInfo"] {
             if let nested = dictionary[key] as? [String: Any] {
-                if let direct = avatarURL(in: nested) {
+                if let direct = directAvatarURL(in: nested) {
                     return direct
                 }
-                if key == "author" || key == "user" {
-                    return ForumAvatarResolver.ngaAvatarURL(uid: int(for: ["uid", "id"], in: nested))
+                if let url = userAvatarURLs[int(for: ["uid", "id"], in: nested) ?? 0] {
+                    return url
                 }
             }
         }
 
-        return ForumAvatarResolver.ngaAvatarURL(uid: int(for: ["uid", "authorid", "author_id"], in: dictionary))
+        return nil
+    }
+
+    private static func collectUserAvatarURLs(in object: Any) -> [Int: URL] {
+        var avatarURLs: [Int: URL] = [:]
+
+        if let dictionary = object as? [String: Any] {
+            if let users = dictionary["__U"] as? [String: Any] {
+                for (key, value) in users {
+                    guard let user = value as? [String: Any],
+                          let uid = int(for: ["uid", "id"], in: user) ?? Int(key),
+                          let avatarURL = directAvatarURL(in: user)
+                    else {
+                        continue
+                    }
+                    avatarURLs[uid] = avatarURL
+                }
+            }
+
+            for value in dictionary.values {
+                for (uid, avatarURL) in collectUserAvatarURLs(in: value) where avatarURLs[uid] == nil {
+                    avatarURLs[uid] = avatarURL
+                }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                for (uid, avatarURL) in collectUserAvatarURLs(in: value) where avatarURLs[uid] == nil {
+                    avatarURLs[uid] = avatarURL
+                }
+            }
+        } else if let string = object as? String,
+                  let nestedObject = NGAJSONParser.object(from: Data(), fallbackText: string) {
+            return collectUserAvatarURLs(in: nestedObject)
+        }
+
+        return avatarURLs
+    }
+
+    private static func directAvatarURL(in dictionary: [String: Any]) -> URL? {
+        guard let direct = string(
+            for: ["avatar", "avatar_url", "avatar_normal", "avatar_middle", "portrait", "face"],
+            in: dictionary
+        ) else {
+            return nil
+        }
+
+        return ForumAvatarResolver.ngaAvatarURL(from: direct)
     }
 
     private static func string(for keys: [String], in dictionary: [String: Any]) -> String? {

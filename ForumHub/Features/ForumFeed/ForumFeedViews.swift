@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum ChannelPagingDirection {
     case previous
@@ -280,6 +281,7 @@ struct BlockableThreadLink: View {
                 isFavorited: favoriteThreads.contains(thread)
             )
         }
+        .accessibilityIdentifier("thread-row-\(thread.id)")
         .buttonStyle(.plain)
         .disabled(navigationDisabled)
         .simultaneousGesture(TapGesture().onEnded {
@@ -458,7 +460,6 @@ struct ThreadRow: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(PaperTheme.card)
-        .accessibilityIdentifier("thread-row-\(thread.id)")
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(PaperTheme.hairline)
@@ -862,6 +863,7 @@ struct AvatarView: View {
     let name: String
     let imageURL: URL?
     let size: CGFloat
+    @State private var image: UIImage?
 
     init(name: String, imageURL: URL? = nil, size: CGFloat = 48) {
         self.name = name
@@ -873,17 +875,10 @@ struct AvatarView: View {
         ZStack {
             avatarBackground
 
-            if let imageURL {
-                AsyncImage(url: imageURL) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    default:
-                        placeholder
-                    }
-                }
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
             } else {
                 placeholder
             }
@@ -893,6 +888,13 @@ struct AvatarView: View {
         .overlay {
             Circle()
                 .stroke(PaperTheme.hairline, lineWidth: 1)
+        }
+        .task(id: imageURL) {
+            guard let imageURL else {
+                image = nil
+                return
+            }
+            image = try? await NGAImageLoader.load(url: imageURL)
         }
     }
 
