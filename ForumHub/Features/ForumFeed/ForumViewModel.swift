@@ -14,6 +14,7 @@ final class ForumViewModel {
     var hasLoadedInitialFeed = false
     var isAuthenticated = false
     var errorMessage: String?
+    var requiresLinuxDoBrowserVerification = false
     var loginState = NGALoginState.empty
     var isLoadingMore = false
     var canLoadMore = false
@@ -178,6 +179,7 @@ final class ForumViewModel {
         feedLoadTask?.cancel()
         isLoading = true
         errorMessage = nil
+        requiresLinuxDoBrowserVerification = false
 
         let task = Task { [weak self] in
             guard let self else { return }
@@ -205,6 +207,7 @@ final class ForumViewModel {
             pinnedThreads = []
             threads = []
             errorMessage = error.localizedDescription
+            requiresLinuxDoBrowserVerification = error is LinuxDoRequestError
             hasLoadedInitialFeed = true
         }
     }
@@ -274,6 +277,7 @@ final class ForumViewModel {
         let generation = feedLoadGeneration
         isLoadingMore = true
         errorMessage = nil
+        requiresLinuxDoBrowserVerification = false
         defer {
             if isCurrentFeedLoad(generation) {
                 isLoadingMore = false
@@ -328,6 +332,7 @@ final class ForumViewModel {
         } catch {
             guard isCurrentFeedLoad(generation), !error.isCancellationLike else { return }
             errorMessage = error.localizedDescription
+            requiresLinuxDoBrowserVerification = error is LinuxDoRequestError
         }
     }
 
@@ -442,6 +447,7 @@ final class ForumViewModel {
         canLoadMore = false
         hasLoadedInitialFeed = false
         errorMessage = nil
+        requiresLinuxDoBrowserVerification = false
 
         await loadChannels()
         if let defaultChannel = channels.first(where: { $0.nativeKey == newRepository.defaultChannel.nativeKey })
@@ -469,6 +475,7 @@ final class ForumViewModel {
         canLoadMore = false
         hasLoadedInitialFeed = false
         errorMessage = nil
+        requiresLinuxDoBrowserVerification = false
         let currentDefault = repository.defaultChannel
         channels = [currentDefault]
         currentPage = 1

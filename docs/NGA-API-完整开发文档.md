@@ -1,7 +1,8 @@
 # NGA 非官方 API 开发文档
 
-> 基于 `wolfcon/NGA-API-Documents` 仓库 README 与 Wiki 整理  
-> 整理日期：2026-07-10  
+> 基于 `wolfcon/NGA-API-Documents` 与实际运行客户端 `BugenZhao/MNGA` 源码整理  
+> 初版整理日期：2026-07-10  
+> MNGA 修订日期：2026-07-11  
 > 文档性质：社区逆向整理，**不是 NGA 官方公开 API**。接口可能随时调整、失效或增加风控，请勿用于高频抓取、批量注册、垃圾信息、绕过权限或其他违反 NGA 用户协议的用途。
 
 ---
@@ -1981,3 +1982,1299 @@ private extension String {
 - 原 Wiki 引用的 NGA 论坛历史说明帖
 
 > 本文是对社区资料的重新组织与工程化说明，不代表 NGA 官方承诺。
+
+---
+
+# MNGA 实际调用修订与补全
+
+> 本章基于 `BugenZhao/MNGA` 当前源码中的网络层、请求函数和响应解析模型整理。  
+> 相比仅列出接口名称的历史文档，本章中的路径和参数均来自实际客户端调用，应作为实现 NGA 第三方客户端时的优先参考。  
+> 但 MNGA 仍然是第三方客户端，不代表 NGA 官方对接口稳定性的承诺。
+
+## 57. 结论：接口优先级需要调整
+
+此前文档将 NGA 接口分为：
+
+1. `app_api.php`
+2. `thread.php` / `read.php` / `post.php` / `nuke.php`
+
+根据 MNGA 的实现，建议调整优先级：
+
+### 实际主要接口
+
+```text
+thread.php
+read.php
+post.php
+nuke.php
+forum.php
+```
+
+主要用于：
+
+- 版面主题列表
+- 搜索主题
+- 收藏主题列表
+- 阅读帖子
+- 只看作者
+- 发帖、回复、编辑、评论
+- 收藏夹管理
+- 版面收藏
+- 点赞/踩
+- 举报
+- 屏蔽子版面
+- 用户帖子列表
+
+### 辅助 App API
+
+```text
+app_api.php
+```
+
+MNGA 当前明确使用它获取首页版面分类：
+
+```text
+app_api.php?__lib=home&__act=category
+```
+
+因此，`app_api.php` 不应被视为 MNGA 的唯一主接口；对 ForumHub 这类第三方客户端，更合理的做法是：
+
+- 版面目录：`app_api.php`
+- 主题列表与搜索：`thread.php`
+- 帖子详情：`read.php`
+- 写操作：`post.php`
+- 收藏、推荐、举报和用户设置：`nuke.php`
+
+---
+
+## 58. MNGA 网络请求约定
+
+### 58.1 可切换主机
+
+MNGA 内置以下主机：
+
+```text
+nga.178.com
+bbs.nga.cn
+ngabbs.com
+```
+
+默认：
+
+```text
+https://nga.178.com/
+```
+
+客户端不应把所有 URL 写死为单一域名，建议提供可切换 Base URL。
+
+### 58.2 通用输入编码
+
+MNGA 为请求统一增加：
+
+```text
+__inchst=UTF8
+```
+
+该参数应作为 NGA 请求的默认参数之一。
+
+### 58.3 请求方法
+
+MNGA 对大部分结构化接口使用：
+
+```http
+POST
+Content-Type: application/x-www-form-urlencoded
+```
+
+即使参数位于 Query 中，底层仍可能使用 POST，并把登录信息放入 Form。
+
+### 58.4 登录凭据 Form
+
+MNGA 的鉴权请求会在 Form 中加入：
+
+```text
+access_token=<token>
+access_uid=<uid>
+```
+
+这说明除了浏览器 Cookie 登录外，部分接口可以直接使用：
+
+- `access_token`
+- `access_uid`
+
+具体值来自当前登录信息。
+
+### 58.5 Header
+
+MNGA 设置：
+
+```http
+User-Agent: <设备UA>
+X-User-Agent: <设备UA>
+Referer: <当前NGA请求URL>
+```
+
+对于 `read.php`，在用户未手动选择自定义设备时，MNGA 默认使用 Windows Phone User-Agent，因为项目认为该返回更稳定。
+
+建议客户端实现可配置 UA，而不是只使用默认 URLSession UA。
+
+### 58.6 超时
+
+MNGA 网络层设置：
+
+```text
+连接超时：5 秒
+读取超时：20 秒
+启用 gzip
+仅 HTTPS
+```
+
+### 58.7 字符编码
+
+响应文本按：
+
+```text
+GB18030
+```
+
+进行解码，而不是简单假定 UTF-8。
+
+---
+
+## 59. 响应格式与回退策略
+
+MNGA 优先解析 XML，而不是将所有接口强制当作 JSON。
+
+### 59.1 XML 输出参数
+
+优先尝试：
+
+```text
+lite=xml
+```
+
+备选：
+
+```text
+__output=10
+```
+
+历史上还存在：
+
+```text
+__output=9
+__output=11
+__output=8
+```
+
+但 MNGA 当前重点使用：
+
+1. `lite=xml`
+2. `__output=10`
+
+### 59.2 JSON 输出
+
+`nuke.php` 和部分 `app_api.php` 请求通过 JSON 解析器处理。
+
+### 59.3 自动重试
+
+MNGA 会在以下情况自动更换输出参数：
+
+- XML 解析失败
+- 响应内容异常
+- HTTP 状态异常
+- 接口被特定输出参数限制
+
+对 `read.php` 还可能进行：
+
+1. 直接 XML
+2. 网页 HTML 转换为结构化数据
+3. 代理请求
+4. 本地缓存回退
+
+因此，客户端不应只依赖单一：
+
+```text
+read.php?lite=xml
+```
+
+建议实现：
+
+```text
+lite=xml
+→ __output=10
+→ HTML 页面解析
+→ 本地缓存
+```
+
+代理属于 MNGA 自身基础设施，不建议第三方项目直接依赖。
+
+---
+
+# MNGA 验证的接口
+
+## 60. 获取版面分类
+
+```http
+POST /app_api.php?__lib=home&__act=category&__inchst=UTF8
+```
+
+MNGA 实际参数：
+
+| 参数 | 值 |
+|---|---|
+| `__lib` | `home` |
+| `__act` | `category` |
+| `__inchst` | `UTF8` |
+
+响应为 JSON。
+
+主要解析结构：
+
+```text
+分类
+└── groups
+    └── forums
+```
+
+版面常见字段：
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 图标或版面标识 |
+| `fid` | 普通版面 ID |
+| `stid` | 综合/主题版面 ID |
+| `name` | 版面名称 |
+| `info` | 说明 |
+| `topped_topic` | 置顶主题 ID |
+
+### fid 与 stid
+
+MNGA 对版面 ID 使用联合类型：
+
+```text
+fid
+或
+stid
+```
+
+调用接口时根据类型分别传：
+
+```text
+fid=<fid>
+```
+
+或：
+
+```text
+stid=<stid>
+```
+
+不要把 `stid` 强制转换为 `fid`。
+
+---
+
+## 61. 搜索版面
+
+```http
+POST /forum.php?key=<关键词>&lite=xml&__inchst=UTF8
+```
+
+参数：
+
+| 参数 | 必需 | 说明 |
+|---|---|---|
+| `key` | 是 | 搜索关键词 |
+| `lite=xml` | 推荐 | XML 输出 |
+| `__inchst=UTF8` | 推荐 | 输入编码 |
+
+MNGA 从：
+
+```text
+/root/item
+```
+
+解析版面列表。
+
+---
+
+## 62. 主题列表
+
+```http
+POST /thread.php
+```
+
+MNGA 实际参数：
+
+| 参数 | 说明 |
+|---|---|
+| `fid` | 普通版面 ID |
+| `stid` | 综合版面 ID |
+| `page` | 页码 |
+| `order_by` | 排序方式 |
+| `recommend` | 是否仅推荐主题 |
+| `__inchst=UTF8` | 输入编码 |
+| `lite=xml` 或 `__output=10` | 输出格式 |
+
+示例：
+
+```text
+thread.php?fid=-7&page=1&order_by=&recommend=&lite=xml&__inchst=UTF8
+```
+
+或：
+
+```text
+thread.php?stid=123456&page=1&lite=xml&__inchst=UTF8
+```
+
+响应主要结构：
+
+```text
+/root/__T/item
+/root/__F
+/root/__F/sub_forums
+/root/__ROWS
+/root/__T__ROWS_PAGE
+```
+
+### 分页
+
+MNGA 使用：
+
+```text
+总条目数：/root/__ROWS
+每页条目数：/root/__T__ROWS_PAGE
+默认每页：35
+```
+
+### 主题字段
+
+MNGA 实际解析：
+
+| 字段 | 说明 |
+|---|---|
+| `tid` | 主题 ID |
+| `quote_from` | 某些场景替代 `tid` |
+| `fid` | 版面 ID |
+| `subject` | 标题 |
+| `authorid` | 作者 UID |
+| `author` | 作者名 |
+| `postdate` | 发布时间 |
+| `lastpost` | 最后回复时间 |
+| `replies` | 回复数 |
+| `type` | 类型位 |
+| `topic_misc` | 标题样式和扩展信息 |
+| `tpcurl` | 可能包含收藏标识 |
+
+---
+
+## 63. 只看推荐主题
+
+仍使用主题列表接口：
+
+```http
+POST /thread.php
+```
+
+参数：
+
+```text
+fid=<fid>
+recommend=1
+page=<page>
+```
+
+MNGA 将布尔值转换后传给 `recommend`。
+
+---
+
+## 64. 主题搜索
+
+```http
+POST /thread.php
+```
+
+MNGA 实际参数：
+
+| 参数 | 说明 |
+|---|---|
+| `fid` | 普通版面 ID |
+| `stid` | 综合版面 ID |
+| `key` | 搜索关键词 |
+| `recommend` | 是否只搜索推荐主题 |
+| `content` | 是否搜索正文 |
+| `page` | 页码 |
+
+示例：
+
+```text
+thread.php?fid=-7&key=Swift&recommend=0&content=1&page=1
+```
+
+返回主题结构仍为：
+
+```text
+/root/__T/item
+```
+
+---
+
+## 65. 收藏主题列表
+
+```http
+POST /thread.php
+```
+
+参数：
+
+| 参数 | 说明 |
+|---|---|
+| `favor` | 收藏夹 ID |
+| `page` | 页码 |
+
+示例：
+
+```text
+thread.php?favor=<folder_id>&page=1&lite=xml
+```
+
+分页字段：
+
+```text
+/root/__ROWS
+/root/__T__ROWS_PAGE
+```
+
+---
+
+## 66. 收藏夹列表 V2
+
+```http
+POST /nuke.php?__lib=topic_favor_v2&__act=list_folder&page=1
+```
+
+参数：
+
+| 参数 | 位置 | 值 |
+|---|---|---|
+| `__lib` | Query | `topic_favor_v2` |
+| `__act` | Query | `list_folder` |
+| `page` | Query | `1` |
+
+响应为 JSON。
+
+文件夹字段：
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 收藏夹 ID |
+| `name` | 收藏夹名 |
+| `length` | 主题数量 |
+| `default` | 存在时表示默认收藏夹 |
+
+---
+
+## 67. 新建收藏夹
+
+```http
+POST /nuke.php?__lib=topic_favor_v2&__act=new_folder&raw=3
+```
+
+Form：
+
+| 参数 | 说明 |
+|---|---|
+| `name` | 收藏夹名称 |
+| `opt` | `2` 表示设为默认，否则 `0` |
+
+响应中收藏夹 ID 可能位于：
+
+```text
+data["1"]
+```
+
+或：
+
+```text
+data["0"]
+```
+
+---
+
+## 68. 修改、设默认或删除收藏夹
+
+统一入口：
+
+```http
+POST /nuke.php?__lib=topic_favor_v2&__act=<action>&raw=3
+```
+
+### 重命名
+
+```text
+__act=modify_folder
+```
+
+Form：
+
+```text
+folder=<folder_id>
+name=<新名称>
+```
+
+### 设为默认
+
+```text
+__act=modify_folder
+```
+
+Form：
+
+```text
+folder=<folder_id>
+opt=2
+```
+
+### 删除
+
+```text
+__act=del_folder
+```
+
+Form：
+
+```text
+folder=<folder_id>
+```
+
+---
+
+## 69. 主题详情
+
+```http
+POST /read.php
+```
+
+MNGA 实际参数：
+
+| 参数 | 说明 |
+|---|---|
+| `tid` | 主题 ID |
+| `page` | 页码 |
+| `fav` | 收藏标识，可选 |
+| `pid` | 定位回复，可选 |
+| `authorid` | 只看指定作者 |
+| `opt` | 匿名作者筛选时为 `512` |
+| `__inchst=UTF8` | 输入编码 |
+| `lite=xml` 或 `__output=10` | 输出格式 |
+
+示例：
+
+```text
+read.php?tid=12345678&page=1&lite=xml&__inchst=UTF8
+```
+
+只看作者：
+
+```text
+read.php?tid=12345678&page=1&authorid=123456&lite=xml
+```
+
+定位回复：
+
+```text
+read.php?tid=12345678&pid=987654321&lite=xml
+```
+
+仅匿名作者：
+
+```text
+read.php?tid=12345678&opt=512&lite=xml
+```
+
+### MNGA 的详情回退策略
+
+```text
+XML 快速请求
+→ HTML 页面解析
+→ XML 普通请求
+→ 代理请求
+→ 本地缓存
+```
+
+项目还会记录本次使用的解析方式，便于调试。
+
+### 主要响应节点
+
+```text
+/root/__U/item
+/root/__R/item
+/root/__T
+/root/__F
+/root/__ROWS
+/root/__R__ROWS_PAGE
+```
+
+---
+
+## 70. 帖子回复字段
+
+MNGA 当前解析字段：
+
+| 字段 | 说明 |
+|---|---|
+| `pid` | 回复 ID |
+| `tid` | 主题 ID |
+| `fid` | 版面 ID |
+| `lou` | 楼层 |
+| `authorid` | 作者 UID |
+| `content` | 正文 |
+| `postdatetimestamp` | 发布时间 |
+| `score` | 评分 |
+| `alterinfo` | 编辑、评分等信息 |
+| `from_client` | 客户端 |
+| `attachs` | 附件 |
+| `hotreply` | 热门回复 |
+| `comment` | 楼中楼评论 |
+
+对于匿名用户，`authorid` 可能为负数。MNGA 会结合当前主题上下文构造临时唯一用户标识。
+
+---
+
+## 71. 发新主题、回复、引用、编辑和评论
+
+统一使用：
+
+```http
+POST /post.php
+```
+
+### Action
+
+MNGA 根据操作类型设置：
+
+```text
+action=<操作值>
+step=2
+```
+
+操作包含：
+
+- 新主题
+- 回复
+- 引用
+- 编辑
+- 评论
+
+具体 `action` 字符串由 MNGA 的枚举序列化值决定；实现时应通过当前页面表单或源码枚举核对，不要自行猜值。
+
+### 通用 Form
+
+| 参数 | 说明 |
+|---|---|
+| `action` | 操作类型 |
+| `step` | 固定 `2` |
+| `post_content` | 正文 |
+| `post_subject` | 标题，可选 |
+| `attachments` | 附件名称，Tab 分隔 |
+| `attachments_check` | 附件校验值，Tab 分隔 |
+| `anony` | 匿名发帖时为 `1` |
+
+### 新主题
+
+传：
+
+```text
+fid=<fid>
+```
+
+或：
+
+```text
+stid=<stid>
+```
+
+### 回复、引用、编辑和评论
+
+传：
+
+```text
+tid=<tid>
+pid=<pid>
+```
+
+### 评论
+
+额外：
+
+```text
+comment=1
+```
+
+### 追加编辑
+
+额外：
+
+```text
+modify_append=1
+```
+
+---
+
+## 72. 获取编辑器原始内容
+
+在编辑或引用前，MNGA 请求：
+
+```http
+POST /post.php
+```
+
+参数：
+
+```text
+action=<action>
+tid=<tid>
+pid=<pid>
+```
+
+新主题则传：
+
+```text
+fid=<fid>
+```
+
+或：
+
+```text
+stid=<stid>
+```
+
+响应节点：
+
+| 节点 | 说明 |
+|---|---|
+| `/root/content` | 编辑器正文 |
+| `/root/subject` | 标题 |
+| `/root/modify_append` | 是否追加编辑 |
+| `/root/auth` | 上传鉴权值 |
+| `/root/attach_url` | 附件上传地址 |
+
+发帖前建议先调用该接口获取动态字段。
+
+---
+
+## 73. 附件上传
+
+上传地址不是固定写死，而是由 `post.php` 编辑器准备接口返回：
+
+```text
+attach_url
+```
+
+请求：
+
+```http
+POST <attach_url>
+Content-Type: multipart/form-data
+```
+
+MNGA 使用的 Multipart 字段：
+
+| 字段 | 值/说明 |
+|---|---|
+| `v2` | `1` |
+| `origin_domain` | `ngabbs.com` |
+| `func` | `upload` |
+| `auth` | 编辑器接口返回值 |
+| `fid` | 版面 ID |
+| `attachment_file1_img` | `1` |
+| `attachment_file1_dscp` | 文件名 |
+| `attachment_file1_url_utf8_name` | UTF-8 文件名 |
+| `attachment_file1_watermark` | 空 |
+| `attachment_file1_auto_size` | 空 |
+| `attachment_file1` | 文件二进制 |
+
+响应节点：
+
+```text
+/root/attachments
+/root/url
+/root/attachments_check
+```
+
+提交帖子时需要把：
+
+```text
+attachments
+attachments_check
+```
+
+一起带回 `post.php`。
+
+---
+
+## 74. 推荐、点赞或踩帖子
+
+MNGA 使用：
+
+```http
+POST /nuke.php
+```
+
+Query：
+
+```text
+__lib=topic_recommend
+__act=add
+value=<操作值>
+tid=<tid>
+pid=<pid>
+```
+
+响应 JSON 中增量值可能位于：
+
+```text
+data["1"]
+```
+
+或：
+
+```text
+data["0"]
+```
+
+MNGA 根据返回增量判断状态：
+
+- 大于 0：赞
+- 小于 0：踩
+- 等于 0：取消状态
+
+---
+
+## 75. 举报帖子
+
+```http
+POST /nuke.php
+```
+
+Query：
+
+```text
+__lib=log_post
+__act=report
+raw=3
+info=<举报内容>
+tid=<tid>
+pid=<pid>
+```
+
+举报操作不经过 `post.php`。
+
+---
+
+## 76. 用户帖子列表
+
+```http
+POST /thread.php
+```
+
+参数：
+
+```text
+searchpost=1
+authorid=<uid>
+page=<page>
+```
+
+响应包含主题和简化帖子正文：
+
+```text
+/root/__T/item
+/root/__T/item/__P
+```
+
+适合实现“用户回复”页面。
+
+---
+
+## 77. 版面收藏列表
+
+```http
+POST /nuke.php?__lib=forum_favor2&__act=forum_favor
+```
+
+Form：
+
+```text
+action=get
+```
+
+响应为 JSON，主要数据位于：
+
+```text
+data["0"]
+```
+
+---
+
+## 78. 添加或删除版面收藏
+
+```http
+POST /nuke.php?__lib=forum_favor2&__act=forum_favor
+```
+
+Form：
+
+```text
+action=add
+fid=<fid或stid>
+```
+
+删除：
+
+```text
+action=del
+fid=<fid或stid>
+```
+
+注意：即使传入的是 `stid`，MNGA 仍统一使用 Form 字段名：
+
+```text
+fid
+```
+
+---
+
+## 79. 屏蔽或恢复子版面
+
+```http
+POST /nuke.php
+```
+
+Query：
+
+```text
+__lib=user_option
+__act=set
+add=<子版面过滤ID>
+```
+
+恢复显示时：
+
+```text
+del=<子版面过滤ID>
+```
+
+Form：
+
+```text
+fid=<父版面ID>
+type=1
+info=add_to_block_tids
+```
+
+---
+
+# 数据模型补全
+
+## 80. 主题标题样式
+
+MNGA 将 `topic_misc` 作为 Base64 无填充数据解析。
+
+其中数据类型 `1` 的四字节大端整数表示标题样式位：
+
+| Mask | 样式 |
+|---:|---|
+| `0x01` | 红色 |
+| `0x02` | 蓝色 |
+| `0x04` | 绿色 |
+| `0x08` | 橙色 |
+| `0x10` | 银色 |
+| `0x20` | 粗体 |
+| `0x40` | 斜体 |
+| `0x80` | 下划线 |
+
+之前文档中的文本 `~red~` 形式仍可作为历史兼容，但现代客户端应优先支持 Base64 二进制格式。
+
+---
+
+## 81. 特殊主题类型位
+
+MNGA 使用：
+
+```text
+type & 0x8000
+```
+
+判断主题是否为 `stid` 快捷版面。
+
+使用：
+
+```text
+type & 0x200000
+```
+
+判断是否从 `topic_misc_var` 提取快捷版面 `fid`。
+
+因此主题 `type` 不应只解释为锁定、附件等帖子状态；它还可能表示“主题卡片实际是版面入口”。
+
+---
+
+## 82. 子版面字段
+
+MNGA 从主题列表的：
+
+```text
+/root/__F/sub_forums/*
+```
+
+解析：
+
+| 位置/字段 | 说明 |
+|---|---|
+| 第 0 项 | fid 或 stid |
+| 第 1 项 | 名称 |
+| 第 2 项 | 说明 |
+| 第 3 项 | 过滤 ID |
+| 第 4 项 | attributes |
+
+当 `attributes > 40` 时，MNGA 将其视为可过滤子版面。
+
+---
+
+# 对原文档的纠正
+
+## 83. 应继续保留的内容
+
+此前文档中这些内容仍有效：
+
+- `ngaPassportUid` / `ngaPassportCid` Cookie
+- `app_api.php` 首页分类
+- `thread.php` / `read.php` 基础结构
+- `post.php` 发帖
+- `nuke.php` 后台动作
+- GBK/GB18030 兼容
+- `__output` 多种格式
+- `__U` / `__R` / `__T` / `__F`
+- 主题和回复字段
+- 附件 URL 处理
+- 位字段解析
+
+## 84. 应调整的内容
+
+### 原表述
+
+```text
+App API 是主要接口，旧网页接口用于兼容。
+```
+
+### 修订为
+
+```text
+MNGA 实际以 thread.php、read.php、post.php 和 nuke.php 为核心；
+app_api.php 主要用于版面目录等少数结构化数据。
+```
+
+### 原表述
+
+```text
+优先使用 __output=14。
+```
+
+### 修订为
+
+对于 MNGA 路线：
+
+```text
+thread.php/read.php/post.php：
+优先 lite=xml，备选 __output=10。
+
+nuke.php/app_api.php：
+根据具体接口使用 JSON。
+```
+
+### 原表述
+
+```text
+GET/POST 均可。
+```
+
+### 修订为
+
+MNGA 网络层主要按 POST 请求，并使用 Form 提交登录凭据和写操作数据。
+
+---
+
+# ForumHub 推荐实现
+
+## 85. MVP 接口
+
+### 首页
+
+```text
+POST app_api.php
+__lib=home
+__act=category
+```
+
+### 版面主题
+
+```text
+POST thread.php
+fid/stid
+page
+order_by
+recommend
+lite=xml
+```
+
+### 搜索
+
+```text
+POST thread.php
+fid/stid
+key
+content
+page
+```
+
+### 详情
+
+```text
+POST read.php
+tid
+page
+pid
+authorid
+lite=xml
+```
+
+### 用户帖子
+
+```text
+POST thread.php
+searchpost=1
+authorid
+page
+```
+
+### 收藏
+
+```text
+nuke.php?__lib=topic_favor_v2
+nuke.php?__lib=forum_favor2
+```
+
+### 写操作
+
+```text
+post.php
+nuke.php?__lib=topic_recommend
+nuke.php?__lib=log_post
+```
+
+---
+
+## 86. 推荐网络层结构
+
+```swift
+enum NGAEndpoint {
+    case forumCategories
+    case forumSearch(keyword: String)
+    case topicList(id: ForumID, page: Int, order: String?, recommendedOnly: Bool)
+    case topicSearch(id: ForumID, keyword: String, searchContent: Bool, page: Int)
+    case topicDetail(tid: String, page: Int, pid: String?, authorID: String?)
+    case userPosts(uid: String, page: Int)
+    case favoriteFolders
+    case favoriteTopics(folderID: String, page: Int)
+    case favoriteForums
+    case postEditor(action: PostAction)
+    case submitPost(action: PostAction, content: String)
+    case recommendPost(tid: String, pid: String, value: Int)
+    case reportPost(tid: String, pid: String, reason: String)
+}
+```
+
+请求层应支持：
+
+```text
+JSON
+XML
+HTML fallback
+GB18030
+application/x-www-form-urlencoded
+multipart/form-data
+Cookie
+access_uid/access_token
+多 Base URL
+可配置 User-Agent
+```
+
+---
+
+## 87. 实现可信度分级
+
+在后续文档中建议给接口标记：
+
+### A：MNGA 当前源码直接调用
+
+例如：
+
+```text
+thread.php 主题列表
+read.php 主题详情
+post.php 写操作
+topic_favor_v2
+forum_favor2
+topic_recommend
+log_post
+```
+
+### B：wolfcon 文档记录，但 MNGA 当前未使用
+
+例如：
+
+```text
+app_api.php 的 gift、nearby、blackstore、ow、wow
+```
+
+### C：根据返回字段或历史行为推测
+
+必须注明：
+
+```text
+待实测
+```
+
+ForumHub 第一版应只依赖 A 级接口。
+
+---
+
+## 88. 最终结论
+
+`BugenZhao/MNGA` 应作为 NGA 文档的主要工程参考，因为它提供了：
+
+- 实际路径
+- 实际 Query 与 Form 参数
+- XML 和 JSON 的真实选择
+- GB18030 解码
+- UA 和 Header
+- 登录信息注入
+- 输出格式回退
+- HTML 解析回退
+- 收藏夹 V2
+- 版面收藏 V2
+- 写操作
+- 附件上传
+- 数据模型解析
+- 接口异常处理
+
+但不能简单认为“源码里出现就永久有效”。最可靠的排序应是：
+
+```text
+MNGA 当前源码调用
+> 自己账号低频实测
+> wolfcon 历史文档
+> 未验证推测
+```

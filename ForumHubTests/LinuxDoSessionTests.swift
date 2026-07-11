@@ -4,6 +4,11 @@ import Testing
 
 @MainActor
 struct LinuxDoSessionTests {
+    @Test func verificationErrorMapsToAccessDenied() {
+        #expect(ForumError.resolve(LinuxDoRequestError.verificationRequired) == .accessDenied)
+        #expect(LinuxDoRequestError.verificationRequired.errorDescription?.contains("浏览器验证") == true)
+    }
+
     @Test func parserReadsAuthenticatedLinuxDoSession() throws {
         let data = Data(#"{"current_user":{"id":42,"username":"codex","name":" Codex User ","avatar_template":"/user_avatar/{size}/1.png","trust_level":3}}"#.utf8)
 

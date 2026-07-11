@@ -119,6 +119,7 @@ Use a WebKit-driven login flow and shared cookie reuse instead of trying to impl
 - Login is more resilient to browser-style validation flows
 - The account experience depends on cookie correctness and session reuse
 - This approach is pragmatic but less elegant than a clean native auth contract
+- A direct JSON request that receives `403` may need to be retried from the WebKit context; an explicit verification entry remains necessary when that context is challenged too.
 
 ## ADR-006 GIF Handling Uses A Shared Image Pipeline
 

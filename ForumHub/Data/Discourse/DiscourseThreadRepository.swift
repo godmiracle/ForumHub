@@ -152,7 +152,7 @@ struct DiscourseThreadRepository: ThreadRepository {
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
             if httpResponse.statusCode == 403 {
-                throw ForumProviderError.unsupported("LINUX DO 当前拦截了直接接口访问，可能需要浏览器验证。")
+                return try await LinuxDoBrowserRequestSession.shared.fetchJSON(from: url)
             }
             throw ForumProviderError.httpStatus(httpResponse.statusCode)
         }

@@ -11,6 +11,7 @@
 
 - Added LINUX DO source integration
 - Added LINUX DO web login with cookie reuse
+- Added a LINUX DO browser-context fallback for Cloudflare-blocked JSON requests, plus an in-feed "打开浏览器验证" recovery action that reloads the feed after verification.
 - Kept NGA web login and session persistence as a first-class source flow
 - Continued V2EX support through the existing token-based account path
 

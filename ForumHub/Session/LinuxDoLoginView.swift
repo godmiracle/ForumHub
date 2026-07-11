@@ -38,6 +38,7 @@ struct LinuxDoLoginSheet: View {
                     Button("完成") {
                         Task {
                             await authStore.refreshAccount()
+                            LinuxDoBrowserRequestSession.shared.invalidateLoadedPage()
                             await MainActor.run {
                                 if authStore.isAuthenticated {
                                     dismiss()
@@ -137,6 +138,7 @@ private struct LinuxDoWebLoginView: UIViewRepresentable {
                 with: account,
                 cookieStore: webView.configuration.websiteDataStore.httpCookieStore
             )
+            LinuxDoBrowserRequestSession.shared.invalidateLoadedPage()
             await MainActor.run {
                 onAccountDetected(account)
             }

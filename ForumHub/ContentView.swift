@@ -10,6 +10,7 @@ import WebKit
 struct ContentView: View {
     @State private var viewModel: ForumViewModel
     @State private var showsLogin = false
+    @State private var showsLinuxDoBrowserVerification = false
     @State private var submittedSearchText = ""
     @State private var showsSearchResults = false
     @State private var selectedChannelID = ForumChannel.defaultForum.id
@@ -61,6 +62,11 @@ struct ContentView: View {
                     await viewModel.reload()
                 }
             }
+        }
+        .sheet(isPresented: $showsLinuxDoBrowserVerification, onDismiss: {
+            Task { await viewModel.reload() }
+        }) {
+            LinuxDoLoginSheet(authStore: linuxDoAuthStore)
         }
         .task {
             if UITestScenario.current != nil {
@@ -203,6 +209,7 @@ struct ContentView: View {
                 isLoadingMore: viewModel.isLoadingMore,
                 canLoadMore: viewModel.canLoadMore,
                 errorMessage: viewModel.errorMessage,
+                showsBrowserVerificationAction: viewModel.source == .linuxDo && viewModel.requiresLinuxDoBrowserVerification,
                 scrollRequest: tabScrollRequest,
                 showsRetapRefreshIndicator: feedRetapRefreshTab == tab,
                 sortMode: viewModel.feedSortMode,
@@ -215,6 +222,9 @@ struct ContentView: View {
                     withAnimation(.snappy(duration: 0.22)) { showsPinnedThreads = isVisible }
                 },
                 onLoadNextPage: { await viewModel.loadNextPage() },
+                onBrowserVerificationRequested: {
+                    showsLinuxDoBrowserVerification = true
+                },
                 onOpenThread: { browsingHistory.record($0) },
                 onSwipeChannel: { direction in
                     guard tab == .home,

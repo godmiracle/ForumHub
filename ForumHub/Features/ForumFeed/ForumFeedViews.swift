@@ -67,6 +67,7 @@ struct ForumFeedContent: View {
     let isLoadingMore: Bool
     let canLoadMore: Bool
     let errorMessage: String?
+    var showsBrowserVerificationAction = false
     let scrollRequest: TabScrollRequest?
     let showsRetapRefreshIndicator: Bool
     let sortMode: FeedSortMode
@@ -75,6 +76,7 @@ struct ForumFeedContent: View {
     let onSortChange: (FeedSortMode) -> Void
     let onPinnedVisibilityChange: (Bool) -> Void
     let onLoadNextPage: () async -> Void
+    var onBrowserVerificationRequested: () -> Void = {}
     var onOpenThread: (ForumThread) -> Void = { _ in }
     var onSwipeChannel: (ChannelPagingDirection) -> Void = { _ in }
     @State private var suppressesThreadNavigation = false
@@ -165,7 +167,17 @@ struct ForumFeedContent: View {
     @ViewBuilder
     private var errorContent: some View {
         if let errorMessage {
-            ErrorBanner(message: errorMessage)
+            VStack(alignment: .leading, spacing: 10) {
+                ErrorBanner(message: errorMessage)
+                if showsBrowserVerificationAction {
+                    Button("打开浏览器验证") {
+                        onBrowserVerificationRequested()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color(red: 0.18, green: 0.48, blue: 0.38))
+                    .accessibilityIdentifier("linuxdo-browser-verification-button")
+                }
+            }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
         }
