@@ -27,8 +27,8 @@ struct ContentView: View {
     @State private var showsPinnedThreads = true
 
     init() {
-        if ProcessInfo.processInfo.arguments.contains("UITEST_PAGED_THREAD") {
-            _viewModel = State(initialValue: ForumViewModel.pagedPreview())
+        if let scenario = UITestScenario.current {
+            _viewModel = State(initialValue: scenario.makeViewModel())
         } else {
             _viewModel = State(initialValue: ForumViewModel())
         }
@@ -63,7 +63,7 @@ struct ContentView: View {
             }
         }
         .task {
-            if ProcessInfo.processInfo.arguments.contains("UITEST_PAGED_THREAD") {
+            if UITestScenario.current != nil {
                 subscriptions.prepareDefaults(for: viewModel.channels)
                 selectedChannelID = viewModel.forum.id
                 return

@@ -933,19 +933,62 @@ private struct NGAReplyContext {
 }
 
 struct MockThreadRepository: ThreadRepository {
-    let source = ForumSource.nga
-    let capabilities = ForumCapabilities(
-        supportsSearch: true,
-        supportsFavorites: true,
-        supportsReply: true,
-        supportsReplyTargeting: true,
-        supportsAuthentication: true,
-        supportsFeedPagination: true
-    )
-    let defaultChannel = ForumChannel.defaultForum
+    let source: ForumSource
+    let defaultChannel: ForumChannel
+
+    var capabilities: ForumCapabilities {
+        switch source {
+        case .nga:
+            ForumCapabilities(
+                supportsSearch: true,
+                supportsFavorites: true,
+                supportsReply: true,
+                supportsReplyTargeting: true,
+                supportsAuthentication: true,
+                supportsFeedPagination: true
+            )
+        case .v2ex:
+            ForumCapabilities(
+                supportsSearch: false,
+                supportsFavorites: false,
+                supportsReply: false,
+                supportsReplyTargeting: false,
+                supportsAuthentication: true,
+                supportsFeedPagination: true
+            )
+        case .linuxDo:
+            ForumCapabilities(
+                supportsSearch: true,
+                supportsFavorites: false,
+                supportsReply: false,
+                supportsReplyTargeting: false,
+                supportsAuthentication: true,
+                supportsFeedPagination: true
+            )
+        }
+    }
+
+    init(source: ForumSource = .nga) {
+        self.source = source
+        switch source {
+        case .nga:
+            defaultChannel = .defaultForum
+        case .v2ex:
+            defaultChannel = .v2exLatest
+        case .linuxDo:
+            defaultChannel = .linuxDoLatest
+        }
+    }
 
     func fetchChannels() async throws -> [ForumChannel] {
-        ForumPayload.mock.channels
+        switch source {
+        case .nga:
+            ForumPayload.mock.channels
+        case .v2ex:
+            [.v2exLatest, .v2exHot]
+        case .linuxDo:
+            [.linuxDoLatest]
+        }
     }
 
     func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult {

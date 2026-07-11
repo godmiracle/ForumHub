@@ -22,8 +22,11 @@ UI 测试位于 `ForumHubUITests`，安装测试 App 并使用固定场景。它
 
 当前固定场景：
 
+- `UITEST_DEFAULT_FEED`：固定 NGA 信息流，用于搜索和基础导航；
+- `UITEST_SOURCE_SWITCH`：固定 NGA、V2EX、LINUX DO Repository，用于数据源切换；
 - `UITEST_PAGED_THREAD`：多页帖子详情，用于验证连续分页、页码与返回顶部；
-- 默认 Preview/Mock 数据：用于验证导航、搜索和基础交互。
+
+所有日常 UI Test 必须显式传入上述场景之一。场景模式跳过登录恢复和真实信息流请求，不得依赖网络、Cookie 或本地历史数据。
 
 新增 UI Test 必须使用稳定的 `accessibilityIdentifier`，不得依赖真实账号、网络返回顺序或本地历史数据。
 

@@ -87,11 +87,8 @@ final class ForumViewModel {
         channels = [selectedForum]
     }
 
-    init(repository: any ThreadRepository) {
-        repositories = [repository.source: repository]
-        source = repository.source
-        selectedForum = repository.defaultChannel
-        channels = [repository.defaultChannel]
+    convenience init(repository: any ThreadRepository) {
+        self.init(repositories: [repository.source: repository], initialSource: repository.source)
         forum = ForumSummary(
             id: repository.defaultChannel.id,
             title: repository.defaultChannel.title,
@@ -99,6 +96,25 @@ final class ForumViewModel {
             todayPosts: 0,
             onlineUsers: 0,
             source: repository.source
+        )
+    }
+
+    init(
+        repositories: [ForumSource: any ThreadRepository],
+        initialSource: ForumSource
+    ) {
+        precondition(repositories[initialSource] != nil, "初始数据源必须存在于 Repository 集合中。")
+        self.repositories = repositories
+        source = initialSource
+        selectedForum = repositories[initialSource]?.defaultChannel ?? .defaultForum
+        channels = [selectedForum]
+        forum = ForumSummary(
+            id: selectedForum.id,
+            title: selectedForum.title,
+            subtitle: "Preview 数据",
+            todayPosts: 0,
+            onlineUsers: 0,
+            source: initialSource
         )
     }
 

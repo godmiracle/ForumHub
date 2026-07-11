@@ -1029,7 +1029,7 @@ struct ForumBottomBar: View {
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("tab-\(tab.rawValue)")
+        .accessibilityLabel(tab.title)
     }
 
     private var materialFallbackBar: some View {

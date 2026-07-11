@@ -24,14 +24,7 @@ final class ForumHubUITests: XCTestCase {
 
     @MainActor
     func testSearchSubmissionOpensResults() throws {
-        let app = XCUIApplication()
-        app.launch()
-
-        app.buttons["tab-community"].tap()
-        let ngaButton = app.buttons["community-source-nga"]
-        XCTAssertTrue(ngaButton.waitForExistence(timeout: 8))
-        ngaButton.tap()
-        app.buttons["tab-home"].tap()
+        let app = launch(scenario: "UITEST_DEFAULT_FEED")
 
         let searchField = app.textFields["forum-search-field"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 8))
@@ -53,16 +46,17 @@ final class ForumHubUITests: XCTestCase {
 
     @MainActor
     func testSwitchesFromNGAToV2EX() throws {
-        let app = XCUIApplication()
-        app.launch()
+        let app = launch(scenario: "UITEST_SOURCE_SWITCH")
 
-        app.buttons["tab-community"].tap()
-        XCTAssertTrue(app.scrollViews["community-screen"].waitForExistence(timeout: 8))
-        let v2exButton = app.buttons["community-source-v2ex"]
+        let sourceMenu = app.buttons["current-community-button"]
+        XCTAssertTrue(sourceMenu.waitForExistence(timeout: 8))
+        sourceMenu.tap()
+
+        let v2exButton = app.buttons["V2EX"]
         XCTAssertTrue(v2exButton.waitForExistence(timeout: 8))
         v2exButton.tap()
 
-        app.buttons["tab-home"].tap()
+        tapBottomTab(named: "首页", in: app)
 
         XCTAssertTrue(
             app.textFields["forum-search-field"].waitForExistence(timeout: 5)
@@ -75,15 +69,13 @@ final class ForumHubUITests: XCTestCase {
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            _ = launch(scenario: "UITEST_DEFAULT_FEED")
         }
     }
 
     @MainActor
     func testThreadDetailScrollAutoAdvancesToNextPage() throws {
-        let app = XCUIApplication()
-        app.launchArguments.append("UITEST_PAGED_THREAD")
-        app.launch()
+        let app = launch(scenario: "UITEST_PAGED_THREAD")
 
         let threadRow = app.buttons["thread-row-991001"]
         if !threadRow.waitForExistence(timeout: 2) {
@@ -115,9 +107,7 @@ final class ForumHubUITests: XCTestCase {
 
     @MainActor
     func testThreadDetailScrollToTopReturnsToFirstPage() throws {
-        let app = XCUIApplication()
-        app.launchArguments.append("UITEST_PAGED_THREAD")
-        app.launch()
+        let app = launch(scenario: "UITEST_PAGED_THREAD")
 
         let threadRow = app.buttons["thread-row-991001"]
         if !threadRow.waitForExistence(timeout: 2) {
@@ -175,5 +165,18 @@ final class ForumHubUITests: XCTestCase {
             object: currentPageControl
         )
         wait(for: [secondReturn], timeout: 5)
+    }
+
+    private func tapBottomTab(named title: String, in app: XCUIApplication) {
+        let button = app.buttons[title]
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "底栏应该展示\(title)按钮。")
+        button.tap()
+    }
+
+    private func launch(scenario: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments.append(scenario)
+        app.launch()
+        return app
     }
 }
