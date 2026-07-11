@@ -165,6 +165,13 @@ enum ForumImageURLResolver {
         }
         return components.url
     }
+
+    static func isNGAForumEmoji(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased(), trustedNGAHosts.contains(host) else {
+            return false
+        }
+        return url.path.hasPrefix("/ngabbs/post/smile/")
+    }
 }
 
 private final class ForumContentBlockArrayBox: NSObject {

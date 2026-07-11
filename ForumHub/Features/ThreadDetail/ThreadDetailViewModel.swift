@@ -180,7 +180,7 @@ final class ThreadDetailViewModel {
     ) async {
         guard !actions.isSubmittingReply else { return }
 
-        let content = actions.replyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = actions.replyDocument.markup.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty else {
             actions.replyErrorMessage = "回复内容不能为空。"
             return
@@ -206,7 +206,7 @@ final class ThreadDetailViewModel {
                 content: content,
                 attachments: actions.replyAttachments.map(\.upload)
             )
-            actions.replyText = ""
+            actions.replyDocument = ReplyComposerDocument()
             actions.replyAttachments = []
             actions.showsReplyComposer = false
             actions.replyTarget = .thread

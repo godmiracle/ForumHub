@@ -6,7 +6,7 @@ struct ReplyComposerSheet: View {
     let source: ForumSource
     let capabilities: ForumCapabilities
     @Binding var target: ThreadReplyTarget
-    @Binding var text: String
+    @Binding var document: ReplyComposerDocument
     @Binding var attachments: [ReplyComposerAttachment]
     let isSubmitting: Bool
     let onCancel: () -> Void
@@ -14,7 +14,6 @@ struct ReplyComposerSheet: View {
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var imageLoadErrorMessage: String?
     @State private var showsEmojiPicker = false
-    @State private var pendingEmojiInsertion: NGAForumEmojiItem?
     @State private var shouldFocusRichEditor = false
 
     var body: some View {
@@ -99,8 +98,7 @@ struct ReplyComposerSheet: View {
                 }
 
                 ReplyComposerRichTextEditor(
-                    text: $text,
-                    pendingEmojiInsertion: $pendingEmojiInsertion,
+                    document: $document,
                     shouldFocus: $shouldFocusRichEditor,
                     isEditable: !isSubmitting
                 )
@@ -108,7 +106,7 @@ struct ReplyComposerSheet: View {
                 .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                 HStack {
-                    Text("\(ReplyComposerRichTextEditor.displayCharacterCount(from: text)) 字")
+                    Text("\(document.displayCharacterCount) 字")
                         .font(.caption)
                         .foregroundStyle(PaperTheme.mutedText)
                     Spacer()
@@ -147,7 +145,7 @@ struct ReplyComposerSheet: View {
                             Text("发送")
                         }
                     }
-                    .disabled(isSubmitting || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(isSubmitting || document.isEmpty)
                 }
             }
             .alert("图片处理失败", isPresented: imageLoadErrorBinding) {
@@ -157,7 +155,7 @@ struct ReplyComposerSheet: View {
             }
             .sheet(isPresented: $showsEmojiPicker) {
                 NGAEmojiPickerSheet { emoji in
-                    pendingEmojiInsertion = emoji
+                    document.insert(emoji: ReplyComposerEmoji(emoji))
                     shouldFocusRichEditor = true
                     showsEmojiPicker = false
                 }
@@ -443,16 +441,147 @@ struct NGAForumEmojiItem: Identifiable {
     }
 }
 
+struct ReplyComposerEmoji: Equatable {
+    let filename: String
+    let imageURL: URL
+
+    init(_ item: NGAForumEmojiItem) {
+        filename = item.filename
+        imageURL = item.imageURL
+    }
+
+    var markup: String { "[img]\(imageURL.absoluteString)[/img]" }
+
+    init?(markup: String) {
+        guard markup.hasPrefix("[img]"), markup.hasSuffix("[/img]") else { return nil }
+        let urlText = String(markup.dropFirst(5).dropLast(6))
+        guard let imageURL = URL(string: urlText),
+              let filename = imageURL.pathComponents.last,
+              let _ = NGAForumEmojiItem(filename: filename, imageURL: imageURL)
+        else { return nil }
+        self.filename = filename
+        self.imageURL = imageURL
+    }
+}
+
+enum ReplyComposerDocumentComponent: Equatable {
+    case text(String)
+    case emoji(ReplyComposerEmoji)
+}
+
+struct ReplyComposerDocument: Equatable {
+    private(set) var components: [ReplyComposerDocumentComponent]
+    private(set) var selection: NSRange
+
+    init(text: String = "") {
+        components = text.isEmpty ? [] : [.text(text)]
+        selection = NSRange(location: (text as NSString).length, length: 0)
+    }
+
+    init(components: [ReplyComposerDocumentComponent], selection: NSRange) {
+        self.components = Self.normalized(components)
+        self.selection = selection
+    }
+
+    var markup: String {
+        components.map { component in
+            switch component {
+            case let .text(text): text
+            case let .emoji(emoji): emoji.markup
+            }
+        }.joined()
+    }
+
+    var isEmpty: Bool {
+        markup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var displayCharacterCount: Int {
+        components.reduce(0) { count, component in
+            switch component {
+            case let .text(text): count + text.trimmingCharacters(in: .whitespacesAndNewlines).count
+            case .emoji: count + 1
+            }
+        }
+    }
+
+    mutating func insert(emoji: ReplyComposerEmoji) {
+        let insertionOffset = max(0, min(selection.location, visualLength))
+        var remainingOffset = insertionOffset
+
+        for index in components.indices {
+            switch components[index] {
+            case let .text(text):
+                let length = (text as NSString).length
+                guard remainingOffset <= length else {
+                    remainingOffset -= length
+                    continue
+                }
+                let splitIndex = String.Index(utf16Offset: remainingOffset, in: text)
+                let prefix = String(text[..<splitIndex])
+                let suffix = String(text[splitIndex...])
+                components.replaceSubrange(index...index, with: [
+                    prefix.isEmpty ? nil : .text(prefix),
+                    .emoji(emoji),
+                    suffix.isEmpty ? nil : .text(suffix)
+                ].compactMap { $0 })
+                selection = NSRange(location: insertionOffset + 2, length: 0)
+                components = Self.normalized(components)
+                return
+            case .emoji:
+                guard remainingOffset > 0 else {
+                    components.insert(.emoji(emoji), at: index)
+                    selection = NSRange(location: insertionOffset + 2, length: 0)
+                    return
+                }
+                remainingOffset -= 2
+            }
+        }
+
+        components.append(.emoji(emoji))
+        selection = NSRange(location: visualLength, length: 0)
+    }
+
+    mutating func updateSelection(_ selection: NSRange) {
+        self.selection = NSRange(location: max(0, min(selection.location, visualLength)), length: 0)
+    }
+
+    var visualLength: Int {
+        components.reduce(0) { length, component in
+            switch component {
+            case let .text(text): length + (text as NSString).length
+            case .emoji: length + 2
+            }
+        }
+    }
+
+    private static func normalized(_ components: [ReplyComposerDocumentComponent]) -> [ReplyComposerDocumentComponent] {
+        components.reduce(into: []) { result, component in
+            switch component {
+            case let .text(text) where text.isEmpty:
+                break
+            case let .text(text):
+                if case let .text(previous)? = result.last {
+                    result[result.count - 1] = .text(previous + text)
+                } else {
+                    result.append(.text(text))
+                }
+            case .emoji:
+                result.append(component)
+            }
+        }
+    }
+}
+
 struct ReplyComposerRichTextEditor: UIViewRepresentable {
     private static let emojiAnchorCharacter = "\u{200B}"
     private static let emojiMarkupAttribute = NSAttributedString.Key("ForumHubEmojiMarkup")
-    @Binding var text: String
-    @Binding var pendingEmojiInsertion: NGAForumEmojiItem?
+    @Binding var document: ReplyComposerDocument
     @Binding var shouldFocus: Bool
     let isEditable: Bool
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, pendingEmojiInsertion: $pendingEmojiInsertion, shouldFocus: $shouldFocus)
+        Coordinator(document: $document, shouldFocus: $shouldFocus)
     }
 
     func makeUIView(context: Context) -> UITextView {
@@ -468,177 +597,41 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
         textView.textContainerInset = UIEdgeInsets(top: 12, left: 6, bottom: 12, right: 6)
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.typingAttributes = Coordinator.baseAttributes(for: textView.font ?? .preferredFont(forTextStyle: .body))
-        context.coordinator.attach(to: textView)
-        context.coordinator.synchronizeExternalMarkupIfNeeded(text, to: textView)
+        context.coordinator.synchronize(document, to: textView)
         return textView
     }
 
     func updateUIView(_ textView: UITextView, context: Context) {
         textView.isEditable = isEditable
         textView.isSelectable = true
-        context.coordinator.attach(to: textView)
-        context.coordinator.synchronizeExternalMarkupIfNeeded(text, to: textView)
-        context.coordinator.schedulePendingEmojiInsertionIfNeeded(into: textView)
+        context.coordinator.synchronize(document, to: textView)
         context.coordinator.updateFocusIfNeeded(for: textView)
     }
 
-    static func displayCharacterCount(from markup: String) -> Int {
-        let components = parseComponents(from: markup)
-        return components.reduce(0) { partial, component in
-            switch component {
-            case let .text(text):
-                return partial + text.trimmingCharacters(in: .whitespacesAndNewlines).count
-            case .emoji:
-                return partial + 1
-            }
-        }
-    }
-
-    private static let emojiPattern = #"\[img\](https://img4\.nga\.178\.com/ngabbs/post/smile/([^/\]]+))\[/img\]"#
-
-    static func parseComponents(from markup: String) -> [ReplyComposerComponent] {
-        guard let regex = try? NSRegularExpression(pattern: emojiPattern, options: [.caseInsensitive]) else {
-            return [.text(markup)]
-        }
-
-        let range = NSRange(markup.startIndex..<markup.endIndex, in: markup)
-        let matches = regex.matches(in: markup, range: range)
-        guard !matches.isEmpty else { return [.text(markup)] }
-
-        var components: [ReplyComposerComponent] = []
-        var cursor = markup.startIndex
-
-        for match in matches {
-            guard let matchRange = Range(match.range(at: 0), in: markup) else { continue }
-
-            if cursor < matchRange.lowerBound {
-                components.append(.text(String(markup[cursor..<matchRange.lowerBound])))
-            }
-
-            if let urlRange = Range(match.range(at: 1), in: markup),
-               let filenameRange = Range(match.range(at: 2), in: markup),
-               let imageURL = URL(string: String(markup[urlRange])),
-               let emoji = NGAForumEmojiItem(filename: String(markup[filenameRange]), imageURL: imageURL) {
-                components.append(.emoji(emoji))
-            } else {
-                components.append(.text(String(markup[matchRange])))
-            }
-
-            cursor = matchRange.upperBound
-        }
-
-        if cursor < markup.endIndex {
-            components.append(.text(String(markup[cursor...])))
-        }
-
-        return components
-    }
-
-    enum ReplyComposerComponent {
-        case text(String)
-        case emoji(NGAForumEmojiItem)
-    }
-
     final class Coordinator: NSObject, UITextViewDelegate {
-        private static let emojiInsertionRetryDelay: TimeInterval = 0.05
-        private static let maximumEmojiInsertionRetryCount = 12
-        @Binding private var text: String
-        @Binding private var pendingEmojiInsertion: NGAForumEmojiItem?
+        @Binding private var document: ReplyComposerDocument
         @Binding private var shouldFocus: Bool
-        private weak var textView: UITextView?
         private var isApplyingProgrammaticChange = false
-        private var hasInitializedTextView = false
-        private var scheduledEmojiInsertionID: String?
-        private var lastCommittedMarkup = ""
+        private var lastRenderedComponents: [ReplyComposerDocumentComponent]?
 
-        init(
-            text: Binding<String>,
-            pendingEmojiInsertion: Binding<NGAForumEmojiItem?>,
-            shouldFocus: Binding<Bool>
-        ) {
-            _text = text
-            _pendingEmojiInsertion = pendingEmojiInsertion
+        init(document: Binding<ReplyComposerDocument>, shouldFocus: Binding<Bool>) {
+            _document = document
             _shouldFocus = shouldFocus
         }
 
-        func attach(to textView: UITextView) {
-            self.textView = textView
-        }
-
-        func synchronizeExternalMarkupIfNeeded(_ markup: String, to textView: UITextView) {
-            guard !hasInitializedTextView || markup != lastCommittedMarkup else {
-                hasInitializedTextView = true
-                return
-            }
-
-            let selectedRange = textView.selectedRange
+        func synchronize(_ document: ReplyComposerDocument, to textView: UITextView) {
             let font = textView.font ?? .preferredFont(forTextStyle: .body)
-            isApplyingProgrammaticChange = true
-            textView.attributedText = attributedText(from: markup, font: font, textView: textView)
-            textView.typingAttributes = Self.baseAttributes(for: font)
-            textView.selectedRange = NSRange(location: min(selectedRange.location, textView.attributedText.length), length: 0)
-            isApplyingProgrammaticChange = false
-            hasInitializedTextView = true
-            lastCommittedMarkup = markup
-        }
-
-        func schedulePendingEmojiInsertionIfNeeded(into textView: UITextView) {
-            guard let emoji = pendingEmojiInsertion else {
-                scheduledEmojiInsertionID = nil
-                return
-            }
-            guard scheduledEmojiInsertionID != emoji.id else { return }
-
-            scheduledEmojiInsertionID = emoji.id
-            attemptEmojiInsertion(emoji, into: textView, attempt: 0)
-        }
-
-        private func performEmojiInsertion(_ emoji: NGAForumEmojiItem, into textView: UITextView) -> Bool {
-            guard textView.window != nil else { return false }
-
-            let mutable = NSMutableAttributedString(attributedString: textView.attributedText)
-            let insertionRange = textView.selectedRange
-            let font = textView.font ?? .preferredFont(forTextStyle: .body)
-            let replacement = NSMutableAttributedString(attributedString: Self.makeEmojiAttachment(for: emoji, font: font, textView: textView))
-            replacement.append(NSAttributedString(string: ReplyComposerRichTextEditor.emojiAnchorCharacter, attributes: Self.baseAttributes(for: font)))
-            mutable.replaceCharacters(in: insertionRange, with: replacement)
-
-            isApplyingProgrammaticChange = true
-            textView.attributedText = mutable
-            textView.typingAttributes = Self.baseAttributes(for: font)
-            let nextLocation = min(insertionRange.location + replacement.length, textView.attributedText.length)
-            textView.selectedRange = NSRange(location: nextLocation, length: 0)
-            isApplyingProgrammaticChange = false
-            return true
-        }
-
-        private func attemptEmojiInsertion(_ emoji: NGAForumEmojiItem, into textView: UITextView, attempt: Int) {
-            let work = { [weak self, weak textView] in
-                guard let self, let textView else { return }
-                guard self.pendingEmojiInsertion?.id == emoji.id else {
-                    self.scheduledEmojiInsertionID = nil
-                    return
-                }
-
-                if self.performEmojiInsertion(emoji, into: textView) {
-                    self.commitMarkup(from: textView)
-                    self.pendingEmojiInsertion = nil
-                    self.scheduledEmojiInsertionID = nil
-                    return
-                }
-
-                guard attempt < Self.maximumEmojiInsertionRetryCount else {
-                    self.scheduledEmojiInsertionID = nil
-                    return
-                }
-
-                self.attemptEmojiInsertion(emoji, into: textView, attempt: attempt + 1)
-            }
-
-            if attempt == 0 {
-                DispatchQueue.main.async(execute: work)
-            } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.emojiInsertionRetryDelay, execute: work)
+            if lastRenderedComponents != document.components {
+                isApplyingProgrammaticChange = true
+                textView.attributedText = attributedText(from: document, font: font, textView: textView)
+                textView.typingAttributes = Self.baseAttributes(for: font)
+                textView.selectedRange = boundedSelection(document.selection, textLength: textView.attributedText.length)
+                isApplyingProgrammaticChange = false
+                lastRenderedComponents = document.components
+            } else if textView.selectedRange != document.selection {
+                isApplyingProgrammaticChange = true
+                textView.selectedRange = boundedSelection(document.selection, textLength: textView.attributedText.length)
+                isApplyingProgrammaticChange = false
             }
         }
 
@@ -647,132 +640,99 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
             if !textView.isFirstResponder {
                 textView.becomeFirstResponder()
             }
-            DispatchQueue.main.async { [weak self] in
-                self?.shouldFocus = false
-            }
+            DispatchQueue.main.async { [weak self] in self?.shouldFocus = false }
         }
 
         func textViewDidChange(_ textView: UITextView) {
             guard !isApplyingProgrammaticChange else { return }
-            commitMarkup(from: textView)
+            commitDocument(from: textView)
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
             guard !isApplyingProgrammaticChange else { return }
             let adjustedLocation = adjustedCaretLocation(for: textView.selectedRange.location, in: textView.attributedText)
-            guard adjustedLocation != textView.selectedRange.location else { return }
-
-            isApplyingProgrammaticChange = true
-            textView.selectedRange = NSRange(location: adjustedLocation, length: 0)
-            isApplyingProgrammaticChange = false
+            if adjustedLocation != textView.selectedRange.location {
+                isApplyingProgrammaticChange = true
+                textView.selectedRange = NSRange(location: adjustedLocation, length: 0)
+                isApplyingProgrammaticChange = false
+            }
+            document.updateSelection(textView.selectedRange)
         }
 
-        func textView(
-            _ textView: UITextView,
-            shouldChangeTextIn range: NSRange,
-            replacementText: String
-        ) -> Bool {
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText: String) -> Bool {
             guard !isApplyingProgrammaticChange else { return true }
-
             let adjustedRange = adjustedEditingRange(for: range, replacementText: replacementText, in: textView.attributedText)
             guard adjustedRange != range else { return true }
 
             let font = textView.font ?? .preferredFont(forTextStyle: .body)
-            let replacement = NSAttributedString(string: replacementText, attributes: Self.baseAttributes(for: font))
             let mutable = NSMutableAttributedString(attributedString: textView.attributedText)
-            mutable.replaceCharacters(in: adjustedRange, with: replacement)
-
+            mutable.replaceCharacters(in: adjustedRange, with: NSAttributedString(string: replacementText, attributes: Self.baseAttributes(for: font)))
             isApplyingProgrammaticChange = true
             textView.attributedText = mutable
             textView.typingAttributes = Self.baseAttributes(for: font)
-            let nextLocation = min(adjustedRange.location + replacement.length, textView.attributedText.length)
-            textView.selectedRange = NSRange(location: nextLocation, length: 0)
+            textView.selectedRange = NSRange(location: min(adjustedRange.location + replacementText.utf16.count, textView.attributedText.length), length: 0)
             isApplyingProgrammaticChange = false
-            commitMarkup(from: textView)
+            commitDocument(from: textView)
             return false
         }
 
-        private func attributedText(from markup: String, font: UIFont, textView: UITextView) -> NSAttributedString {
+        private func attributedText(from document: ReplyComposerDocument, font: UIFont, textView: UITextView) -> NSAttributedString {
             let result = NSMutableAttributedString()
-            let baseAttributes = Self.baseAttributes(for: font)
-
-            for component in ReplyComposerRichTextEditor.parseComponents(from: markup) {
+            for component in document.components {
                 switch component {
                 case let .text(text):
-                    result.append(NSAttributedString(string: text, attributes: baseAttributes))
+                    result.append(NSAttributedString(string: text, attributes: Self.baseAttributes(for: font)))
                 case let .emoji(emoji):
                     result.append(Self.makeEmojiAttachment(for: emoji, font: font, textView: textView))
-                    result.append(NSAttributedString(string: ReplyComposerRichTextEditor.emojiAnchorCharacter, attributes: baseAttributes))
+                    result.append(NSAttributedString(string: ReplyComposerRichTextEditor.emojiAnchorCharacter, attributes: Self.baseAttributes(for: font)))
                 }
-            }
-
-            if result.length == 0 {
-                result.append(NSAttributedString(string: "", attributes: baseAttributes))
             }
             return result
         }
 
-        private func serialize(_ attributedText: NSAttributedString) -> String {
-            let fullRange = NSRange(location: 0, length: attributedText.length)
-            var result = ""
-
-            attributedText.enumerateAttributes(in: fullRange, options: []) { attributes, range, _ in
-                if let markup = attributes[ReplyComposerRichTextEditor.emojiMarkupAttribute] as? String {
-                    result += markup
+        private func commitDocument(from textView: UITextView) {
+            let fullRange = NSRange(location: 0, length: textView.attributedText.length)
+            var components: [ReplyComposerDocumentComponent] = []
+            textView.attributedText.enumerateAttributes(in: fullRange, options: []) { attributes, range, _ in
+                if let markup = attributes[ReplyComposerRichTextEditor.emojiMarkupAttribute] as? String,
+                   let emoji = ReplyComposerEmoji(markup: markup) {
+                    components.append(.emoji(emoji))
                 } else {
-                    result += attributedText.attributedSubstring(from: range).string
+                    let text = textView.attributedText.attributedSubstring(from: range).string
                         .replacingOccurrences(of: ReplyComposerRichTextEditor.emojiAnchorCharacter, with: "")
+                    components.append(.text(text))
                 }
             }
-
-            return result
+            document = ReplyComposerDocument(components: components, selection: textView.selectedRange)
+            lastRenderedComponents = document.components
         }
 
-        private func commitMarkup(from textView: UITextView) {
-            let serialized = serialize(textView.attributedText)
-            lastCommittedMarkup = serialized
-            text = serialized
-            hasInitializedTextView = true
+        private func boundedSelection(_ selection: NSRange, textLength: Int) -> NSRange {
+            NSRange(location: min(max(selection.location, 0), textLength), length: 0)
         }
 
         private func adjustedCaretLocation(for location: Int, in attributedText: NSAttributedString) -> Int {
-            let length = attributedText.length
-            guard length > 0, location < length else { return location }
-
-            if isEmojiAnchor(at: location, in: attributedText), hasEmojiAttachment(at: location - 1, in: attributedText) {
-                return min(location + 1, length)
-            }
-
-            return location
+            guard location < attributedText.length,
+                  isEmojiAnchor(at: location, in: attributedText),
+                  hasEmojiAttachment(at: location - 1, in: attributedText)
+            else { return location }
+            return min(location + 1, attributedText.length)
         }
 
-        private func adjustedEditingRange(
-            for range: NSRange,
-            replacementText: String,
-            in attributedText: NSAttributedString
-        ) -> NSRange {
+        private func adjustedEditingRange(for range: NSRange, replacementText: String, in attributedText: NSAttributedString) -> NSRange {
             guard replacementText.isEmpty, range.length == 1 else { return range }
-
-            let location = range.location
-            let length = attributedText.length
-            guard location >= 0, location < length else { return range }
-
-            if isEmojiAnchor(at: location, in: attributedText), hasEmojiAttachment(at: location - 1, in: attributedText) {
-                return NSRange(location: max(location - 1, 0), length: min(2, length - max(location - 1, 0)))
+            if isEmojiAnchor(at: range.location, in: attributedText), hasEmojiAttachment(at: range.location - 1, in: attributedText) {
+                return NSRange(location: max(0, range.location - 1), length: 2)
             }
-
-            if hasEmojiAttachment(at: location, in: attributedText),
-               isEmojiAnchor(at: location + 1, in: attributedText) {
-                return NSRange(location: location, length: min(2, length - location))
+            if hasEmojiAttachment(at: range.location, in: attributedText), isEmojiAnchor(at: range.location + 1, in: attributedText) {
+                return NSRange(location: range.location, length: 2)
             }
-
             return range
         }
 
         private func isEmojiAnchor(at location: Int, in attributedText: NSAttributedString) -> Bool {
             guard location >= 0, location < attributedText.length else { return false }
-            let substring = attributedText.attributedSubstring(from: NSRange(location: location, length: 1)).string
-            return substring == ReplyComposerRichTextEditor.emojiAnchorCharacter
+            return attributedText.attributedSubstring(from: NSRange(location: location, length: 1)).string == ReplyComposerRichTextEditor.emojiAnchorCharacter
         }
 
         private func hasEmojiAttachment(at location: Int, in attributedText: NSAttributedString) -> Bool {
@@ -781,20 +741,24 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
         }
 
         static func baseAttributes(for font: UIFont) -> [NSAttributedString.Key: Any] {
-            [
-                .font: font,
-                .foregroundColor: UIColor(PaperTheme.secondaryInk)
-            ]
+            [.font: font, .foregroundColor: UIColor(PaperTheme.secondaryInk)]
         }
 
-        private static func makeEmojiAttachment(for emoji: NGAForumEmojiItem, font: UIFont, textView: UITextView) -> NSAttributedString {
+        private static func makeEmojiAttachment(for emoji: ReplyComposerEmoji, font: UIFont, textView: UITextView) -> NSAttributedString {
             let attachment = NSTextAttachment()
             attachment.bounds = CGRect(x: 0, y: -4, width: font.lineHeight + 8, height: font.lineHeight + 8)
-            attachment.image = emoji.previewImage ?? placeholderEmojiImage(side: font.lineHeight + 8)
+            attachment.image = placeholderEmojiImage(side: font.lineHeight + 8)
             let result = NSMutableAttributedString(attachment: attachment)
             result.addAttribute(ReplyComposerRichTextEditor.emojiMarkupAttribute, value: emoji.markup, range: NSRange(location: 0, length: result.length))
-            if emoji.previewImage == nil {
-                loadEmojiImageIfNeeded(for: attachment, emoji: emoji, textView: textView)
+            Task {
+                if let image = try? await NGAImageLoader.load(url: emoji.imageURL) {
+                    await MainActor.run {
+                        attachment.image = image
+                        let range = NSRange(location: 0, length: textView.attributedText.length)
+                        textView.layoutManager.invalidateDisplay(forCharacterRange: range)
+                        textView.layoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+                    }
+                }
             }
             return result
         }
@@ -802,29 +766,11 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
         private static func placeholderEmojiImage(side: CGFloat) -> UIImage {
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side))
             return renderer.image { _ in
-                let rect = CGRect(origin: .zero, size: CGSize(width: side, height: side))
                 UIColor(PaperTheme.paperDeep).setFill()
-                UIBezierPath(roundedRect: rect, cornerRadius: 6).fill()
-
+                UIBezierPath(roundedRect: CGRect(origin: .zero, size: CGSize(width: side, height: side)), cornerRadius: 6).fill()
                 let config = UIImage.SymbolConfiguration(pointSize: side * 0.56, weight: .regular)
-                let image = UIImage(systemName: "face.smiling", withConfiguration: config)?
-                    .withTintColor(UIColor(PaperTheme.mutedText), renderingMode: .alwaysOriginal)
-                let imageRect = CGRect(x: side * 0.2, y: side * 0.2, width: side * 0.6, height: side * 0.6)
-                image?.draw(in: imageRect)
-            }
-        }
-
-        private static func loadEmojiImageIfNeeded(for attachment: NSTextAttachment, emoji: NGAForumEmojiItem, textView: UITextView) {
-            Task {
-                if let image = try? await NGAImageLoader.load(url: emoji.imageURL) {
-                    await MainActor.run {
-                        attachment.image = image
-                        let fullRange = NSRange(location: 0, length: textView.attributedText.length)
-                        textView.layoutManager.invalidateDisplay(forCharacterRange: fullRange)
-                        textView.layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
-                        textView.setNeedsDisplay()
-                    }
-                }
+                let image = UIImage(systemName: "face.smiling", withConfiguration: config)?.withTintColor(UIColor(PaperTheme.mutedText), renderingMode: .alwaysOriginal)
+                image?.draw(in: CGRect(x: side * 0.2, y: side * 0.2, width: side * 0.6, height: side * 0.6))
             }
         }
     }

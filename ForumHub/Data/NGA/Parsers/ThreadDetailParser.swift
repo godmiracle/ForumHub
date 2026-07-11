@@ -6,7 +6,9 @@ struct ThreadDetailParser {
             return nil
         }
 
-        if let thread = parseResultPosts(in: object, tid: tid, page: page) {
+        let userNamesByID = collectUserNames(in: object)
+
+        if let thread = parseResultPosts(in: object, tid: tid, page: page, userNamesByID: userNamesByID) {
             return thread
         }
 
@@ -16,7 +18,7 @@ struct ThreadDetailParser {
             .first { !$0.isEmpty } ?? "帖子 \(tid)"
 
         let posts = dictionaries
-            .compactMap { makeReply(from: $0) }
+            .compactMap { makeReply(from: $0, userNamesByID: userNamesByID) }
             .uniquedByID()
 
         guard !posts.isEmpty else {
@@ -44,7 +46,12 @@ struct ThreadDetailParser {
         )
     }
 
-    private static func parseResultPosts(in object: Any, tid: Int, page: Int) -> ForumThread? {
+    private static func parseResultPosts(
+        in object: Any,
+        tid: Int,
+        page: Int,
+        userNamesByID: [Int: String]
+    ) -> ForumThread? {
         guard let root = object as? [String: Any],
               let resultDictionaries = postDictionaries(from: root["result"])
         else {
@@ -55,7 +62,8 @@ struct ThreadDetailParser {
         let posts = result.enumerated().compactMap { index, dictionary in
             makeReply(
                 from: dictionary,
-                fallbackID: fallbackReplyID(tid: tid, page: page, index: index)
+                fallbackID: fallbackReplyID(tid: tid, page: page, index: index),
+                userNamesByID: userNamesByID
             )
         }
 
@@ -92,12 +100,12 @@ struct ThreadDetailParser {
 
     private static func postDictionaries(from result: Any?) -> [[String: Any]]? {
         if let dictionaries = result as? [[String: Any]] {
-            return dictionaries
+            return dictionaries.filter(isThreadPostDictionary)
         }
 
         if let dictionary = result as? [String: Any] {
             let keyedPosts = dictionary.compactMap { key, value -> (Int, [String: Any])? in
-                guard let nested = value as? [String: Any] else { return nil }
+                guard let nested = value as? [String: Any], isThreadPostDictionary(nested) else { return nil }
                 let sortKey = Int(key)
                     ?? int(for: ["lou", "floor", "position", "pid", "id", "post_id"], in: nested)
                     ?? Int.max
@@ -118,6 +126,17 @@ struct ThreadDetailParser {
         }
 
         return nil
+    }
+
+    /// `result` 同时包含真实楼层和引用等辅助字典；只有带 NGA 帖子身份字段的记录才可成为回帖。
+    nonisolated private static func isThreadPostDictionary(_ dictionary: [String: Any]) -> Bool {
+        if int(for: ["pid", "post_id"], in: dictionary) != nil {
+            return true
+        }
+
+        // 兼容少数以 `id` 表示帖子 ID 的响应，但引用元数据不会同时声明所属主题。
+        return int(for: ["id"], in: dictionary) != nil
+            && int(for: ["tid", "topic_id", "thread_id"], in: dictionary) != nil
     }
 
     private static func normalizedResultDictionaries(_ dictionaries: [[String: Any]], page: Int) -> [[String: Any]] {
@@ -172,11 +191,19 @@ struct ThreadDetailParser {
         return []
     }
 
-    private static func makeReply(from dictionary: [String: Any]) -> Reply? {
-        makeReply(from: dictionary, fallbackID: abs((string(for: ["content"], in: dictionary) ?? "").hashValue))
+    private static func makeReply(from dictionary: [String: Any], userNamesByID: [Int: String]) -> Reply? {
+        makeReply(
+            from: dictionary,
+            fallbackID: abs((string(for: ["content"], in: dictionary) ?? "").hashValue),
+            userNamesByID: userNamesByID
+        )
     }
 
-    private static func makeReply(from dictionary: [String: Any], fallbackID: Int) -> Reply? {
+    private static func makeReply(
+        from dictionary: [String: Any],
+        fallbackID: Int,
+        userNamesByID: [Int: String]
+    ) -> Reply? {
         guard let body = contentText(in: dictionary)?
             .structuredForumText,
             !body.isEmpty
@@ -185,11 +212,12 @@ struct ThreadDetailParser {
         }
 
         let validPostID = validPostID(in: dictionary)
+        let resolvedAuthor = authorName(in: dictionary, userNamesByID: userNamesByID)
 
         return Reply(
             id: validPostID ?? fallbackID,
             sourcePostID: validPostID,
-            author: authorName(in: dictionary) ?? "未知作者",
+            author: resolvedAuthor ?? "未知作者",
             createdAt: string(for: ["postdate", "timestamp", "created_at", "lastpost", "time"], in: dictionary) ?? "未知时间",
             body: body,
             avatarURL: avatarURL(in: dictionary),
@@ -197,17 +225,80 @@ struct ThreadDetailParser {
         )
     }
 
-    private static func authorName(in dictionary: [String: Any]) -> String? {
+    private static func authorName(in dictionary: [String: Any], userNamesByID: [Int: String]) -> String? {
         if let author = dictionary["author"] as? [String: Any],
            let username = string(for: ["username", "nickname", "name"], in: author)?.cleanedForumText,
            !username.isEmpty {
             return username
         }
 
-        return string(
+        if let direct = string(
             for: ["author", "author_name", "username", "postusername", "poster", "user_name", "nickname", "name"],
             in: dictionary
-        )?.cleanedForumText
+        )?.cleanedForumText,
+           direct.isUsefulForumValue {
+           return direct
+        }
+
+        for key in ["user", "author_info", "poster_info", "userInfo"] {
+            if let nested = dictionary[key] as? [String: Any],
+               let name = authorName(in: nested, userNamesByID: userNamesByID) {
+                return name
+            }
+        }
+
+        return authorID(in: dictionary).flatMap { userNamesByID[$0] }
+    }
+
+    private static func authorID(in dictionary: [String: Any]) -> Int? {
+        if let author = dictionary["author"] as? [String: Any],
+           let id = int(for: ["uid", "id", "authorid", "author_id"], in: author) {
+            return id
+        }
+        for key in ["user", "author_info", "poster_info", "userInfo"] {
+            if let nested = dictionary[key] as? [String: Any],
+               let id = int(for: ["uid", "id", "authorid", "author_id"], in: nested) {
+                return id
+            }
+        }
+        return int(for: ["uid", "authorid", "author_id", "user_id", "posterid"], in: dictionary)
+    }
+
+    private static func collectUserNames(in object: Any) -> [Int: String] {
+        var names: [Int: String] = [:]
+
+        if let dictionary = object as? [String: Any] {
+            if let id = int(for: ["uid", "id"], in: dictionary),
+               let name = string(for: ["username", "nickname", "name"], in: dictionary)?.cleanedForumText,
+               name.isUsefulForumValue {
+                names[id] = name
+            }
+
+            if let users = dictionary["__U"] as? [String: Any] {
+                for (key, value) in users {
+                    guard let user = value as? [String: Any],
+                          let id = int(for: ["uid", "id"], in: user) ?? Int(key),
+                          let name = string(for: ["username", "nickname", "name"], in: user)?.cleanedForumText,
+                          name.isUsefulForumValue
+                    else { continue }
+                    names[id] = name
+                }
+            }
+
+            for value in dictionary.values {
+                for (id, name) in collectUserNames(in: value) where names[id] == nil {
+                    names[id] = name
+                }
+            }
+        } else if let array = object as? [Any] {
+            for value in array {
+                for (id, name) in collectUserNames(in: value) where names[id] == nil {
+                    names[id] = name
+                }
+            }
+        }
+
+        return names
     }
 
     private static func validPostID(in dictionary: [String: Any]) -> Int? {
@@ -288,7 +379,7 @@ struct ThreadDetailParser {
         return nil
     }
 
-    private static func int(for keys: [String], in dictionary: [String: Any]) -> Int? {
+    nonisolated private static func int(for keys: [String], in dictionary: [String: Any]) -> Int? {
         for key in keys {
             if let value = dictionary[key] as? Int {
                 return value

@@ -329,15 +329,13 @@ struct NGALiveThreadRepository: ThreadRepository {
         let uploadedAttachments = try await uploadAttachments(attachments, context: context)
         let url = URL(string: "https://bbs.nga.cn/post.php")!
         let composedContent = composedPostContent(trimmedContent, context: context)
-        var form = [
-            "step": "2",
-            "action": context.action.rawValue,
-            "tid": "\(tid)",
-            "fid": "\(context.fid)",
-            "post_content": composedContent,
-            "lite": "js",
-            "__inchst": "UTF8"
-        ]
+        var form = NGAReplySubmissionForm.make(
+            action: context.action.rawValue,
+            tid: tid,
+            fid: context.fid,
+            content: composedContent,
+            auth: context.auth
+        )
         if case let .reply(targetReply) = target,
            let sourcePostID = targetReply.sourcePostID {
             form["pid"] = "\(sourcePostID)"
@@ -825,7 +823,9 @@ private enum NGAThreadParseQuality {
 enum NGAThreadDetailMerger {
     nonisolated static func merge(apiThread: ForumThread, webThread: ForumThread) -> ForumThread {
         let resolvedBody = mergedBody(apiBody: apiThread.body, webBody: webThread.body)
-        let resolvedReplies = mergedReplies(apiReplies: apiThread.replies, webReplies: webThread.replies)
+        // 网页正则会命中引用区块，不能把它当作楼层数据源。
+        // API 已成功解析时，帖子身份、顺序和作者均必须以 API 回帖集合为准。
+        let resolvedReplies = apiThread.replies
 
         return ForumThread(
             id: apiThread.id,
@@ -892,36 +892,37 @@ enum NGAThreadDetailMerger {
             .lowercased()
     }
 
-    private nonisolated static func mergedReplies(
-        apiReplies: [Reply],
-        webReplies: [Reply]
-    ) -> [Reply] {
-        var merged = apiReplies
-        for reply in webReplies where !merged.contains(where: { existingReply in
-            existingReply.id == reply.id
-                || existingReply.signatureKey == reply.signatureKey
-                || isSameReplyWithIncompleteWebMetadata(existingReply, reply)
-        }) {
-            merged.append(reply)
-        }
-        return merged
-    }
-
-    private nonisolated static func isSameReplyWithIncompleteWebMetadata(
-        _ apiReply: Reply,
-        _ webReply: Reply
-    ) -> Bool {
-        guard normalized(apiReply.body) == normalized(webReply.body) else { return false }
-
-        return !webReply.author.isUsefulForumValue
-            || !webReply.createdAt.isUsefulForumValue
-            || apiReply.author.caseInsensitiveCompare(webReply.author) == .orderedSame
-    }
 }
 
 private enum NGAReplyPostAction: String {
     case reply
     case quote
+}
+
+enum NGAReplySubmissionForm {
+    static func make(
+        action: String,
+        tid: Int,
+        fid: Int,
+        content: String,
+        auth: String?
+    ) -> [String: String] {
+        var form = [
+            "step": "2",
+            "action": action,
+            "tid": "\(tid)",
+            "fid": "\(fid)",
+            "post_content": content,
+            "lite": "js",
+            "__inchst": "UTF8",
+            "__output": "14"
+        ]
+
+        if let auth = auth?.trimmingCharacters(in: .whitespacesAndNewlines), !auth.isEmpty {
+            form["auth"] = auth
+        }
+        return form
+    }
 }
 
 private struct NGAReplyContext {

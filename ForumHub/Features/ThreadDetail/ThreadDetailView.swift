@@ -99,14 +99,14 @@ struct ThreadDetailView: View {
     private var isUpdatingFavorite: Bool { get { actionState.isUpdatingFavorite } nonmutating set { actionState.isUpdatingFavorite = newValue } }
     private var showsReplyComposer: Bool { get { actionState.showsReplyComposer } nonmutating set { actionState.showsReplyComposer = newValue } }
     private var replyTarget: ThreadReplyTarget { get { actionState.replyTarget } nonmutating set { actionState.replyTarget = newValue } }
-    private var replyText: String { get { actionState.replyText } nonmutating set { actionState.replyText = newValue } }
+    private var replyDocument: ReplyComposerDocument { get { actionState.replyDocument } nonmutating set { actionState.replyDocument = newValue } }
     private var replyAttachments: [ReplyComposerAttachment] { get { actionState.replyAttachments } nonmutating set { actionState.replyAttachments = newValue } }
     private var isSubmittingReply: Bool { get { actionState.isSubmittingReply } nonmutating set { actionState.isSubmittingReply = newValue } }
     private var replyErrorMessage: String? { get { actionState.replyErrorMessage } nonmutating set { actionState.replyErrorMessage = newValue } }
     private var replySuccessMessage: String? { get { actionState.replySuccessMessage } nonmutating set { actionState.replySuccessMessage = newValue } }
 
     private var replyTargetBinding: Binding<ThreadReplyTarget> { Binding(get: { actionState.replyTarget }, set: { actionState.replyTarget = $0 }) }
-    private var replyTextBinding: Binding<String> { Binding(get: { actionState.replyText }, set: { actionState.replyText = $0 }) }
+    private var replyDocumentBinding: Binding<ReplyComposerDocument> { Binding(get: { actionState.replyDocument }, set: { actionState.replyDocument = $0 }) }
     private var replyAttachmentsBinding: Binding<[ReplyComposerAttachment]> { Binding(get: { actionState.replyAttachments }, set: { actionState.replyAttachments = $0 }) }
     private var showsReplyComposerBinding: Binding<Bool> { Binding(get: { actionState.showsReplyComposer }, set: { actionState.showsReplyComposer = $0 }) }
 
@@ -412,7 +412,7 @@ struct ThreadDetailView: View {
                 source: repository.source,
                 capabilities: repository.capabilities,
                 target: replyTargetBinding,
-                text: replyTextBinding,
+                document: replyDocumentBinding,
                 attachments: replyAttachmentsBinding,
                 isSubmitting: isSubmittingReply,
                 onCancel: {
@@ -652,7 +652,16 @@ struct ThreadDetailView: View {
     }
 
     private func refreshDetail() async {
-        _ = await detailViewModel.refresh(thread: thread, repository: repository)
+        guard await detailViewModel.refresh(thread: thread, repository: repository) else { return }
+        guard supportsDirectPagination, currentPage < totalPageCount else { return }
+
+        // 刷新会复用已显示的楼层 View，末尾楼层的 onAppear 不会再次触发。
+        // 因此在刷新完成后重新执行一次与末尾楼层相同的连续分页决策。
+        await Task.yield()
+        refreshDisplayedReplyCache()
+        if let lastEntry = displayedReplyEntries.last {
+            handleReplyEntryAppear(lastEntry)
+        }
     }
 
     @discardableResult

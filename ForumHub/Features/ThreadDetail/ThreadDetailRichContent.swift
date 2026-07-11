@@ -32,14 +32,56 @@ struct ForumRichContentView: View {
                         .lineSpacing(fontSize >= 18 ? 6 : 5)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case let .image(url):
-                    InteractiveForumImage(
-                        url: url,
-                        activeGIFPlaybackImageIDs: activeGIFPlaybackImageIDs,
-                        scrollTrackingSpaceName: scrollTrackingSpaceName
-                    )
+                    if ForumImageURLResolver.isNGAForumEmoji(url) {
+                        InlineNGAForumEmoji(url: url)
+                    } else {
+                        InteractiveForumImage(
+                            url: url,
+                            activeGIFPlaybackImageIDs: activeGIFPlaybackImageIDs,
+                            scrollTrackingSpaceName: scrollTrackingSpaceName
+                        )
+                    }
                 case let .quote(quote):
                     ForumQuoteBlockCard(quote: quote, fontSize: fontSize)
                 }
+            }
+        }
+    }
+}
+
+private struct InlineNGAForumEmoji: View {
+    let url: URL
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 88, height: 88, alignment: .leading)
+            } else if failed {
+                Image(systemName: "face.smiling")
+                    .font(.title2)
+                    .foregroundStyle(PaperTheme.mutedText)
+                    .frame(width: 44, height: 44)
+            } else {
+                ProgressView()
+                    .tint(PaperTheme.mutedText)
+                    .frame(width: 44, height: 44)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityLabel("NGA 表情")
+        .task(id: url) {
+            do {
+                image = try await NGAImageLoader.load(url: url)
+            } catch is CancellationError {
+                return
+            } catch {
+                failed = true
             }
         }
     }

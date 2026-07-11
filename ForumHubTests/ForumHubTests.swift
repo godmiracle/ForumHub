@@ -13,6 +13,35 @@ struct ForumHubTests {
         return url
     }
 
+    @Test func replyComposerDocumentInsertsEmojiAsStructuredContentAndSerializesForNGA() {
+        var document = ReplyComposerDocument(text: "前后")
+        document.updateSelection(NSRange(location: 1, length: 0))
+        let emoji = ReplyComposerEmoji(
+            NGAForumEmojiItem(group: .ng, displayName: "1", filename: "ng_1.png")
+        )
+
+        document.insert(emoji: emoji)
+
+        #expect(document.markup == "前[img]https://img4.nga.178.com/ngabbs/post/smile/ng_1.png[/img]后")
+        #expect(document.displayCharacterCount == 3)
+        #expect(document.selection == NSRange(location: 3, length: 0))
+        #expect(!document.isEmpty)
+    }
+
+    @Test func ngaReplySubmissionFormIncludesServerIssuedAuthToken() {
+        let form = NGAReplySubmissionForm.make(
+            action: "reply",
+            tid: 1001,
+            fid: -7,
+            content: "[img]https://img4.nga.178.com/ngabbs/post/smile/ng_1.png[/img]",
+            auth: "server-issued-auth"
+        )
+
+        #expect(form["auth"] == "server-issued-auth")
+        #expect(form["post_content"] == "[img]https://img4.nga.178.com/ngabbs/post/smile/ng_1.png[/img]")
+        #expect(form["__output"] == "14")
+    }
+
     @Test func forumErrorClassifiesTransportAndProviderFailures() {
         #expect(ForumError.resolve(URLError(.notConnectedToInternet)) == .offline)
         #expect(ForumError.resolve(URLError(.timedOut)) == .timeout)
@@ -230,6 +259,70 @@ struct ForumHubTests {
         })
     }
 
+    @Test func threadDetailParserResolvesContinuationAuthorFromUserDirectory() throws {
+        let json = """
+        {
+          "result": [
+            {
+              "pid": 3002,
+              "tid": 3001,
+              "lou": 29,
+              "authorid": 7788,
+              "postdate": "2026-07-11 23:07",
+              "content": "后续楼层"
+            }
+          ],
+          "__U": {
+            "7788": { "uid": 7788, "username": "后续作者" }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let continuation = try #require(ThreadDetailParser.parse(
+            data: json,
+            fallbackText: String(decoding: json, as: UTF8.self),
+            tid: 3001,
+            page: 2
+        ))
+
+        #expect(continuation.replies.first?.author == "后续作者")
+    }
+
+    @Test func threadDetailParserResolvesContinuationAuthorFromNestedUserProfile() throws {
+        let json = """
+        {
+          "result": [
+            {
+              "pid": 3102,
+              "tid": 3101,
+              "lou": 29,
+              "postdate": "2026-07-11 23:07",
+              "user": { "uid": 8899, "nickname": "嵌套作者" },
+              "content": "后续楼层"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let continuation = try #require(ThreadDetailParser.parse(
+            data: json,
+            fallbackText: String(decoding: json, as: UTF8.self),
+            tid: 3101,
+            page: 2
+        ))
+
+        #expect(continuation.replies.first?.author == "嵌套作者")
+    }
+
+    @Test func forumImageURLResolverRecognizesNGASmileAssets() {
+        #expect(ForumImageURLResolver.isNGAForumEmoji(
+            testURL("https://img4.nga.178.com/ngabbs/post/smile/ng_1.png")
+        ))
+        #expect(!ForumImageURLResolver.isNGAForumEmoji(
+            testURL("https://img.nga.178.com/attachments/mon_202607/example.jpg")
+        ))
+    }
+
     @Test func ngaAvatarResolverUpgradesKnownHTTPAvatarHost() {
         let url = ForumAvatarResolver.ngaAvatarURL(
             from: "http://img.nga.178.com/avatars/example.jpg?size=small"
@@ -312,7 +405,7 @@ struct ForumHubTests {
         #expect(thread.replies.count == 1)
     }
 
-    @Test func ngaThreadMergerSupplementsAPIContentWithoutReplacingOrDuplicating() throws {
+    @Test func ngaThreadMergerSupplementsAPIContentWithoutCreatingWebReplies() throws {
         let bundle = Bundle(for: FixtureLocator.self)
         let apiURL = try #require(
             bundle.url(forResource: "nga-thread-api-incomplete", withExtension: "json", subdirectory: "Fixtures")
@@ -341,7 +434,7 @@ struct ForumHubTests {
             if case let .image(url) = block.content { return url }
             return nil
         }.count == 2)
-        #expect(merged.replies.map(\.body) == ["API 已有回复", "网页补充回复"])
+        #expect(merged.replies.map(\.body) == ["API 已有回复"])
     }
 
     @Test func forumImageURLResolverUpgradesTrustedNGAHTTPOnly() throws {
@@ -656,6 +749,38 @@ struct ForumHubTests {
         #expect(page.replies.map(\.id) == [301, 302])
         #expect(page.replies.map(\.body) == ["第二页第一条", "第二页第二条"])
         #expect(page.replies.map(\.floorNumber) == [21, 22])
+    }
+
+    @Test func threadDetailParserDoesNotTurnQuoteMetadataIntoAReply() throws {
+        let json = """
+        {
+          "code": 0,
+          "result": {
+            "0": {
+              "pid": 401,
+              "tid": 100,
+              "lou": 32,
+              "author": { "username": "真实回复者" },
+              "content": "实际的第 32 楼"
+            },
+            "__R": {
+              "lou": 28,
+              "content": "这是引用元数据，不是独立楼层"
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let page = try #require(ThreadDetailParser.parse(
+            data: json,
+            fallbackText: String(decoding: json, as: UTF8.self),
+            tid: 100,
+            page: 2
+        ))
+
+        #expect(page.replies.map(\.id) == [401])
+        #expect(page.replies.map(\.author) == ["真实回复者"])
+        #expect(page.replies.map(\.body) == ["实际的第 32 楼"])
     }
 
     @Test func paginationMergerDropsRepeatedMainPostAndDuplicateReplies() {

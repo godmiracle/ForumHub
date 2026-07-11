@@ -7,7 +7,7 @@ final class ThreadDetailActionState {
     var isUpdatingFavorite = false
     var showsReplyComposer = false
     var replyTarget: ThreadReplyTarget = .thread
-    var replyText = ""
+    var replyDocument = ReplyComposerDocument()
     var replyAttachments: [ReplyComposerAttachment] = []
     var isSubmittingReply = false
     var replyErrorMessage: String?
