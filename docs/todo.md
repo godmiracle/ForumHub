@@ -12,7 +12,7 @@
 
 ## 当前执行顺序
 
-1. 其余事项仅在前置条件满足后启动。
+1. 其余条件事项仅在前置条件满足后启动。
 
 ---
 
@@ -103,11 +103,11 @@
     - `body` 改为只读计算投影或决定保留并记录原因；
     - 全量相关测试与真机关键路径通过。
 
-- [ ] **SD-2.3 独立评估 `ThreadSummary` 与 `ThreadDetail` 分离**
+- [x] **SD-2.3 独立评估 `ThreadSummary` 与 `ThreadDetail` 分离**
   - 具体问题：`ForumThread` 同时承载摘要和详情形态，但拆分可能扩大导航、收藏、历史和 Fixture 迁移面。
   - 涉及文件或模块：Domain、Repository、Navigation、Feed、Search、ThreadDetail、Persistence
   - 优先级：P2
-  - 状态：待评估，不与 `SD-2.2` 同时实施。
+  - 状态：评估完成并在 ADR-012 否决当前拆分。三个数据源 Repository、Feed、Search、导航、详情分页和本地快照均共享 `ForumThread`，而已发生的摘要/详情误用已由 placeholder、`canonicalThread` 和 `ForumPostDocument` 权威来源修复并覆盖测试。当前没有离线详情缓存或新的类型误用证据，拆分成本高于收益；仅在 ADR 定义的触发条件出现时重审。
   - 验收标准：
     - 用已发生缺陷或新增缓存需求证明拆分价值；
     - 明确分页结果、聚合详情和持久化快照的边界；
@@ -233,11 +233,11 @@
 
 ## 阶段 7：其他 Feature 按缺陷迁移
 
-- [ ] **SD-7.1 为持久化增加版本、损坏降级和迁移测试**
+- [x] **SD-7.1 为持久化增加版本、损坏降级和迁移测试**
   - 具体问题：本地 Store 尚未统一表达 schema version、损坏降级和未来迁移规则。
   - 涉及文件或模块：Favorites、History、BlockedUsers、ChannelSubscription、Settings、Session 边界
   - 优先级：P2
-  - 状态：待处理；iCloud 继续禁用。
+  - 状态：已完成；Favorites、History、BlockedUsers 使用 v1 `{ version, payload }` 信封并自动迁移旧裸数组，损坏或不支持的快照降级为空；ChannelSubscription 增加独立 schema version 并清洗非法来源键。标量 Settings 保留类型化默认回退，Session 的 Token/Cookie/Keychain 不进入用户内容迁移，iCloud 继续禁用。完整 `ForumHubTests` 已在真机通过。
   - 验收标准：
     - 用户内容 Store 具有明确版本和损坏降级；
     - 旧数据迁移测试通过；

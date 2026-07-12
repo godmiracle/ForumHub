@@ -26,6 +26,9 @@ It includes:
 - Local persistence is currently the source of truth for favorites, blocked users, browsing history, and subscribed channel order.
 - Session-like credentials should stay in Keychain or cookie stores rather than plain defaults.
 - Persistence is source-aware so different communities do not collide on the same IDs or usernames.
+- Favorites, history, and blocked users use a versioned `{ version, payload }` JSON envelope. Legacy raw arrays migrate in place; corrupt or unsupported snapshots degrade to an empty local state.
+- Channel subscriptions keep their property-list representation, record an independent schema version, and discard malformed source/native keys while restoring.
+- Scalar settings use their existing typed/default fallback and are not forced into the JSON envelope.
 - Sync hooks exist conceptually, but iCloud-backed sync is currently disabled.
 
 ## Current Persisted Concerns
@@ -51,4 +54,4 @@ It includes:
 - Local-only state can be lost on uninstall or device change.
 - If sync is added later, migration rules must be explicit for favorites, blocked users, and subscriptions.
 - Auth/session state and user-content state should not be merged into one generic sync mechanism.
-
+- Schema changes require an explicit migration test; Codable synthesis alone is not a migration policy.

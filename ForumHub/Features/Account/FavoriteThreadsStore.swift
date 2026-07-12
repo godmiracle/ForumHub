@@ -57,13 +57,21 @@ final class FavoriteThreadsStore {
     private(set) var entries: [SavedForumThread]
     private let defaults: UserDefaults
     private let storageKey = "favorite-forum-threads-v1"
+    private let schemaVersion = 1
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if let data = defaults.data(forKey: storageKey),
-           let snapshot = try? JSONDecoder().decode([SavedForumThread].self, from: data) {
+        switch VersionedLocalSnapshotCodec.decode(
+            [SavedForumThread].self,
+            data: defaults.data(forKey: storageKey),
+            currentVersion: schemaVersion
+        ) {
+        case let .current(snapshot):
             entries = snapshot.sorted { $0.savedAt > $1.savedAt }
-        } else {
+        case let .legacy(snapshot):
+            entries = snapshot.sorted { $0.savedAt > $1.savedAt }
+            persist()
+        case .missing, .unavailable:
             entries = []
         }
     }
@@ -99,7 +107,7 @@ final class FavoriteThreadsStore {
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
+        guard let data = VersionedLocalSnapshotCodec.encode(entries, version: schemaVersion) else { return }
         defaults.set(data, forKey: storageKey)
     }
 }

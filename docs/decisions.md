@@ -272,6 +272,66 @@ Accepted
 - 帖子身份判断不受内容更新影响，仍由各调用点显式使用 `source + id`
 - 新增字段会自动参与合成的内容相等，需要确保字段本身遵循 `Equatable`
 
+## ADR-012 Defer Splitting Thread Summary And Detail Models
+
+### Status
+
+Rejected for the current migration
+
+### Date
+
+2026-07
+
+### Context
+
+`ForumThread` 当前同时经过三个数据源 Repository、Feed、Search、导航、收藏、历史和帖子详情分页。摘要进入详情页后，`ThreadDetailContentState` 会先构造不含正文的 placeholder，再由 `fetchThread` 返回的完整内容替换，并单独保存 `canonicalThread`。此前“列表摘要被当作主楼正文”的真实缺陷已经通过该边界和 `ForumPostDocument` 权威来源修复并覆盖测试。
+
+拆分为 `ThreadSummary` 和 `ThreadDetail` 会同时修改 `ThreadRepository`、所有 Mapper、导航参数、详情加载入口、Mock/Fixture 以及收藏和历史恢复路径。目前没有离线详情缓存、摘要/详情独立持久化或仍无法由现有边界阻止的类型误用，因此缺少足以承担这次迁移成本的收益证据。
+
+### Decision
+
+当前不创建 `ThreadSummary` 或 `ThreadDetail` 新类型，继续使用 `ForumThread` 作为共享传输模型。列表摘要不得作为主楼正文、详情正文以 `ForumPostDocument` 为权威、身份判断显式使用 `source + id`，这些约束继续由现有状态边界和测试保证。
+
+只有出现以下至少一种新证据时才重新评估：
+
+- 引入需要独立 schema 和生命周期的离线详情缓存；
+- 两个以上调用点再次发生摘要与详情形态误用，且现有接缝无法在编译期或测试中可靠阻止；
+- Repository 需要分别暴露摘要流和可独立分页的详情聚合对象。
+
+### Consequences
+
+- 避免当前阶段横跨所有数据源、导航和持久化的大面积类型迁移
+- 保留现有 Repository 和 Feature 接口，既有 Fixture 无需机械重写
+- 摘要与详情的形态差异仍是运行期约束，后续必须维持 placeholder、内容权威来源和对应回归测试
+- 若未来触发重新评估，应先选择单一数据源和单一详情入口做垂直试点
+
+## ADR-013 Version User Content Separately From Authentication State
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+收藏、历史和屏蔽用户此前直接把 Codable 数组写入 UserDefaults，缺少显式 schema version；解码失败只能退回空状态，也无法区分旧裸数组和未来版本。频道订阅使用多组 property-list 键，已有来源迁移但没有统一版本标记和损坏键清洗。认证凭证则分别由 Keychain 和 Cookie Store 管理，生命周期与普通用户内容不同。
+
+### Decision
+
+收藏、历史和屏蔽用户使用包含 `version` 与 `payload` 的本地快照信封，当前版本为 1；读取时兼容旧裸数组并就地升级，损坏或不支持的快照安全降级为空状态。频道订阅保留现有多键格式，增加独立 schema version，并在恢复时丢弃未知来源或缺少 native key 的条目。
+
+数据源选择和网页登录完成标记等单值 Settings 继续使用标量 UserDefaults，由枚举解析或默认值处理非法数据，不套用 JSON 信封。Token、Cookie、密码及账号会话不得进入用户内容快照，继续由 Session 层的 Keychain/Cookie 接缝管理。iCloud 同步保持禁用。
+
+### Consequences
+
+- 旧收藏、历史和屏蔽数据首次读取后自动迁移，不更换存储键
+- 损坏内容不会导致启动失败，也不会让更旧的屏蔽名单意外复活
+- 每个持久化类别可以独立演进 schema，不把认证凭证混入通用迁移
+- 未来增加版本时必须显式实现迁移，不能假定 Codable 自动兼容
+
 ## Template
 
 Use this structure for future decisions:

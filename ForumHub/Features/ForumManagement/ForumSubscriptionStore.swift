@@ -22,12 +22,17 @@ final class ForumSubscriptionStore {
     private let orderStorageKey = "subscribed-forum-channel-order-v1"
     private let migrationKey = "forum-subscriptions-defaults-v2"
     private let v2exHotMigrationKey = "forum-subscriptions-v2ex-hot-default-v1"
+    private let schemaVersionKey = "forum-subscriptions-schema-version"
+    private let schemaVersion = 1
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
-        if let savedKeys = defaults.stringArray(forKey: sourceStorageKey), !savedKeys.isEmpty {
-            subscribedChannelKeys = Set(savedKeys)
+        if let savedKeys = defaults.stringArray(forKey: sourceStorageKey) {
+            let validKeys = savedKeys.filter(Self.isValidChannelKey)
+            subscribedChannelKeys = validKeys.isEmpty
+                ? Set(Self.defaultChannelIDs.map { "nga:\($0)" })
+                : Set(validKeys)
         } else if let savedIDs = defaults.array(forKey: storageKey)?
             .compactMap({ ($0 as? NSNumber)?.intValue }), !savedIDs.isEmpty {
             var restoredIDs = Set(savedIDs)
@@ -43,13 +48,14 @@ final class ForumSubscriptionStore {
             subscribedChannelKeys = Set(Self.defaultChannelIDs.map { "nga:\($0)" })
         }
 
-        if let savedOrder = defaults.stringArray(forKey: orderStorageKey), !savedOrder.isEmpty {
-            orderedChannelKeys = savedOrder
+        if let savedOrder = defaults.stringArray(forKey: orderStorageKey) {
+            orderedChannelKeys = savedOrder.filter(Self.isValidChannelKey)
         } else {
             orderedChannelKeys = Self.defaultChannelOrder.map { "nga:\($0)" }
         }
 
         defaults.set(true, forKey: migrationKey)
+        defaults.set(schemaVersion, forKey: schemaVersionKey)
         normalizeOrder()
         persist()
     }
@@ -190,6 +196,13 @@ final class ForumSubscriptionStore {
 
         let missingKeys = subscribedChannelKeys.subtracting(seen).sorted()
         orderedChannelKeys.append(contentsOf: missingKeys)
+    }
+
+    private static func isValidChannelKey(_ key: String) -> Bool {
+        guard let separator = key.firstIndex(of: ":"),
+              ForumSource(rawValue: String(key[..<separator])) != nil
+        else { return false }
+        return !key[key.index(after: separator)...].isEmpty
     }
 
     private func preferredDefaultChannels(for channels: [ForumChannel]) -> [ForumChannel] {

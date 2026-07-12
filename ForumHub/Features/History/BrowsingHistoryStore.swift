@@ -57,13 +57,21 @@ final class BrowsingHistoryStore {
     private(set) var entries: [BrowsingHistoryEntry]
     private let defaults: UserDefaults
     private let storageKey = "forum-browsing-history-v1"
+    private let schemaVersion = 1
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if let data = defaults.data(forKey: storageKey),
-           let savedEntries = try? JSONDecoder().decode([BrowsingHistoryEntry].self, from: data) {
+        switch VersionedLocalSnapshotCodec.decode(
+            [BrowsingHistoryEntry].self,
+            data: defaults.data(forKey: storageKey),
+            currentVersion: schemaVersion
+        ) {
+        case let .current(savedEntries):
             entries = savedEntries
-        } else {
+        case let .legacy(savedEntries):
+            entries = savedEntries
+            persist()
+        case .missing, .unavailable:
             entries = []
         }
     }
@@ -82,7 +90,7 @@ final class BrowsingHistoryStore {
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
+        guard let data = VersionedLocalSnapshotCodec.encode(entries, version: schemaVersion) else { return }
         defaults.set(data, forKey: storageKey)
     }
 }

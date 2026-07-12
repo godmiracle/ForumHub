@@ -17,20 +17,35 @@ final class BlockedUsersStore {
     private let defaults: UserDefaults
     private let storageKey = "blocked-forum-users-v2"
     private let legacyStorageKey = "blocked-forum-usernames"
+    private let schemaVersion = 1
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if let data = defaults.data(forKey: storageKey),
-           let decoded = try? JSONDecoder().decode([BlockedForumUser].self, from: data) {
+        let decodeResult = VersionedLocalSnapshotCodec.decode(
+            [BlockedForumUser].self,
+            data: defaults.data(forKey: storageKey),
+            currentVersion: schemaVersion
+        )
+        let needsMigration: Bool
+        switch decodeResult {
+        case let .current(decoded):
             blockedUsers = decoded
-        } else {
+            needsMigration = false
+        case let .legacy(decoded):
+            blockedUsers = decoded
+            needsMigration = true
+        case .missing:
             blockedUsers = (defaults.stringArray(forKey: legacyStorageKey) ?? [])
                 .filter(\.isBlockableForumUsername)
                 .uniquedCaseInsensitive()
                 .map { BlockedForumUser(source: .nga, username: $0) }
+            needsMigration = !blockedUsers.isEmpty
+        case .unavailable:
+            blockedUsers = []
+            needsMigration = false
         }
         sort()
-        persist()
+        if needsMigration { persist() }
     }
 
     func isBlocked(source: ForumSource, username: String) -> Bool {
@@ -66,7 +81,10 @@ final class BlockedUsersStore {
     }
 
     private func persist() {
-        defaults.set(try? JSONEncoder().encode(blockedUsers), forKey: storageKey)
+        defaults.set(
+            VersionedLocalSnapshotCodec.encode(blockedUsers, version: schemaVersion),
+            forKey: storageKey
+        )
     }
 
     private func sort() {

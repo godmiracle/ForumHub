@@ -706,6 +706,20 @@ struct ForumHubTests {
         let subscriptions = ForumSubscriptionStore(defaults: defaults)
 
         #expect(subscriptions.subscribedIDs == [-7, 706, -7_955_747, 436])
+        #expect(defaults.integer(forKey: "forum-subscriptions-schema-version") == 1)
+    }
+
+    @Test func forumSubscriptionsDiscardMalformedSourceKeys() throws {
+        let suiteName = "ForumHubTests.forum-subscriptions-corrupt.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(["unknown:42", "nga:", "v2ex:swift"], forKey: "subscribed-forum-channel-keys-v3")
+        defaults.set(["unknown:42", "v2ex:swift", "v2ex:swift"], forKey: "subscribed-forum-channel-order-v1")
+
+        let subscriptions = ForumSubscriptionStore(defaults: defaults)
+
+        #expect(subscriptions.subscribedChannelKeys == ["v2ex:swift"])
+        #expect(subscriptions.orderedChannelKeys == ["v2ex:swift"])
     }
 
     @Test func forumSubscriptionsAreScopedBySource() throws {
@@ -751,6 +765,54 @@ struct ForumHubTests {
         #expect(store.entries.count == 2)
         #expect(store.entries.first?.source == .nga)
         #expect(BrowsingHistoryStore(defaults: defaults).entries.count == 2)
+    }
+
+    @Test func userContentStoresMigrateLegacyArraySnapshots() throws {
+        let suiteName = "ForumHubTests.versioned-user-content.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let thread = try #require(ForumPayload.mock.threads.first)
+        let favorite = SavedForumThread(thread: thread)
+        let history = BrowsingHistoryEntry(thread: thread)
+        let blocked = BlockedForumUser(source: .nga, username: "CJ")
+        defaults.set(try JSONEncoder().encode([favorite]), forKey: "favorite-forum-threads-v1")
+        defaults.set(try JSONEncoder().encode([history]), forKey: "forum-browsing-history-v1")
+        defaults.set(try JSONEncoder().encode([blocked]), forKey: "blocked-forum-users-v2")
+
+        #expect(FavoriteThreadsStore(defaults: defaults).entries == [favorite])
+        #expect(BrowsingHistoryStore(defaults: defaults).entries == [history])
+        #expect(BlockedUsersStore(defaults: defaults).blockedUsers == [blocked])
+
+        let favoriteSnapshot = try JSONDecoder().decode(
+            VersionedLocalSnapshot<[SavedForumThread]>.self,
+            from: try #require(defaults.data(forKey: "favorite-forum-threads-v1"))
+        )
+        let historySnapshot = try JSONDecoder().decode(
+            VersionedLocalSnapshot<[BrowsingHistoryEntry]>.self,
+            from: try #require(defaults.data(forKey: "forum-browsing-history-v1"))
+        )
+        let blockedSnapshot = try JSONDecoder().decode(
+            VersionedLocalSnapshot<[BlockedForumUser]>.self,
+            from: try #require(defaults.data(forKey: "blocked-forum-users-v2"))
+        )
+        #expect(favoriteSnapshot.version == 1)
+        #expect(historySnapshot.version == 1)
+        #expect(blockedSnapshot.version == 1)
+    }
+
+    @Test func corruptedUserContentSnapshotsDegradeToEmptyState() throws {
+        let suiteName = "ForumHubTests.corrupted-user-content.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let corrupted = Data("not-json".utf8)
+        defaults.set(corrupted, forKey: "favorite-forum-threads-v1")
+        defaults.set(corrupted, forKey: "forum-browsing-history-v1")
+        defaults.set(corrupted, forKey: "blocked-forum-users-v2")
+        defaults.set(["legacy-user"], forKey: "blocked-forum-usernames")
+
+        #expect(FavoriteThreadsStore(defaults: defaults).entries.isEmpty)
+        #expect(BrowsingHistoryStore(defaults: defaults).entries.isEmpty)
+        #expect(BlockedUsersStore(defaults: defaults).blockedUsers.isEmpty)
     }
 
     @Test func channelPagingCyclesInBothDirections() throws {
