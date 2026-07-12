@@ -20,6 +20,7 @@ final class ForumHubUITestsLaunchTests: XCTestCase {
     @MainActor
     func testLaunch() throws {
         let app = XCUIApplication()
+        app.launchArguments.append("UITEST_DEFAULT_FEED")
         app.launch()
 
         // Insert steps here to perform after app launch but before taking a screenshot,

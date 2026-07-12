@@ -62,8 +62,8 @@ enum ThreadDetailPaginationMerger {
             return false
         }
 
-        let normalizedReplyBody = normalizedContent(reply.body)
-        let normalizedMainBody = normalizedContent(thread.body)
+        let normalizedReplyBody = normalizedContent(reply.contentDocument.normalizedText)
+        let normalizedMainBody = normalizedContent(thread.contentDocument.normalizedText)
         guard !normalizedReplyBody.isEmpty, !normalizedMainBody.isEmpty else {
             return false
         }

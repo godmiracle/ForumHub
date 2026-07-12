@@ -64,9 +64,9 @@ enum ThreadSnapshotRenderer {
     }
 
     private static func collectImageURLs(thread: ForumThread, replies: [Reply]) -> [URL] {
-        let texts = [thread.body] + replies.map(\.body)
+        let documents = [thread.contentDocument] + replies.map(\.contentDocument)
         var seen = Set<URL>()
-        return texts.flatMap(ForumContentParser.parse).compactMap { block in
+        return documents.flatMap { ForumContentParser.parse($0.normalizedText) }.compactMap { block in
             let url: URL?
             switch block.content {
             case let .image(imageURL):
@@ -140,7 +140,7 @@ private struct ThreadSnapshotPageView: View {
                     }
 
                     SnapshotRichContent(
-                        text: thread.body,
+                        document: thread.contentDocument,
                         fontSize: 18,
                         loadedImages: loadedImages
                     )
@@ -167,7 +167,7 @@ private struct ThreadSnapshotPageView: View {
                     }
 
                     SnapshotRichContent(
-                        text: reply.body,
+                        document: reply.contentDocument,
                         fontSize: 17,
                         loadedImages: loadedImages
                     )
@@ -203,13 +203,13 @@ private struct ThreadSnapshotPageView: View {
 }
 
 private struct SnapshotRichContent: View {
-    let text: String
+    let document: ForumPostDocument
     let fontSize: CGFloat
     let loadedImages: [URL: UIImage]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(ForumContentParser.parse(text)) { block in
+            ForEach(ForumContentParser.parse(document.normalizedText)) { block in
                 switch block.content {
                 case let .text(text):
                     Text(text)

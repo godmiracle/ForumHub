@@ -244,19 +244,20 @@ struct NGALiveThreadRepository: ThreadRepository {
                 page: page,
                 apiRawText: firstAPIResult.rawText
             )
-            if let apiThread = firstAPIResult.thread {
-                return ThreadDetailFetchResult(
-                    thread: NGAThreadDetailMerger.merge(apiThread: apiThread, webThread: webResult.thread),
-                    rawText: webResult.rawText
-                )
-            }
-            return webResult
+            let resolvedThread = NGAThreadDetailMerger.resolve(
+                apiThread: firstAPIResult.thread,
+                webThread: webResult.thread
+            ) ?? webResult.thread
+            return ThreadDetailFetchResult(thread: resolvedThread, rawText: webResult.rawText)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             // 网页源不可用时才降级使用 API；不以启发式判断跳过网页校验。
-            if let apiThread = firstAPIResult.thread {
-                return ThreadDetailFetchResult(thread: apiThread, rawText: firstAPIResult.rawText)
+            if let resolvedThread = NGAThreadDetailMerger.resolve(
+                apiThread: firstAPIResult.thread,
+                webThread: nil
+            ) {
+                return ThreadDetailFetchResult(thread: resolvedThread, rawText: firstAPIResult.rawText)
             }
             throw error
         }
@@ -819,18 +820,18 @@ enum NGAThreadParseQuality {
     private static let rawImageMarkerPattern = #"(?i)(?:\[图片\]|\[img\]|<img\b)"#
 
     static func needsWebEnrichment(thread: ForumThread, rawText _: String) -> Bool {
-        let body = thread.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedText = thread.contentDocument.normalizedText.trimmingCharacters(in: .whitespacesAndNewlines)
         // `rawText` 包含当前页全部回帖。若把所有楼层的图片都与主楼比较，
         // 任意回帖带图都会把完整主楼误判为缺失，进而触发不稳定的网页兜底。
         // 主楼原始文档才是主楼完整度的唯一比较对象。
         let rawImageCount = thread.contentDocument.rawMarkup.matches(pattern: rawImageMarkerPattern).count
-        let parsedImageCount = ForumContentParser.parse(thread.body).reduce(into: 0) { count, block in
+        let parsedImageCount = ForumContentParser.parse(thread.contentDocument.normalizedText).reduce(into: 0) { count, block in
             if case .image = block.content {
                 count += 1
             }
         }
 
-        return body.isEmpty
+        return normalizedText.isEmpty
             || (thread.replyCount > 0 && thread.replies.isEmpty)
             || parsedImageCount < rawImageCount
     }
@@ -838,6 +839,19 @@ enum NGAThreadParseQuality {
 }
 
 enum NGAThreadDetailMerger {
+    static func resolve(apiThread: ForumThread?, webThread: ForumThread?) -> ForumThread? {
+        switch (apiThread, webThread) {
+        case let (apiThread?, webThread?):
+            return merge(apiThread: apiThread, webThread: webThread)
+        case let (apiThread?, nil):
+            return apiThread
+        case let (nil, webThread?):
+            return webThread
+        case (nil, nil):
+            return nil
+        }
+    }
+
     static func merge(apiThread: ForumThread, webThread: ForumThread) -> ForumThread {
         let resolvedDocument = mergedDocument(
             apiDocument: apiThread.contentDocument,

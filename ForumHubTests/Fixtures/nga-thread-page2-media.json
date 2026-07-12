@@ -1,0 +1,27 @@
+{
+  "code": 0,
+  "result": {
+    "0": {
+      "pid": 0,
+      "tid": 47151166,
+      "lou": 0,
+      "subject": "续页媒体回归测试",
+      "author": { "username": "楼主" },
+      "content": "主楼内容"
+    },
+    "1": {
+      "pid": 201,
+      "tid": 47151166,
+      "lou": 21,
+      "author": { "username": "回复作者" },
+      "content": "第二页正文[img]//img.nga.178.com/attachments/page-2.gif[/img][图片] /attachments/mon_202607/page-2.jpg?name=a&amp;size=full"
+    },
+    "2": {
+      "pid": 202,
+      "tid": 47151166,
+      "lou": 22,
+      "author": { "username": "引用作者" },
+      "content": "[quote][img]./mon_202607/quoted-image.jpg[/img][/quote]引用后的正文"
+    }
+  }
+}

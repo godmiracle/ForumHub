@@ -27,6 +27,7 @@ struct ThreadDetailView: View {
     @State private var showsOriginalThread = false
     @State private var showsPagePicker = false
     @State private var detailViewModel: ThreadDetailViewModel
+    @State private var scrollState = ThreadDetailScrollState()
     @State private var showsScrollToTopButton = false
     @State private var isReturningToTop = false
     @State private var scrollToTopRequestGeneration = 0
@@ -84,8 +85,8 @@ struct ThreadDetailView: View {
     }
 
     private var visiblePage: Int {
-        get { paginationState.visiblePage }
-        nonmutating set { paginationState.visiblePage = newValue }
+        get { scrollState.visiblePage }
+        nonmutating set { scrollState.visiblePage = newValue }
     }
 
     private var loadedPageStartReplyIndices: [Int: Int] {
@@ -94,22 +95,22 @@ struct ThreadDetailView: View {
     }
 
     private var pendingPageSelection: Int {
-        get { paginationState.pendingPageSelection }
-        nonmutating set { paginationState.pendingPageSelection = newValue }
+        get { scrollState.pendingPageSelection }
+        nonmutating set { scrollState.pendingPageSelection = newValue }
     }
 
     private var deferredScrollTargetPage: Int? {
-        get { paginationState.deferredScrollTargetPage }
-        nonmutating set { paginationState.deferredScrollTargetPage = newValue }
+        get { scrollState.deferredTargetPage }
+        nonmutating set { scrollState.deferredTargetPage = newValue }
     }
 
     private var lastAutoLoadedPage: Int? {
-        get { paginationState.lastAutoLoadedPage }
-        nonmutating set { paginationState.lastAutoLoadedPage = newValue }
+        get { scrollState.lastAutoLoadedPage }
+        nonmutating set { scrollState.lastAutoLoadedPage = newValue }
     }
 
     private var pendingPageSelectionBinding: Binding<Int> {
-        Binding(get: { paginationState.pendingPageSelection }, set: { paginationState.pendingPageSelection = $0 })
+        Binding(get: { scrollState.pendingPageSelection }, set: { scrollState.pendingPageSelection = $0 })
     }
 
     private var favoriteErrorMessage: String? { get { actionState.favoriteErrorMessage } nonmutating set { actionState.favoriteErrorMessage = newValue } }
@@ -686,6 +687,7 @@ struct ThreadDetailView: View {
 
     private func refreshDetail() async {
         guard await detailViewModel.refresh(thread: thread, repository: repository) else { return }
+        scrollState.resetPageTracking()
         guard supportsDirectPagination, currentPage < totalPageCount else { return }
 
         // 刷新会复用已显示的楼层 View，末尾楼层的 onAppear 不会再次触发。
@@ -897,7 +899,7 @@ private extension ThreadDetailView {
                 displayFloorLabel: entry.floorLabel,
                 author: entry.reply.author,
                 createdAt: entry.reply.createdAt,
-                bodyPreview: entry.reply.body
+                bodyPreview: entry.reply.contentDocument.normalizedText
             )
         )
     }

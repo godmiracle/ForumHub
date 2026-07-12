@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07
+
+### Thread Detail And Content
+
+- Prevented an empty detail response from promoting a feed summary into the main post; feed metadata can still fill title, author, counts, and channel information.
+- Made saved favorites restore as lightweight thread metadata without storing their summary as authoritative post content.
+- Updated long-image generation to consume `ForumPostDocument` projections directly instead of extending the legacy `body` dependency.
+- Updated reply previews, pagination main-post deduplication, and NGA content-quality checks to use the authoritative `ForumPostDocument` projection.
+
 ## 2026-06
 
 ### Product Evolution

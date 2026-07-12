@@ -35,10 +35,7 @@ final class ThreadDetailViewModel {
                 self.content.replyTotalCount = replyTotal
                 self.content.rawText = result.rawText
                 self.pagination.currentPage = 1
-                self.pagination.visiblePage = 1
                 self.pagination.pageStartReplyIndices = [1: 0]
-                self.pagination.pendingPageSelection = 1
-                self.pagination.lastAutoLoadedPage = nil
                 self.pagination.hasMoreReplies = ThreadPaginationPolicy.supportsDirectPagination(for: repository.capabilities)
                     ? ThreadPaginationPolicy.totalPageCount(replyCount: replyTotal, fallbackReplyCount: fallbackThread.replyCount, capabilities: repository.capabilities) > 1
                     : result.thread.replies.count >= 20 || result.thread.replies.count < replyTotal
@@ -132,12 +129,10 @@ final class ThreadDetailViewModel {
                 self.content.replyTotalCount = total
                 self.pagination.currentPage = targetPage
                 self.pagination.pageStartReplyIndices = pageStarts
-                self.pagination.pendingPageSelection = targetPage
                 self.pagination.hasMoreReplies = targetPage < ThreadPaginationPolicy.totalPageCount(replyCount: total, fallbackReplyCount: fallbackThread.replyCount, capabilities: repository.capabilities)
                 return true
             } catch {
                 self.content.error = ForumError.resolve(error)
-                self.pagination.lastAutoLoadedPage = nil
                 return false
             }
         }

@@ -1,304 +1,290 @@
-# ForumHub 待办清单
-
-本文件用于记录可执行、可验证、可追踪的开发事项。AI Agent 在开始任务前必须读取本文件，并且只更新与当前任务直接相关的事项。
-
-## 待办状态规则
-
-- `[ ]`：待处理或尚未完成验证；
-- `[x]`：代码已修改、验收标准已满足，并完成必要验证；
-- 代码已修改但当前环境无法验证时，保持 `[ ]`，并标记“状态：已修改，等待验证”或“状态：等待人工验证”；
-- 验证失败时保持 `[ ]`，记录失败原因；
-- 不得为了提高完成率删除、合并或隐藏未完成事项。
-
-Review 新增事项应使用 `R-XXX` 唯一编号，并至少记录优先级、涉及文件、状态和验收标准。详细格式见 [review.md](review.md)。
-
-
-## 帖子详情
-
-### ForumHub 代码审查清单
-
-- [x] 将 `ThreadDetailView` 的展示逻辑拆分为职责明确的 UI 组件。
-- [x] 为刷新、跳页和连续加载增加可取消任务与请求代次控制。
-- [x] 缓存展示回复和分页入口数据，减少滚动期间的重复计算。
-- [x] 建立 `ForumError`，并优先用于帖子详情的用户可见错误展示。
-- [x] 引入共享 `ForumGlass` 组件，并迁移帖子详情悬浮控件及信息流刷新提示。
-- [x] 将 README 中依赖本机路径的链接替换为仓库相对链接。
-- [ ] 使用明确的 Repository 分页能力替代帖子详情中的 `.nga` 分页判断。
-- [ ] 将帖子详情的加载、分页、回复和收藏状态迁移到独立的 `ThreadDetailViewModel`。
-- [ ] 恢复测试 Target 后，运行 NGA 分页合并回归测试，覆盖重复回复、主楼移除和多页跳转。
-- [ ] 将 `ForumError` 的展示能力扩展到信息流、搜索、账户和媒体流程。
-- [ ] 修复测试 Target 签名，并将已移除的 `ThreadDetailDirectPaginationAutoAdvancePolicy` 测试迁移至当前连续分页实现，使完整测试可在真机运行。
-  - 状态：测试源码编译错误已修复；`ForumHubTests` 已于真机完整通过，`ForumHubUITests.testThreadDetailScrollToTopReturnsToFirstPage` 已于真机通过。
-- [ ] 在真机测量超长帖子非懒加载渲染及内存占用。
-
-### 根据既有决策暂缓
-
-- Xcode 项目格式兼容：当前明确暂不处理。项目继续使用 Xcode 27 Beta 格式，待安装稳定版工具链后再单独决策迁移。
-
-- [ ] 使用更多真实帖子验证 NGA 详情连续分页，重点覆盖主楼与后续分页混合的边界情况。
-- [ ] 使用真实长帖验证 NGA 接近末尾自动分页和页面锚点可见页追踪，确保持续向下加载平滑可靠。
-- [ ] 在真机验证 NGA 连续阅读视觉无断层：中间不显示“加载下一页”卡片，仅在全部回复加载完后显示帖子结束状态。
-- [ ] 在真实帖子和真机上验证 NGA 按楼层回复，确认当前 `action=quote + pid + prefilled content` 流程兼容更多引用格式。
-- [ ] 当 V2EX 和 LINUX DO 详情接口具备稳定分页合约后，评估是否需要数据源原生回复分页控件。
-- [ ] 决定页面选择器是否应在同一 App 会话中记住每个帖子的最后手动选择页。
-- [ ] 决定只看楼主或倒序导致部分页面锚点隐藏时，悬浮页码控件的行为。
-
-## 社区与数据源
-
-- [ ] 继续优化数据源切换和频道管理体验。
-- [ ] 评估社区管理是否需要更清晰地区分已订阅频道和数据源默认频道。
-
-## 信息流
-
-- [x] 增加可取消的信息流加载任务与请求代次，避免过期的首页或热榜响应覆盖当前标签页。
-- [ ] 若真机首次加载仍显突兀，评估信息流初始加载应继续使用居中转圈，还是改为轻量骨架屏。
-
-## 图片与媒体
-
-- [ ] 测量基于视口的行内 GIF 限流与预览降采样是否足够，评估剩余活动 GIF 是否仍需比 `WKWebView` 更轻量的播放方案。
-
-## 同步与持久化
-
-- [ ] 在可靠的跨设备同步方案可行前，继续保持屏蔽用户和收藏本地优先。
-- [ ] 重新启用任何云同步路径前，先定义数据迁移规则。
-
-## 账户与会话
-
-- [ ] 验证共享 `AuthSessionDescriptor` 和认证注册表能够覆盖 Token 过期、Cookie 部分同步、需要重新连接等未来会话状态，且不重新引入数据源专属 View 分支。
-- [ ] 决定顶部 NGA 账户卡片是否迁移到共享会话描述路径，或明确保留为数据源原生详情卡片。
-
-## 第二轮 Code Review 待修复与优化清单
-
-以下事项依据 [ForumHub-Code-Review-Round-2.md](ForumHub-Code-Review-Round-2.md) 整理；按修复顺序排列，首页和热门 Tab 重选回顶按要求置于最后。
-
-- [ ] R-201 放宽 NGA 富文本图片解析并统一图片 URL 解析
-  - 优先级：高
-  - 涉及文件或模块：`ForumHub/Domain/ForumContent.swift`、NGA 富文本解析链路
-  - 状态：已修改，已依据真实主贴的 `./mon_…` 图片标记补充回归用例，并修正主贴 Header 未随正文更新重建的问题；该主贴已在真机验证正文与图片正常展示，其他图片格式边界待回归验证
-  - 验收标准：支持正文内 `[图片]`、`[img]...[/img]`、协议相对 URL、相对附件路径、一行多图和含 `&amp;` 的 URL；可信 NGA HTTP 图片升级为 HTTPS；文本与图片顺序保持正确。
-
-- [ ] R-202 在 NGA API 解析内容不完整时以网页结果补全而非整体覆盖
-  - 优先级：高
-  - 涉及文件或模块：`ForumHub/Data/NGA/NGAForumRepository.swift`、`ForumHub/Data/NGA/Parsers/ThreadDetailParser.swift`、`ForumHub/Data/NGA/Parsers/WebForumParser.swift`
-  - 状态：已修改；主楼和回帖保存原始内容文档，网页 `postcontent<楼层号>` 与 API 楼层按编号合并。API 数组固定按 `pid == 0` 或 `floor == 0` 识别主楼；每次详情加载均以网页正文校验并补全 API 内容。详情初始状态不显示信息流摘要，`ForumThread` 内容相等不再仅比较身份，完整详情回写可以触发当前页面更新。真机构建及完整 `ForumHubTests` 76 个测试已通过，等待真实帖子验证。
-  - 验收标准：可根据正文、回复数和图片完整度判断是否补全；网页结果仅补充 API 缺失内容；网页请求失败时保留 API 结果；合并后主楼、回帖和图片均不重复。
-
-- [ ] R-203 为可信 NGA 图片请求补齐站点所需 Header 与 Cookie 策略
-  - 优先级：中
-  - 涉及文件或模块：NGA 图片加载与缓存链路
-  - 状态：已修改，真实 NGA 主贴图片已在真机加载成功；图片任务取消不再误显示为加载失败，真实失败会受控重试一次；非 NGA 请求隔离与失败后打开原图待回归验证
-  - 验收标准：仅对受信任 NGA 图片域名添加 `Referer`、`User-Agent` 和 Cookie 处理；非 NGA 图片请求不携带站点专属 Header；图片加载失败时仍可打开原图地址。
-
-- [ ] R-204 为 NGA 富文本、图片 URL 和 API/Web 合并补充可回归的 Fixture 与测试
-  - 优先级：中
-  - 涉及文件或模块：`ForumHubTests`、NGA Fixtures
-  - 状态：已部分修改，已补图片 URL 单元测试、API 不完整/网页补全 Fixture、网页权限错误页拒绝、带包装层的真实主贴图片回归测试，以及真实 API 形状下 3 张主贴图片与后续正文的解析/完整度回归测试；已新增 `[s:…]` 表情标记不丢失回归测试，等待真机验证。
-  - 验收标准：覆盖 BBCode、HTML 图片、GIF、引用图片、表格/代码块、第二页图片、协议相对/相对路径及 URL 转义；覆盖 API 不完整时的补全和去重；相关测试可运行并通过。
-
-- [ ] R-205 将搜索草稿与焦点状态下沉，并让首页和热门共用顶部搜索栏
-  - 优先级：中
-  - 涉及文件或模块：`ForumHub/ContentView.swift`、`ForumHub/Features/ForumFeed/ForumFeedViews.swift`
-  - 状态：已修改，等待真机交互验证
-  - 验收标准：输入草稿不再使根 `ContentView`、首页和热门列表进行不必要重算；父层只接收已提交关键词；首页和热门始终只渲染一份顶部搜索栏。
-
-- [ ] R-206 缓存信息流排序结果，避免搜索输入或普通 View 刷新重复排序和列表 Diff
-  - 优先级：中
-  - 涉及文件或模块：`ForumHub/ContentView.swift`、`ForumHub/Features/ForumFeed/ForumViewModel.swift`
-  - 状态：已修改，等待真机滚动与排序切换验证
-  - 验收标准：排序只在帖子数据或排序方式变化时重建；输入搜索草稿不触发信息流重新排序；首页和热门展示顺序与现有规则一致。
-
-- [x] R-207 完善搜索键盘的提交、清空、滚动和切换 Tab 收起行为
-  - 优先级：中
-  - 涉及文件或模块：`ForumHub/Features/ForumFeed/ForumFeedViews.swift`、`ForumHub/Features/Search/SearchThreadsView.swift`
-  - 状态：已完成，真机交互验证通过；已实现提交、清空、滚动、“完成”和切换 Tab 收起键盘
-  - 验收标准：搜索框使用 `FocusState`；键盘工具栏提供“完成”；提交、清空和切换 Tab 后收起键盘；首页/热门滚动可交互收起键盘，搜索结果滚动立即收起键盘。
-
-- [ ] R-208 将搜索请求状态迁移至具备 Task 所有权和 generation 的 `SearchThreadsViewModel`
-  - 优先级：中
-  - 涉及文件或模块：`ForumHub/Features/Search/SearchThreadsView.swift`、新增或现有 `SearchThreadsViewModel`
-  - 状态：已修改，等待搜索交互回归验证
-  - 验收标准：新搜索取消旧搜索及旧的加载更多任务；过期响应不能覆盖新关键词结果；同关键词且已有结果不重复请求；离开页面时可取消任务。
-
-- [ ] R-209 统一搜索失败的 `ForumError` 展示
-  - 优先级：中
-  - 涉及文件或模块：`ForumHub/Features/Search/SearchThreadsView.swift`、`ForumError`
-  - 状态：已修改，等待失败场景验证
-  - 验收标准：网络、解析和取消以外的失败映射为用户可理解的错误状态；重试可恢复正常搜索；不泄露底层数据源错误细节。
-
-- [x] R-210 完成帖子详情业务状态和异步任务的 ViewModel 化
-  - 优先级：中
-  - 涉及文件或模块：`ForumHub/Features/ThreadDetail/ThreadDetailView.swift`、`ForumHub/Features/ThreadDetail/*`
-  - 状态：已完成，真机回归验证通过；展示、加载任务、分页、回复与收藏状态及其网络操作均已迁移至 `ThreadDetailViewModel`，View 仅保留滚动定位和 UI 事件转发
-  - 验收标准：加载、分页、回复、收藏及错误状态移出 `ThreadDetailView`；View 保持展示和事件转发职责；现有取消、请求代次、去重、只看楼主和倒序行为不回归。
-
-- [x] R-211 用数据源 `ForumCapabilities` 描述详情分页与图片能力，删除 View 中 NGA 专属判断
-  - 优先级：中
-  - 涉及文件或模块：`ForumHub/Domain/ForumModels.swift`、各数据源 Repository、帖子详情模块
-  - 状态：已完成，真机回归验证通过；详情分页类型与页大小已迁移，回复编辑器图片入口已改由 `supportsImageUpload` 控制
-  - 验收标准：分页类型和页大小通过 capability 提供；详情 View 不再依赖 `repository.source == .nga` 或硬编码页大小；NGA、V2EX、LINUX DO 的既有详情行为保持兼容。
-
-- [ ] R-212 在真机评估长帖结构化内容渲染和 Lazy 性能
-  - 优先级：低
-  - 涉及文件或模块：帖子详情富文本和图片渲染链路
-  - 状态：已回退到原 `WKWebView` GIF 播放实现；已记录图片/GIF 密集帖刷新时 CPU 约 86%、内存约 743 MB、能耗 High，等待重新设计稳定的 GIF 渲染方案
-  - 验收标准：使用含多页回复、图片和 GIF 的真实长帖测量滚动帧率与内存；记录可复现的性能基线；如存在明显卡顿，再提出最小化优化方案。
-
-- [x] R-213 修复首页、热门再次点击当前 Tab 不回到顶部
-  - 优先级：高
-  - 涉及文件或模块：`ForumHub/ContentView.swift`、Tab 重选监听与 `ForumFeedContent` 回顶链路
-  - 状态：已完成，已由真机验证
-  - 验收标准：首页或热门滚动至少 20 条后，重复点击当前 Tab 能立即回顶；两个 Tab 的滚动位置互不影响；点击其他 Tab 不误触发回顶；快速重复点击不创建多个刷新请求；已在顶部时再次点击才刷新且刷新后仍停在顶部。
-
-### P0：核心交互修复
-
-- [x] R-301 修复帖子详情返回顶部按钮失效
-  - 优先级：高
-  - 涉及文件或模块：`ForumHub/Features/ThreadDetail/ThreadDetailView.swift`、浮动控件与滚动监听链路
-  - 状态：已完成；真机 UI Test 覆盖连续两次“下滑至第 2 页 → 回顶”，均通过。
-  - 验收标准：返回顶部操作不在滚动前提前改写分页状态；加载多页、只看楼主、倒序和 GIF 播放中均能稳定回到主楼；快速连续点击不造成页码错乱；补充 UI Test 和稳定的无障碍标识。
-
-- [x] R-302 稳定帖子详情顶部锚点与滚动目标
-  - 优先级：中
-  - 涉及文件或模块：`ForumHub/Features/ThreadDetail/ThreadDetailView.swift`
-  - 状态：已完成；独立顶部锚点与请求代次协调已通过真机连续回顶验证。
-  - 验收标准：使用稳定且不随正文或分页重建的锚点 ID；刷新、分页插入和图片高度变化后仍可定位；不存在重复 ID。
-
-- [x] R-314 修复 NGA `postnum` 导致的详情页虚假末页
-  - 优先级：高
-  - 涉及文件或模块：`ForumHub/Data/NGA/Parsers/ForumListParsers.swift`、`ForumHub/Data/NGA/Parsers/ThreadDetailParser.swift`、`ForumHubTests/ForumHubTests.swift`
-  - 状态：已完成；`postnum` 按总楼层数处理并扣除主楼，真机完整 `ForumHubTests` 已通过。
-  - 验收标准：`postnum = 60` 归一化为 59 条回帖，20 条/页时总页数为 3；列表与详情计数一致；不再展示不可加载的第 4 页。
-
-- [x] R-315 核实 NGA 信息流主题作者头像数据能力并停止无效请求
-  - 优先级：高
-  - 涉及文件或模块：`ForumHub/Data/NGA/Parsers/ForumListParsers.swift`、`ForumHubTests/ForumHubTests.swift`
-  - 状态：已完成；真机 `subject/list` 脱敏响应确认仅含 `author`、`authorid`，不含头像字段或 `__U` 用户字典；NGA 网页列表同样仅提供字母/等级标识。列表不再请求已确认 404 的 UID 拼接地址，缺少头像时保留本地首字母占位。
-  - 验收标准：不为主题列表的 `authorid` 生成无效头像 URL；直接头像字段若将来由接口提供仍可解析；无字段时显示本地占位；不为每个主题额外请求详情页。
-
-- [x] R-316 修复原生 Glass 底栏未向 XCUIAutomation 暴露 Tab 标识
-  - 优先级：高
-  - 涉及文件或模块：`ForumHub/Features/ForumFeed/ForumFeedViews.swift`、`ForumHubUITests/ForumHubUITests.swift`
-  - 状态：已完成；真机 UI Test 已通过。真机自动化树确认原生 Glass Button 不暴露自定义 identifier，但稳定暴露用户可访问标签；底栏测试已改按标签定位，数据源切换测试已迁移到当前顶部来源菜单。
-  - 验收标准：iOS 26+ 原生 Glass 底栏中的“栏目”按钮可由 `XCUIApplication().buttons` 定位并点击；顶部来源菜单可切换 V2EX；搜索 UI Test 通过；底栏视觉和触控操作不改变。
-
-- [x] R-303 删除正文字符串作为帖子 Header View ID 的实现
-  - 优先级：高
-  - 涉及文件或模块：`ForumHub/Features/ThreadDetail/ThreadDetailView.swift`
-  - 状态：已完成；移除正文 View ID 后，真机自动翻页与连续回顶 UI Test 均通过。
-  - 验收标准：删除 `.id(detailThread.body)` 或改为稳定帖子 ID；正文补全仍可刷新；Header 不因正文变化整体重建；图片和 GIF 不重复请求或丢失播放状态。
-
-### P1：GIF 性能与图片链路
-
-- [ ] R-304 建立 GIF 密集帖性能基线并评估接入 SDWebImage 动画模块
-  - 优先级：高
-  - 涉及文件或模块：帖子详情富文本、图片加载与缓存链路、项目依赖配置
-  - 状态：待处理
-  - 验收标准：使用固定真实帖子记录现有 CPU、内存、帧率和能耗；完成静态图片与 GIF/APNG 分流；对比接入前后指标；仅在指标和稳定性更优时保留新方案。
-
-- [ ] R-305 完善 GIF 下载、解码、播放和释放生命周期
-  - 优先级：高
-  - 涉及文件或模块：GIF 播放组件、可视区域检测、App 生命周期
-  - 状态：待处理
-  - 验收标准：同时活动 GIF 不超过配置值；离屏和高速滚动时暂停；进入后台停止；内存警告时释放动画帧；相同 URL 不重复下载；超大 GIF 支持首帧占位和点击播放。
-
-- [ ] R-306 保持 NGA 图片请求 Header、Cookie 与非 NGA 请求隔离
-  - 优先级：高
-  - 涉及文件或模块：NGA 图片请求、缓存和 SDWebImage Loader/Context 配置
-  - 状态：待处理
-  - 验收标准：可信 NGA 图片继续携带必要 Referer、User-Agent 和 Cookie；非 NGA 请求不携带站点专属信息；登录图、静态图、GIF 和打开原图均无回归。
-
-### P2：详情页状态与重绘范围
-
-- [ ] R-307 抽离详情页滚动状态与 GIF 播放协调器
-  - 优先级：中
-  - 涉及文件或模块：`ThreadDetailView`、新增 `ThreadDetailScrollState`、`InlineGIFPlaybackCoordinator`
-  - 状态：待处理
-  - 验收标准：滚动状态和媒体播放策略具有单一所有者；View 只负责展示和事件转发；现有分页、筛选、倒序与回复行为不回归。
-
-- [ ] R-308 缩小活动 GIF 状态传播和 SwiftUI 重绘范围
-  - 优先级：中
-  - 涉及文件或模块：`ThreadDetailHeaderSection`、`ThreadDetailReplySection`、媒体节点
-  - 状态：待处理
-  - 验收标准：媒体节点只接收自己的播放许可或通过协调器查询；同一媒体 ID 稳定；活动 GIF 切换时不触发正文和回复区域大范围重复解析；滚动指标较基线改善。
-
-### P3：真机功能与体验整改
-
-- [ ] R-309 精简详情页底部常驻操作并整理更多菜单
-  - 优先级：中
-  - 涉及文件或模块：`ThreadDetailActionBar`、详情页菜单
-  - 状态：待处理
-  - 验收标准：底部常驻操作聚焦回复、收藏和更多；只看楼主、正倒序、刷新、长图等进入更多菜单；关键操作不增加明显点击成本。
-
-- [ ] R-310 增加 GIF 自动播放与同时播放数量设置
-  - 优先级：中
-  - 涉及文件或模块：阅读设置、GIF 播放协调器、持久化
-  - 状态：待处理
-  - 验收标准：支持始终播放、仅 Wi-Fi、点击播放和从不播放；可配置同时播放数量；设置持久化并即时生效；低电量模式可自动降低播放数量。
-
-- [ ] R-311 完善详情、登录和媒体失败的就地恢复入口
-  - 优先级：中
-  - 涉及文件或模块：详情错误卡片、认证流程、图片/GIF 失败占位
-  - 状态：待处理
-  - 验收标准：详情加载失败可重新加载；登录失效可重新登录；图片/GIF 失败可重试和打开原图；恢复后正常内容不重复。
-
-- [ ] R-312 稳定图片占位尺寸并保存帖子阅读会话状态
-  - 优先级：中
-  - 涉及文件或模块：富文本图片布局、阅读位置与帖子会话缓存
-  - 状态：待处理
-  - 验收标准：图片加载前按宽高比或统一规则预留空间；加载后页面不明显跳动；进入图片预览、回复页或切后台返回后保留阅读位置、页码、只看楼主和正倒序状态。
-
-- [ ] R-313 评估区分“回到帖子顶部”和“回到当前页顶部”
-  - 优先级：低
-  - 涉及文件或模块：详情浮动控件、分页交互
-  - 状态：待确认
-  - 验收标准：通过真机使用验证是否需要两个动作或长按菜单；交互含义清楚；不与现有页码选择器和返回顶部行为冲突。
-
-## 测试覆盖建设
-
-- [ ] T-008 建立默认 UI Test Mock 场景治理
-  - 优先级：高
-  - 涉及文件或模块：`ForumHub/ContentView.swift`、`ForumHub/Features/ForumFeed/UITestScenario.swift`、`ForumHubUITests/ForumHubUITests.swift`、`docs/testing.md`
-  - 状态：已修改；真机搜索、切换数据源、自动分页与连续回顶 UI Test 已通过；启动性能用例等待单独执行
-  - 验收标准：搜索、数据源切换和启动性能 UI Test 均显式使用固定启动场景；场景模式不执行登录恢复或真实信息流请求；Mock 场景包含 NGA、V2EX、LINUX DO；现有分页 Mock UI Test 不回归。
-
-- [x] T-001 帖子详情连续回顶 Mock UI Test
-  - 优先级：高
-  - 涉及文件或模块：`ForumHubUITests/ForumHubUITests.swift`、`UITEST_PAGED_THREAD`
-  - 状态：已于真机通过；连续两次“下滑至第 2 页 → 点击回顶”均返回第 1 页。
-  - 验收标准：连续两次“下滑至第 2 页 → 点击回顶”均回到第 1 页；控件使用稳定无障碍标识。
-
-- [x] T-002 GIF 播放协调器单元测试
-  - 优先级：高
-  - 涉及文件或模块：`InlineGIFPlaybackCoordinator`、`InlineGIFPlaybackCoordinatorTests`
-  - 状态：已于真机 `ForumHubTests` 完整运行并通过
-  - 验收标准：只选择视口附近候选；按距视口中心排序；不超过配置上限；上限为 0 时不播放。
-
-- [x] T-003 Search、Feed、Detail 请求代次和取消回归测试
-  - 优先级：高
-  - 涉及文件或模块：`RequestGenerationTests`、对应 ViewModel/LoadController
-  - 状态：已于真机 `ForumHubTests` 完整运行并通过
-  - 验收标准：慢请求被取消或晚到时不覆盖后发请求结果；加载状态最终复位；不显示取消错误。
-
-- [x] T-004 NGA 图片 Header 与域名隔离测试
-  - 优先级：高
-  - 涉及文件或模块：`NGAImageLoader`、`NGAImageRequestTests`
-  - 状态：已于真机 `ForumHubTests` 完整运行并通过
-  - 验收标准：可信 NGA 域名携带 Referer 和 User-Agent；非 NGA 域名不携带站点专属 Header 或 Cookie 策略。
-
-- [x] T-005 登录过期与恢复状态测试
-  - 优先级：中
-  - 涉及文件或模块：`NGALoginState`、`AuthSessionDescriptor`
-  - 状态：已于真机 `ForumHubTests` 完整运行并通过
-  - 验收标准：Guest UID 识别为未登录；有效 UID/CID 恢复为已连接；账户摘要状态同步正确。
-
-- [x] T-006 LINUX DO 解析与认证测试
-  - 优先级：中
-  - 涉及文件或模块：`LinuxDoSessionResponseParser`、`LinuxDoDiscourseParser`
-  - 状态：已于真机 `ForumHubTests` 完整运行并通过
-  - 验收标准：`current_user` 可解析；缺失账号识别为未登录；主题详情映射来源、楼主、回帖、频道与图片正文。
-
-- [x] T-007 维护正式测试策略文档
-  - 优先级：中
-  - 涉及文件或模块：`docs/testing.md`
-  - 状态：已完成，待后续测试运行结果补充
-  - 验收标准：定义单元测试、Mock UI Test、只读真实会话 UI Test 的边界、执行方式、Fixture 规则和禁止写操作规则。
+# ForumHub 系统设计迁移待办
+
+本文件只追踪 [ForumHub-System-Design.md](ForumHub-System-Design.md) 定义的阶段 0–7。旧 Code Review 编号、历史缺陷批次和旧架构拆分不再作为工作主线。
+
+## 执行规则
+
+- 每次只推进一个可独立验证的垂直切片；阶段表示依赖关系，不要求瀑布式全部实施。
+- `[x]` 仅表示验收标准已经满足并完成必要验证；只完成代码修改时仍保持 `[ ]`，标记“已修改，等待验证”。
+- 条件触发项在触发条件成立前不得实施，不为完成架构图而创建抽象或移动目录。
+- 涉及真机差异时优先在已连接 iOS 真机验证；无法验证时明确记录原因。
+- 完成迁移后同步受影响的 ADR、模块文档和 Changelog，不重复维护旧 Review 状态。
+
+## 当前执行顺序
+
+1. 其余事项仅在前置条件满足后启动。
+
+---
+
+## 阶段 0：补齐剩余护栏（进行中）
+
+- [x] **SD-0.1 固定所有默认 UI Test 的 Mock 场景**
+  - 具体问题：部分 UI Test 场景治理尚未完全收口，仍可能受真实登录恢复、网络或服务端数据影响。
+  - 涉及文件或模块：`ForumHub/Features/ForumFeed/UITestScenario.swift`、`ForumHub/ContentView.swift`、`ForumHubUITests`、`docs/testing.md`
+  - 优先级：P1
+  - 状态：已完成；搜索、数据源切换、分页、连续回顶、启动性能和启动截图均显式使用固定 Mock 场景。启动性能与 8 组界面配置启动截图共 9 次真机 UI Test 已通过。
+  - 验收标准：
+    - 所有默认 UI Test 显式声明固定场景；
+    - 场景启动不恢复真实登录，不请求真实信息流；
+    - Mock 数据覆盖 NGA、V2EX、LINUX DO；
+    - 相关 UI Test 在真机可重复通过。
+
+- [x] **SD-0.2 补齐 NGA API/Web 合并、分页与内容 Fixture**
+  - 具体问题：真实响应形状和降级路径仍有未覆盖边界，可能重新引入正文截断、主楼重复或图片丢失。
+  - 涉及文件或模块：`ForumHub/Data/NGA`、`ForumHubTests/Fixtures`、`ForumHubTests`
+  - 优先级：P0
+  - 状态：已完成；API 完整/不完整、Web 补全成功/失败、权限错误、真实图片形状、分页去重、第二页 GIF 与转义 URL、引用图片原文保留、末页不足一页和摘要不得回填正文均已有覆盖。Fixture 来源类型和脱敏规则已记录，相关 69 个测试已在真机通过。
+  - 验收标准：
+    - 覆盖 API 完整、API 不完整、Web 补全失败和权限错误；
+    - 覆盖重复主楼、重复回复、第二页图片及末页不足一页；
+    - 覆盖 BBCode、HTML 图片、GIF、引用图片和 URL 转义；
+    - Fixture 脱敏并记录来源形状；
+    - 相关测试在真机通过。
+
+- [x] **SD-0.3 建立迁移验证记录模板**
+  - 具体问题：性能、真机回归和回滚依据分散在旧待办描述中，不利于垂直切片验收。
+  - 涉及文件或模块：`docs/testing.md`、`docs/sessions/`、迁移相关文档
+  - 优先级：P2
+  - 状态：已完成；`docs/sessions/README.md` 定义设备、系统、命令、结果、限制和回滚点模板，`SD-3.1` 已在 `docs/sessions/2026-07-13.md` 实际使用，且未复制完整自动化日志。
+  - 验收标准：
+    - 模板包含设备、系统、测试命令、结果、已知限制和回滚点；
+    - 不重复记录自动化测试日志中的可获取信息；
+    - 至少由一个迁移切片实际使用。
+
+---
+
+## 阶段 1：身份值类型可行性验证（条件触发）
+
+- [ ] **SD-1.1 审计显式 `source + id` 身份键**
+  - 具体问题：当前依靠调用点显式组合身份，需要先证明是否仍存在遗漏或显著维护成本。
+  - 涉及文件或模块：Domain、导航、收藏、历史、搜索追加、分页去重、持久化
+  - 优先级：P2
+  - 状态：条件未触发；当前收藏、历史和主要去重路径已有来源维度。
+  - 验收标准：
+    - 列出所有身份判断调用点及当前键；
+    - 用测试证明实际冲突或明确记录无冲突；
+    - 未发现问题时关闭评估，不引入新 ID 类型。
+
+- [ ] **SD-1.2 以单一 Store 试点组合 ID 值类型**
+  - 具体问题：只有 `SD-1.1` 证明编译期身份类型有明确收益时，才验证迁移方案。
+  - 涉及文件或模块：优先选择收藏或历史、`ForumThreadID`、Codable migration
+  - 优先级：P3
+  - 状态：等待 `SD-1.1` 触发。
+  - 验收标准：
+    - 旧持久化数据无损迁移；
+    - 同 native ID 的不同来源不冲突；
+    - 不同时迁移多个 Store；
+    - 试点收益和成本形成 ADR，再决定是否扩展。
+
+---
+
+## 阶段 2：收敛正文兼容投影（进行中）
+
+- [x] **SD-2.1 完成 `summary`、`body`、`contentDocument` 读取链路审计**
+  - 具体问题：兼容字段仍可能被误当作权威正文，分享、截图、引用或降级流程可能产生不一致。
+  - 涉及文件或模块：`ForumHub/Domain/ForumModels.swift`、帖子详情、长图、回复引用、收藏、历史、各数据源 Mapper
+  - 优先级：P0
+  - 状态：已完成；详情空正文不再回填列表摘要，收藏恢复不再伪造正文，长图、回复引用、分页重复主楼识别和 NGA 正文完整度判断已直接消费 `ForumPostDocument`。脱敏真实形状 Fixture 已覆盖 API 不完整、Web 补全成功和 Web 补全失败，相关 68 个测试已在真机通过，正常页面已人工确认无回归。
+  - 验收标准：
+    - 信息流摘要不会在详情加载前或详情正文缺失时显示为主楼；
+    - 渲染、长图、分享和回复引用均从 `ForumPostDocument` 或明确派生值读取；
+    - 收藏与历史恢复只携带轻量元数据；
+    - 正常详情、空正文、加载失败和缓存恢复均有回归覆盖；
+    - 使用脱敏真实响应 Fixture 或可控 Stub 覆盖 API 不完整、Web 补全成功和 Web 补全失败；不要求在线等待异常。
+
+- [x] **SD-2.2 评估删除 `body` 存储字段**
+  - 具体问题：`body` 与 `ForumPostDocument.normalizedText` 双存可能漂移，但删除会影响大量构造器和测试。
+  - 涉及文件或模块：Domain、所有 Repository/Parser、持久化、详情、测试 Fixture
+  - 优先级：P2
+  - 状态：已完成；`ForumThread.body` 和 `Reply.body` 已改为 `contentDocument.normalizedText` 的只读计算投影，不再独立存储。初始化器保留 `body` 参数以兼容现有构造点，并仅在未提供文档时创建纯文本文档。收藏和历史只持久化轻量元数据，无存储迁移；完整 `ForumHubTests` 已在真机通过。
+  - 验收标准：
+    - 完成所有读写点清单和兼容迁移方案；
+    - 证明删除收益高于迁移成本；
+    - `body` 改为只读计算投影或决定保留并记录原因；
+    - 全量相关测试与真机关键路径通过。
+
+- [ ] **SD-2.3 独立评估 `ThreadSummary` 与 `ThreadDetail` 分离**
+  - 具体问题：`ForumThread` 同时承载摘要和详情形态，但拆分可能扩大导航、收藏、历史和 Fixture 迁移面。
+  - 涉及文件或模块：Domain、Repository、Navigation、Feed、Search、ThreadDetail、Persistence
+  - 优先级：P2
+  - 状态：待评估，不与 `SD-2.2` 同时实施。
+  - 验收标准：
+    - 用已发生缺陷或新增缓存需求证明拆分价值；
+    - 明确分页结果、聚合详情和持久化快照的边界；
+    - 形成 ADR 和最小试点方案；
+    - 无充分收益时明确否决，不创建新模型。
+
+---
+
+## 阶段 3：帖子详情剩余状态治理（进行中）
+
+- [x] **SD-3.1 收敛滚动状态所有权**
+  - 具体问题：滚动偏移、可见页、返回顶部和阅读位置仍跨 View 与状态对象协作，需要确认是否存在多写入者。
+  - 涉及文件或模块：`ForumHub/Features/ThreadDetail/ThreadDetailView.swift`、`ThreadDetailPaginationState`、滚动监听链路
+  - 优先级：P1
+  - 状态：已完成；远端分页进度由 `ThreadDetailPaginationState`/ViewModel 唯一写入，滚动派生状态由 `ThreadDetailScrollState`/View 唯一写入。完整 `ForumHubTests` 与多页自动加载、连续回顶两个 UI Test 已在真机通过；既有只看楼主、倒序和图片高度变化路径继续复用同一滚动监听链路。
+  - 验收标准：
+    - 为每个滚动派生状态标出唯一写入者；
+    - 不创建与 `ThreadDetailPaginationState` 重复的 Coordinator；
+    - 多页、只看楼主、倒序、图片高度变化和连续回顶不回归；
+    - 只有测试收益明确时才新增 `ThreadDetailScrollState`。
+
+- [ ] **SD-3.2 缩小媒体状态传播范围**
+  - 具体问题：活动 GIF 集合变化可能触发正文和回复区域大范围重绘。
+  - 涉及文件或模块：`InlineGIFPlaybackCoordinator`、`ThreadDetailRichContent`、Header/Reply 组件
+  - 优先级：P1
+  - 状态：待处理，需与阶段 6 性能基线联动。
+  - 验收标准：
+    - GIF 节点身份稳定；
+    - 媒体节点只接收自身播放许可或从单一协调器查询；
+    - 活动集合变化不重复解析整帖；
+    - 真机指标相对 `SD-6.1` 基线改善且功能不回归。
+
+---
+
+## 阶段 4：按真实内容缺口扩展节点
+
+- [ ] **SD-4.1 建立未支持内容格式清单**
+  - 具体问题：表格、代码块、链接和未知标签的真实缺口尚未由 Fixture 系统证明。
+  - 涉及文件或模块：`ForumContentBlock`、NGA BBCode Parser、HTML Parser、Fixtures
+  - 优先级：P2
+  - 状态：待处理。
+  - 验收标准：
+    - 每种缺失格式至少有一个脱敏真实 Fixture；
+    - 记录当前原生投影和网页保真结果；
+    - 按用户影响排序，不凭假设扩展节点。
+
+- [ ] **SD-4.2 逐类扩展内容节点与降级渲染**
+  - 具体问题：由 `SD-4.1` 证明的格式需要在不替换整棵内容模型的前提下支持。
+  - 涉及文件或模块：`ForumContentBlock`、Parser、`ThreadDetailRichContent`、长图渲染
+  - 优先级：P2
+  - 状态：等待 `SD-4.1`。
+  - 验收标准：
+    - 每次只增加一种节点；
+    - Parser、原生渲染、长图和文本降级均有测试；
+    - 未识别标记仍保留在 `rawMarkup`；
+    - NGA、V2EX、LINUX DO 既有内容不回归。
+
+---
+
+## 阶段 5：网络与会话共享接缝（条件触发）
+
+- [x] **SD-5.1 验证现有会话与请求隔离边界**
+  - 具体问题：需要先确认 Cookie、Token、图片 Header 和 WebKit challenge 是否存在跨来源泄漏或重复实现。
+  - 涉及文件或模块：`ForumHub/Session`、NGA/V2EX/LINUX DO Repository、图片请求、`AuthSessionDescriptor`
+  - 优先级：P1
+  - 状态：已完成；NGA 图片 Header/Cookie 仅限可信域名，V2EX 公开请求不携带 Authorization/Cookie，Token 请求强制限制为 HTTPS 官方 `/api/v2/`，LINUX DO 只有403进入 WebKit fallback。共享会话描述仅暴露安全身份摘要，不携带 CID、Cookie 名称或 Token；完整 `ForumHubTests` 已在真机通过。
+  - 验收标准：
+    - 非 NGA 请求不携带 NGA Header/Cookie；
+    - Token、Cookie 和密码不进入共享描述或日志；
+    - Token 过期、Cookie 部分同步和浏览器 challenge 有明确恢复路径；
+    - 401/403 不做无条件自动重试。
+
+- [ ] **SD-5.2 评估通用 `HTTPClient` 与 `RetryPolicy`**
+  - 具体问题：只有两个以上数据源出现相同请求生命周期或重试逻辑时才值得抽取共享接缝。
+  - 涉及文件或模块：Data、Session、未来 Infrastructure/Networking
+  - 优先级：P3
+  - 状态：条件未触发。
+  - 验收标准：
+    - 列出至少两个真实重复消费者；
+    - 保留来源特有认证和 WebKit fallback；
+    - 重试策略覆盖取消、超时、5xx、401/403 边界；
+    - 无充分复用时不实施。
+
+---
+
+## 阶段 6：图片与 GIF（高优先级性能切片）
+
+- [ ] **SD-6.1 建立 GIF 密集帖真机性能基线**
+  - 具体问题：当前已观察到图片/GIF 密集帖高 CPU、约 743 MB 内存和 High 能耗，但缺少固定可重复基线。
+  - 涉及文件或模块：图片管线、GIF 播放、帖子详情、性能记录
+  - 优先级：P1
+  - 状态：按用户要求暂缓，不在当前主线继续推进。测量协议和样本 A（NGA `tid=47139977`）保留，未来只有在用户重新启用该优化并提供可供 Instruments 识别的 USB 真机时恢复；依赖本基线的 `SD-6.2`、`SD-6.3` 同步暂停。
+  - 验收标准：
+    - 固定真机、帖子、网络条件和操作路径；
+    - 记录 CPU、峰值内存、帧率、能耗和首次可读时间；
+    - 区分静态图、GIF 下载、解码和播放成本；
+    - 结果可用于比较后续方案。
+
+- [ ] **SD-6.2 完善 GIF 生命周期与资源释放**
+  - 具体问题：活动数量、离屏暂停、后台停止、内存警告和超大 GIF 降级需要统一策略。
+  - 涉及文件或模块：`InlineGIFPlaybackCoordinator`、媒体视图、App 生命周期、图片缓存
+  - 优先级：P1
+  - 状态：等待 `SD-6.1` 基线。
+  - 验收标准：
+    - 同时活动 GIF 不超过配置上限；
+    - 离屏、高速滚动、后台和低电量状态正确暂停；
+    - 内存警告释放帧缓存；
+    - 超大 GIF 支持首帧或点击播放降级；
+    - 相同 URL 不重复下载，指标优于基线。
+
+- [ ] **SD-6.3 评估替换 GIF 播放实现**
+  - 具体问题：只有现有管线在生命周期治理后仍不达标，才考虑 SDWebImage 等替代方案。
+  - 涉及文件或模块：项目依赖、GIF 播放与缓存链路
+  - 优先级：P2
+  - 状态：条件未触发。
+  - 验收标准：
+    - 与 `SD-6.1` 基线进行同设备对比；
+    - 静态图、GIF/APNG、Cookie/Header 和预览流程不回归；
+    - 仅在性能和稳定性明确更优时保留依赖；
+    - 可独立回退。
+
+---
+
+## 阶段 7：其他 Feature 按缺陷迁移
+
+- [ ] **SD-7.1 为持久化增加版本、损坏降级和迁移测试**
+  - 具体问题：本地 Store 尚未统一表达 schema version、损坏降级和未来迁移规则。
+  - 涉及文件或模块：Favorites、History、BlockedUsers、ChannelSubscription、Settings、Session 边界
+  - 优先级：P2
+  - 状态：待处理；iCloud 继续禁用。
+  - 验收标准：
+    - 用户内容 Store 具有明确版本和损坏降级；
+    - 旧数据迁移测试通过；
+    - 身份始终包含来源维度；
+    - 认证状态不与普通用户内容合并迁移；
+    - 不启用云同步。
+
+- [ ] **SD-7.2 按已确认缺陷迁移 Feed、Search、Account 等 Feature**
+  - 具体问题：其他 Feature 不应按预设顺序重构，只在真实缺陷或共享需求出现时处理。
+  - 涉及文件或模块：Feed、Search、Account、Community、History、Settings
+  - 优先级：P3
+  - 状态：常驻入口，不代表已批准具体改动。
+  - 验收标准：
+    - 每个子项先记录已确认问题、证据和独立验收标准；
+    - 每次只迁移一个 Feature 的一个垂直切片；
+    - 不顺手创建全局 Use Case、依赖容器或重排目录；
+    - 相关测试和用户文档同步。
+
+---
+
+## 已完成基线（不再重复迁移）
+
+以下能力是后续迁移必须保持的回归基线，不再作为未完成任务重复出现：
+
+- 帖子详情加载、分页、回复和收藏状态已迁移到 `ThreadDetailViewModel`。
+- Feed、Search、Detail 已具备请求取消和 generation 防过期回写。
+- 详情分页和图片上传入口已由 `ForumCapabilities` 表达。
+- `ForumPostDocument` 已保留原始标记和原生阅读投影。
+- `ForumThread` 内容相等与 `source + id` 身份判断已分离。
+- NGA 连续分页、重复主楼移除、页码追踪和连续回顶已有真机回归。
+- NGA 图片 Header 域名隔离、登录恢复、LINUX DO 解析已有单元测试。
+- 正式测试策略文档已建立，iCloud 同步保持禁用。
+
+---
+
+## 旧待办迁移说明
+
+旧 `R-*`、`T-*` 和按页面分类的待办已停止作为工作队列使用：
+
+| 旧事项类别 | 新主线归属 |
+| --- | --- |
+| NGA 富文本、API/Web 合并、分页 Fixture | `SD-0.2`、`SD-2.1`、`SD-4.1` |
+| Mock UI Test 与请求代次 | `SD-0.1`；已完成部分进入基线 |
+| 组合身份、收藏、历史与同步 | `SD-1.1`、`SD-1.2`、`SD-7.1` |
+| 详情滚动、分页、回顶和媒体状态 | `SD-3.1`、`SD-3.2`；已完成部分进入基线 |
+| GIF 性能、播放数量和资源释放 | `SD-6.1`–`SD-6.3` |
+| 搜索、Feed、账户、社区和体验优化 | `SD-7.2`，仅由已确认缺陷触发 |
+| 已完成缺陷修复 | “已完成基线”或 Git 历史，不再重复列项 |
+
+旧清单中纯产品偏好、没有证据的体验设想和已被当前实现取代的方案不自动迁移。若后续出现真实需求，应按 `SD-7.2` 新建可验证的垂直切片，而不是恢复旧编号。

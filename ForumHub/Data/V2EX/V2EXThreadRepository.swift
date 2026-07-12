@@ -1,5 +1,27 @@
 import Foundation
 
+enum V2EXRequestBuilder {
+    static func publicRequest(url: URL, accept: String) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        request.setValue("ForumHub/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        return request
+    }
+
+    static func authenticatedAPIRequest(url: URL, token: String) throws -> URLRequest {
+        guard url.scheme == "https",
+              url.host?.lowercased() == "www.v2ex.com",
+              url.path.hasPrefix("/api/v2/")
+        else {
+            throw ForumProviderError.invalidResponse
+        }
+
+        var request = publicRequest(url: url, accept: "application/json")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return request
+    }
+}
+
 struct V2EXThreadRepository: ThreadRepository {
     let source = ForumSource.v2ex
     let capabilities = ForumCapabilities(
@@ -180,9 +202,7 @@ struct V2EXThreadRepository: ThreadRepository {
         components.queryItems = queryItems.isEmpty ? nil : queryItems
         guard let url = components.url else { throw ForumProviderError.invalidResponse }
 
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("NGAReader/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        let request = V2EXRequestBuilder.publicRequest(url: url, accept: "application/json")
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
             throw ForumProviderError.invalidResponse
@@ -209,9 +229,7 @@ struct V2EXThreadRepository: ThreadRepository {
         components.queryItems = [URLQueryItem(name: "p", value: String(page))]
         guard let url = components.url else { throw ForumProviderError.invalidResponse }
 
-        var request = URLRequest(url: url)
-        request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
-        request.setValue("ForumHub/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        let request = V2EXRequestBuilder.publicRequest(url: url, accept: "text/html,application/xhtml+xml")
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
             throw ForumProviderError.invalidResponse
@@ -230,9 +248,7 @@ struct V2EXThreadRepository: ThreadRepository {
         components.queryItems = [URLQueryItem(name: "p", value: String(page))]
         guard let url = components.url else { throw ForumProviderError.invalidResponse }
 
-        var request = URLRequest(url: url)
-        request.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
-        request.setValue("ForumHub/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        let request = V2EXRequestBuilder.publicRequest(url: url, accept: "text/html,application/xhtml+xml")
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
             throw ForumProviderError.invalidResponse
@@ -248,10 +264,7 @@ struct V2EXThreadRepository: ThreadRepository {
         components.queryItems = queryItems
         guard let requestURL = components.url else { throw ForumProviderError.invalidResponse }
 
-        var request = URLRequest(url: requestURL)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("ForumHub/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        let request = try V2EXRequestBuilder.authenticatedAPIRequest(url: requestURL, token: token)
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
             throw ForumProviderError.invalidResponse

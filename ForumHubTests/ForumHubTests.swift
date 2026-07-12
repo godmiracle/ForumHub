@@ -485,6 +485,26 @@ struct ForumHubTests {
         #expect(merged.contentDocument.markupFormat == .html)
     }
 
+    @Test func ngaThreadResolverPreservesAPIContentWhenWebEnrichmentFails() throws {
+        let bundle = Bundle(for: FixtureLocator.self)
+        let apiURL = try #require(
+            bundle.url(forResource: "nga-thread-api-incomplete", withExtension: "json", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "nga-thread-api-incomplete", withExtension: "json")
+        )
+        let apiData = try Data(contentsOf: apiURL)
+        let apiThread = try #require(ThreadDetailParser.parse(
+            data: apiData,
+            fallbackText: String(decoding: apiData, as: UTF8.self),
+            tid: 47151166
+        ))
+
+        let resolved = NGAThreadDetailMerger.resolve(apiThread: apiThread, webThread: nil)
+
+        #expect(resolved == apiThread)
+        #expect(resolved?.contentDocument.rawMarkup == apiThread.contentDocument.rawMarkup)
+        #expect(resolved?.replies == apiThread.replies)
+    }
+
     @Test func webThreadParserRejectsAccessDeniedPage() {
         let html = """
         <html><head><title>访客不能直接访问</title></head>
@@ -583,6 +603,36 @@ struct ForumHubTests {
         """
 
         #expect(!NGAThreadParseQuality.needsWebEnrichment(thread: thread, rawText: rawText))
+    }
+
+    @Test func ngaContentQualityUsesDocumentInsteadOfLegacyBody() {
+        let thread = ForumThread(
+            id: 47151166,
+            title: "正文权威来源",
+            summary: "列表摘要",
+            author: "楼主",
+            lastReplyAt: "",
+            replyCount: 0,
+            viewCount: 0,
+            body: "兼容字段中的旧正文",
+            contentDocument: .plainText(""),
+            replies: []
+        )
+
+        #expect(NGAThreadParseQuality.needsWebEnrichment(thread: thread, rawText: ""))
+        #expect(thread.body.isEmpty)
+    }
+
+    @Test func replyBodyIsAReadOnlyContentDocumentProjection() {
+        let reply = Reply(
+            id: 1,
+            author: "回复者",
+            createdAt: "",
+            body: "旧兼容正文",
+            contentDocument: .ngaBBCode("权威回复正文")
+        )
+
+        #expect(reply.body == "权威回复正文")
     }
 
     @Test func ngaReplyImagesDoNotMakeACompleteMainPostUseWebEnrichment() {
@@ -828,6 +878,8 @@ struct ForumHubTests {
         let restored = FavoriteThreadsStore(defaults: defaults)
         #expect(restored.entries.count == 2)
         #expect(restored.entries.map(\.source) == [.v2ex, .nga])
+        #expect(restored.entries.allSatisfy { $0.thread.body.isEmpty })
+        #expect(restored.entries.allSatisfy { $0.thread.contentDocument.normalizedText.isEmpty })
 
         restored.toggle(ngaThread)
         #expect(!restored.contains(ngaThread))
@@ -929,6 +981,36 @@ struct ForumHubTests {
         #expect(page.replies.map(\.floorNumber) == [21, 22])
     }
 
+    @Test func threadDetailParserPreservesMediaAndQuotedMarkupOnLaterPages() throws {
+        let bundle = Bundle(for: FixtureLocator.self)
+        let fixtureURL = try #require(
+            bundle.url(forResource: "nga-thread-page2-media", withExtension: "json", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "nga-thread-page2-media", withExtension: "json")
+        )
+        let data = try Data(contentsOf: fixtureURL)
+        let page = try #require(ThreadDetailParser.parse(
+            data: data,
+            fallbackText: String(decoding: data, as: UTF8.self),
+            tid: 47151166,
+            page: 2
+        ))
+
+        #expect(page.replies.map(\.id) == [201, 202])
+        let mediaReply = try #require(page.replies.first)
+        let imageURLs = ForumContentParser.parse(mediaReply.contentDocument.normalizedText).compactMap { block -> URL? in
+            if case let .image(url) = block.content { return url }
+            return nil
+        }
+        #expect(imageURLs.map(\.absoluteString) == [
+            "https://img.nga.178.com/attachments/page-2.gif",
+            "https://img.nga.178.com/attachments/mon_202607/page-2.jpg?name=a&size=full"
+        ])
+
+        let quotedReply = try #require(page.replies.last)
+        #expect(quotedReply.contentDocument.rawMarkup.contains("./mon_202607/quoted-image.jpg"))
+        #expect(quotedReply.contentDocument.normalizedText.contains("quoted-image.jpg"))
+    }
+
     @Test func threadDetailParserDoesNotTurnQuoteMetadataIntoAReply() throws {
         let json = """
         {
@@ -990,6 +1072,38 @@ struct ForumHubTests {
         #expect(result.appendedReplies.map(\.id) == [203])
         #expect(result.thread.replies.map(\.id) == [101, 102, 203])
         #expect(result.thread.lastReplyAt == "10:02")
+    }
+
+    @Test func paginationMergerUsesContentDocumentToIdentifyRepeatedMainPost() {
+        let currentThread = ForumThread(
+            id: 100,
+            title: "分页测试主题",
+            summary: "",
+            author: "楼主",
+            lastReplyAt: "",
+            replyCount: 1,
+            viewCount: 0,
+            body: "旧主楼投影",
+            contentDocument: .ngaBBCode("权威主楼正文"),
+            replies: []
+        )
+        let repeatedMainPost = Reply(
+            id: 0,
+            author: "楼主",
+            createdAt: "",
+            body: "不同的旧回复投影",
+            contentDocument: .ngaBBCode("权威主楼正文")
+        )
+        let continuationThread = currentThread.replacingReplies([repeatedMainPost])
+
+        let result = ThreadDetailPaginationMerger.merge(
+            currentThread: currentThread,
+            continuationThread: continuationThread,
+            replyTotalCount: 1
+        )
+
+        #expect(result.continuationReplies.isEmpty)
+        #expect(result.thread.replies.isEmpty)
     }
 
     @Test func paginationMergerPreservesPageOrderAcrossMultiPageJump() {
@@ -1089,6 +1203,21 @@ struct ForumHubTests {
 
         #expect(ThreadSnapshotRenderer.replyChunks(replies).map(\.count) == [6, 6, 1])
         #expect(ThreadSnapshotRenderer.replyChunks([]).count == 1)
+    }
+
+    @Test func threadDetailScrollStateResetsOnlyPresentationTracking() {
+        let state = ThreadDetailScrollState()
+        state.visiblePage = 3
+        state.pendingPageSelection = 4
+        state.deferredTargetPage = 4
+        state.lastAutoLoadedPage = 5
+
+        state.resetPageTracking()
+
+        #expect(state.visiblePage == 1)
+        #expect(state.pendingPageSelection == 1)
+        #expect(state.deferredTargetPage == nil)
+        #expect(state.lastAutoLoadedPage == nil)
     }
 
     @Test func snapshotRendererProducesShareableImages() async throws {

@@ -42,7 +42,7 @@ struct SavedForumThread: Codable, Equatable, Identifiable {
             lastReplyAt: lastReplyAt,
             replyCount: replyCount,
             viewCount: viewCount,
-            body: summary,
+            body: "",
             replies: [],
             source: source,
             channelID: channelID,

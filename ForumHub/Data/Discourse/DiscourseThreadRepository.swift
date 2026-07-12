@@ -1,5 +1,11 @@
 import Foundation
 
+enum LinuxDoRequestPolicy {
+    static func shouldUseBrowserFallback(statusCode: Int) -> Bool {
+        statusCode == 403
+    }
+}
+
 struct DiscourseThreadRepository: ThreadRepository {
     let source = ForumSource.linuxDo
     let capabilities = ForumCapabilities(
@@ -151,7 +157,7 @@ struct DiscourseThreadRepository: ThreadRepository {
             throw ForumProviderError.invalidResponse
         }
         guard (200..<300).contains(httpResponse.statusCode) else {
-            if httpResponse.statusCode == 403 {
+            if LinuxDoRequestPolicy.shouldUseBrowserFallback(statusCode: httpResponse.statusCode) {
                 return try await LinuxDoBrowserRequestSession.shared.fetchJSON(from: url)
             }
             throw ForumProviderError.httpStatus(httpResponse.statusCode)

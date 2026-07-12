@@ -19,10 +19,10 @@ struct V2EXAuthService: V2EXAuthenticating {
     }
 
     func validate(token: String) async throws -> V2EXAccount {
-        var request = URLRequest(url: URL(string: "https://www.v2ex.com/api/v2/member")!)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("NGAReader/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        let request = try V2EXRequestBuilder.authenticatedAPIRequest(
+            url: URL(string: "https://www.v2ex.com/api/v2/member")!,
+            token: token
+        )
 
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {

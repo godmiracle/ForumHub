@@ -78,6 +78,10 @@ xcodebuild \
 
 `build-for-testing` 不等同于真机执行；必须在测试记录中明确标注实际运行环境。
 
+## 迁移验证记录
+
+完成 `ForumHub-System-Design.md` 的迁移切片时，使用 [sessions/README.md](sessions/README.md) 中的模板，并按日期写入 `docs/sessions/YYYY-MM-DD.md`。记录只补充自动化日志无法表达的环境、范围、限制和回滚依据，不复制完整构建输出。
+
 ## Fixture 规则
 
 - 可复用远端样本放入 `ForumHubTests/Fixtures`；

@@ -246,7 +246,6 @@ struct ForumThread: Identifiable, Equatable {
     let lastReplyAt: String
     let replyCount: Int
     let viewCount: Int
-    let body: String
     let contentDocument: ForumPostDocument
     let replies: [Reply]
     let source: ForumSource
@@ -279,13 +278,15 @@ struct ForumThread: Identifiable, Equatable {
         self.lastReplyAt = lastReplyAt
         self.replyCount = replyCount
         self.viewCount = viewCount
-        self.body = body
         self.contentDocument = contentDocument ?? .plainText(body)
         self.replies = replies
         self.source = source
         self.channelID = channelID
         self.channelTitle = channelTitle
     }
+
+    /// 兼容旧调用点的只读正文投影；权威内容始终来自 `contentDocument`。
+    var body: String { contentDocument.normalizedText }
 
     var authorReplies: [Reply] {
         guard author.isUsefulForumValue else { return [] }
@@ -389,8 +390,9 @@ struct ForumThread: Identifiable, Equatable {
             lastReplyAt: lastReplyAt.isUsefulForumValue ? lastReplyAt : fallback.lastReplyAt,
             replyCount: max(replyCount, fallback.replyCount),
             viewCount: max(viewCount, fallback.viewCount),
-            body: body.isUsefulForumValue ? body : fallback.body,
-            contentDocument: body.isUsefulForumValue ? contentDocument : fallback.contentDocument,
+            // 信息流只提供摘要；详情响应缺少正文时不能用列表内容冒充主楼。
+            body: body,
+            contentDocument: contentDocument,
             replies: replies,
             source: source,
             channelID: channelID ?? fallback.channelID,
@@ -508,7 +510,6 @@ struct Reply: Identifiable, Equatable {
     let sourcePostID: Int?
     let author: String
     let createdAt: String
-    let body: String
     let contentDocument: ForumPostDocument
     let avatarURL: URL?
     let floorNumber: Int?
@@ -527,11 +528,13 @@ struct Reply: Identifiable, Equatable {
         self.sourcePostID = sourcePostID
         self.author = author
         self.createdAt = createdAt
-        self.body = body
         self.contentDocument = contentDocument ?? .plainText(body)
         self.avatarURL = avatarURL
         self.floorNumber = floorNumber
     }
+
+    /// 兼容旧调用点的只读正文投影；权威内容始终来自 `contentDocument`。
+    var body: String { contentDocument.normalizedText }
 
     var signatureKey: String {
         let normalizedAuthor = author

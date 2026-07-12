@@ -79,7 +79,7 @@ struct RequestGenerationTests {
         let refresh = Task { @MainActor in
             await viewModel.refresh(thread: feedThread, repository: repository)
         }
-        await refresh.value
+        _ = await refresh.value
 
         #expect(viewModel.content.thread.body == "正文")
         #expect(!viewModel.content.isLoading)
@@ -113,6 +113,72 @@ struct RequestGenerationTests {
 
         #expect(feedThread != detailThread)
     }
+
+    @Test func detailMetadataFallbackNeverPromotesFeedSummaryToMainPost() async {
+        let feedThread = ForumThread(
+            id: 1,
+            title: "主题标题",
+            summary: "列表摘要，不能作为主楼正文",
+            author: "测试用户",
+            createdAt: "",
+            lastReplyAt: "",
+            replyCount: 3,
+            viewCount: 8,
+            body: "列表摘要，不能作为主楼正文",
+            replies: []
+        )
+        let emptyDetail = ForumThread(
+            id: 1,
+            title: "",
+            summary: "",
+            author: "",
+            createdAt: "",
+            lastReplyAt: "",
+            replyCount: 0,
+            viewCount: 0,
+            body: "",
+            contentDocument: .plainText(""),
+            replies: []
+        )
+        let viewModel = ThreadDetailViewModel(thread: feedThread)
+
+        _ = await viewModel.refresh(
+            thread: feedThread,
+            repository: ImmediateThreadRepository(thread: emptyDetail)
+        )
+
+        #expect(viewModel.content.thread.title == feedThread.title)
+        #expect(viewModel.content.thread.author == feedThread.author)
+        #expect(viewModel.content.thread.replyCount == feedThread.replyCount)
+        #expect(viewModel.content.thread.body.isEmpty)
+        #expect(viewModel.content.thread.contentDocument.normalizedText.isEmpty)
+    }
+}
+
+private struct ImmediateThreadRepository: ThreadRepository {
+    let thread: ForumThread
+    let source = ForumSource.nga
+    let capabilities = ForumCapabilities(
+        supportsSearch: true,
+        supportsFavorites: false,
+        supportsReply: false,
+        supportsReplyTargeting: false,
+        supportsAuthentication: false,
+        supportsFeedPagination: true
+    )
+    let defaultChannel = ForumChannel(id: 1, title: "测试版块")
+
+    func fetchChannels() async throws -> [ForumChannel] { [defaultChannel] }
+    func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult { fatalError() }
+    func fetchHotThreads(page: Int) async throws -> ThreadFetchResult { fatalError() }
+    func fetchFavoriteThreads(page: Int) async throws -> ThreadFetchResult { fatalError() }
+    func searchThreads(query: String, page: Int) async throws -> ThreadFetchResult { fatalError() }
+    func fetchThread(tid: Int, page: Int) async throws -> ThreadDetailFetchResult {
+        ThreadDetailFetchResult(thread: thread, rawText: "")
+    }
+    func addFavoriteThread(tid: Int) async throws {}
+    func removeFavoriteThread(tid: Int) async throws {}
+    func replyThread(tid: Int, target: ThreadReplyTarget, content: String, attachments: [ReplyAttachmentUpload]) async throws {}
 }
 
 private struct DelayedThreadRepository: ThreadRepository {
