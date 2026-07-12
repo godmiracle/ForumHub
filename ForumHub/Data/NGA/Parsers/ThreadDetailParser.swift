@@ -100,25 +100,15 @@ struct ThreadDetailParser {
 
     private static func postDictionaries(from result: Any?) -> [[String: Any]]? {
         if let dictionaries = result as? [[String: Any]] {
-            return dictionaries.filter(isThreadPostDictionary)
+            return sortPostDictionaries(dictionaries.filter(isThreadPostDictionary))
         }
 
         if let dictionary = result as? [String: Any] {
-            let keyedPosts = dictionary.compactMap { key, value -> (Int, [String: Any])? in
+            let posts = dictionary.compactMap { _, value -> [String: Any]? in
                 guard let nested = value as? [String: Any], isThreadPostDictionary(nested) else { return nil }
-                let sortKey = Int(key)
-                    ?? int(for: ["lou", "floor", "position", "pid", "id", "post_id"], in: nested)
-                    ?? Int.max
-                return (sortKey, nested)
+                return nested
             }
-            .sorted { lhs, rhs in
-                if lhs.0 == rhs.0 {
-                    return (int(for: ["pid", "id", "post_id"], in: lhs.1) ?? .max)
-                        < (int(for: ["pid", "id", "post_id"], in: rhs.1) ?? .max)
-                }
-                return lhs.0 < rhs.0
-            }
-            .map(\.1)
+            let keyedPosts = sortPostDictionaries(posts)
 
             if !keyedPosts.isEmpty {
                 return keyedPosts
@@ -126,6 +116,37 @@ struct ThreadDetailParser {
         }
 
         return nil
+    }
+
+    /// 不依赖 API 数组顺序。主楼在 NGA 中由 `pid == 0` 或楼层号 `0` 标识；
+    /// 部分旧响应把主楼标为 `lou == 1`，但此时仍以 `pid == 0` 优先。
+    private static func sortPostDictionaries(_ dictionaries: [[String: Any]]) -> [[String: Any]] {
+        dictionaries.sorted { lhs, rhs in
+            let lhsRank = postSortRank(lhs)
+            let rhsRank = postSortRank(rhs)
+            if lhsRank != rhsRank {
+                return lhsRank < rhsRank
+            }
+
+            let lhsFloor = int(for: ["lou", "floor", "position"], in: lhs) ?? .max
+            let rhsFloor = int(for: ["lou", "floor", "position"], in: rhs) ?? .max
+            if lhsFloor != rhsFloor {
+                return lhsFloor < rhsFloor
+            }
+
+            return (int(for: ["pid", "id", "post_id"], in: lhs) ?? .max)
+                < (int(for: ["pid", "id", "post_id"], in: rhs) ?? .max)
+        }
+    }
+
+    private static func postSortRank(_ dictionary: [String: Any]) -> Int {
+        if int(for: ["pid", "post_id"], in: dictionary) == 0 {
+            return 0
+        }
+        if int(for: ["lou", "floor", "position"], in: dictionary) == 0 {
+            return 0
+        }
+        return 1
     }
 
     /// `result` 同时包含真实楼层和引用等辅助字典；只有带 NGA 帖子身份字段的记录才可成为回帖。
@@ -204,8 +225,8 @@ struct ThreadDetailParser {
         fallbackID: Int,
         userNamesByID: [Int: String]
     ) -> Reply? {
-        guard let body = contentText(in: dictionary)?
-            .structuredForumText,
+        guard let rawContent = contentText(in: dictionary),
+              let body = Optional(rawContent.structuredForumText),
             !body.isEmpty
         else {
             return nil
@@ -220,6 +241,7 @@ struct ThreadDetailParser {
             author: resolvedAuthor ?? "未知作者",
             createdAt: string(for: ["postdate", "timestamp", "created_at", "lastpost", "time"], in: dictionary) ?? "未知时间",
             body: body,
+            contentDocument: .ngaBBCode(rawContent),
             avatarURL: avatarURL(in: dictionary),
             floorNumber: int(for: ["lou", "floor", "position"], in: dictionary)
         )

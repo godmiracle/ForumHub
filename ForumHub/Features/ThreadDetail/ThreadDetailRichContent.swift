@@ -21,6 +21,18 @@ struct ForumRichContentView: View {
         self.scrollTrackingSpaceName = scrollTrackingSpaceName
     }
 
+    init(
+        document: ForumPostDocument,
+        fontSize: CGFloat,
+        activeGIFPlaybackImageIDs: Set<UUID> = [],
+        scrollTrackingSpaceName: String? = nil
+    ) {
+        blocks = ForumContentParser.parse(document.normalizedText)
+        self.fontSize = fontSize
+        self.activeGIFPlaybackImageIDs = activeGIFPlaybackImageIDs
+        self.scrollTrackingSpaceName = scrollTrackingSpaceName
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(blocks) { block in
@@ -238,21 +250,32 @@ private struct InteractiveForumImage: View {
     }
 
     private func loadImage() async {
-        let hadPreviousAsset = asset != nil
-        if asset == nil {
-            failed = false
-        }
         failed = false
 
-        do {
-            asset = try await NGAImageLoader.loadAsset(url: url)
-        } catch is CancellationError {
-            if !hadPreviousAsset, asset == nil {
-                failed = true
+        // 详情页状态更新会让 SwiftUI 取消并重建图片任务。取消表示当前 View
+        // 不再等待结果，不能当成图片加载失败；否则首次进入会留下失败占位，
+        // 只有再次打开帖子才会重新请求。
+        for attempt in 0..<2 {
+            do {
+                asset = try await NGAImageLoader.loadAsset(url: url)
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                guard attempt == 0 else {
+                    failed = true
+                    return
+                }
+
+                do {
+                    try await Task.sleep(for: .milliseconds(350))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    failed = true
+                    return
+                }
             }
-            return
-        } catch {
-            failed = true
         }
     }
 

@@ -24,6 +24,10 @@
 
 ### Thread Detail
 
+- Fixed same-thread detail refreshes being ignored when the full main post replaced a feed summary; thread content equality now includes all rendered fields while identity checks remain explicitly source-and-ID based.
+- Prevented feed summaries from being shown as 0楼正文 while a thread detail request is pending; the detail page now waits for the authoritative post content before rendering it.
+- Fixed NGA main-post media loading so a SwiftUI task cancellation is not shown as an image failure; the main-post floor tag now correctly displays `0楼`.
+- Made NGA detail loading reconcile every page with the source web document before presenting it, preventing a transient first API response from showing a truncated main post; nested HTML containers now preserve their full post content during extraction.
 - Added an in-app NGA "Browse original web thread" reader in the detail More menu. It restores and injects the active NGA cookie session before loading; a Debug-only action can copy the current raw response for parser regression investigation.
 - Added thread detail floor labels
 - Added only-author mode

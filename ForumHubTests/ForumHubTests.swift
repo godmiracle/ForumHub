@@ -259,6 +259,42 @@ struct ForumHubTests {
         })
     }
 
+    @Test func threadDetailParserUsesZeroFloorAsMainPostWhenAPIArrayIsUnordered() throws {
+        let json = """
+        {
+          "result": [
+            {
+              "pid": 8801,
+              "tid": 47170004,
+              "lou": 1,
+              "author": { "username": "回复者" },
+              "content": "不应成为主楼的回复"
+            },
+            {
+              "pid": 0,
+              "tid": 47170004,
+              "lou": 0,
+              "subject": "乱序 API 主楼测试",
+              "author": { "username": "楼主" },
+              "content": "完整的零楼主贴"
+            }
+          ]
+        }
+        """
+        let data = try #require(json.data(using: .utf8))
+
+        let thread = try #require(ThreadDetailParser.parse(
+            data: data,
+            fallbackText: json,
+            tid: 47170004
+        ))
+
+        #expect(thread.author == "楼主")
+        #expect(thread.body == "完整的零楼主贴")
+        #expect(thread.replies.map(\.body) == ["不应成为主楼的回复"])
+        #expect(thread.replies.first?.floorNumber == 1)
+    }
+
     @Test func threadDetailParserResolvesContinuationAuthorFromUserDirectory() throws {
         let json = """
         {
@@ -445,7 +481,8 @@ struct ForumHubTests {
             if case let .image(url) = block.content { return url }
             return nil
         }.count == 2)
-        #expect(merged.replies.map(\.body) == ["API 已有回复"])
+        #expect(merged.replies.map(\.body) == ["API 已有回复\n网页补充回复"])
+        #expect(merged.contentDocument.markupFormat == .html)
     }
 
     @Test func webThreadParserRejectsAccessDeniedPage() {
@@ -474,6 +511,21 @@ struct ForumHubTests {
             if case let .image(url) = block.content { return url }
             return nil
         }.count == 2)
+    }
+
+    @Test func webThreadParserKeepsNestedContainersInsideMainPost() throws {
+        let html = """
+        <html><head><title>嵌套正文 - NGA玩家社区</title></head><body>
+        <div id="postcontent0">主楼开头<div class="quote">引用开头<div>引用内层</div>引用结尾</div>主楼结尾</div>
+        <div id="postcontent1">第一条回复</div>
+        </body></html>
+        """
+
+        let thread = try #require(WebForumParser.parseThreadHTML(html, tid: 47170003))
+        #expect(thread.body.contains("主楼开头"))
+        #expect(thread.body.contains("引用内层"))
+        #expect(thread.body.contains("主楼结尾"))
+        #expect(thread.replies.map(\.body) == ["第一条回复"])
     }
 
     @Test func threadDetailParserPreservesAllImagesFromRealNGAAPIShape() throws {
@@ -528,6 +580,36 @@ struct ForumHubTests {
         )
         let rawText = """
         {"content":"前半段正文[图片] https://img.nga.178.com/attachments/first.jpg"}
+        """
+
+        #expect(!NGAThreadParseQuality.needsWebEnrichment(thread: thread, rawText: rawText))
+    }
+
+    @Test func ngaReplyImagesDoNotMakeACompleteMainPostUseWebEnrichment() {
+        let thread = ForumThread(
+            id: 47170001,
+            title: "主楼完整性判断",
+            summary: "主楼正文",
+            author: "楼主",
+            lastReplyAt: "",
+            replyCount: 1,
+            viewCount: 0,
+            body: "主楼正文",
+            contentDocument: .ngaBBCode("主楼正文"),
+            replies: [
+                Reply(
+                    id: 1,
+                    author: "回复者",
+                    createdAt: "",
+                    body: "[图片] https://img.nga.178.com/attachments/reply.jpg"
+                )
+            ]
+        )
+        let rawText = """
+        {"result":[
+          {"pid":0,"content":"主楼正文"},
+          {"pid":1,"content":"[img]https://img.nga.178.com/attachments/reply.jpg[/img]"}
+        ]}
         """
 
         #expect(!NGAThreadParseQuality.needsWebEnrichment(thread: thread, rawText: rawText))

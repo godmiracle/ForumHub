@@ -235,6 +235,34 @@ struct NGALiveThreadRepository: ThreadRepository {
     }
 
     func fetchThread(tid: Int, page: Int) async throws -> ThreadDetailFetchResult {
+        let firstAPIResult = try await fetchAPIThread(tid: tid, page: page)
+        // NGA API 的正文可能是可解析但被截断的版本。网页正文是内容权威源，
+        // 因此每次详情加载都要参与合并，而不是先猜 API 是否缺失再决定请求它。
+        do {
+            let webResult = try await fetchWebThread(
+                tid: tid,
+                page: page,
+                apiRawText: firstAPIResult.rawText
+            )
+            if let apiThread = firstAPIResult.thread {
+                return ThreadDetailFetchResult(
+                    thread: NGAThreadDetailMerger.merge(apiThread: apiThread, webThread: webResult.thread),
+                    rawText: webResult.rawText
+                )
+            }
+            return webResult
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // 网页源不可用时才降级使用 API；不以启发式判断跳过网页校验。
+            if let apiThread = firstAPIResult.thread {
+                return ThreadDetailFetchResult(thread: apiThread, rawText: firstAPIResult.rawText)
+            }
+            throw error
+        }
+    }
+
+    private func fetchAPIThread(tid: Int, page: Int) async throws -> (thread: ForumThread?, rawText: String) {
         let url = URL(string: "https://bbs.nga.cn/app_api.php?__lib=post&__act=list")!
         let (data, rawText) = try await post(
             url: url,
@@ -251,25 +279,10 @@ struct NGALiveThreadRepository: ThreadRepository {
             tid: tid,
             page: page
         ) {
-            guard NGAThreadParseQuality.needsWebEnrichment(thread: apiThread, rawText: rawText) else {
-                return ThreadDetailFetchResult(thread: apiThread, rawText: rawText)
-            }
-
-            do {
-                let webResult = try await fetchWebThread(tid: tid, page: page, apiRawText: rawText)
-                return ThreadDetailFetchResult(
-                    thread: NGAThreadDetailMerger.merge(apiThread: apiThread, webThread: webResult.thread),
-                    rawText: webResult.rawText
-                )
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                // API data remains usable when the optional web enrichment fails.
-                return ThreadDetailFetchResult(thread: apiThread, rawText: rawText)
-            }
+            return (apiThread, rawText)
         }
 
-        return try await fetchWebThread(tid: tid, page: page, apiRawText: rawText)
+        return (nil, rawText)
     }
 
     func addFavoriteThread(tid: Int) async throws {
@@ -805,9 +818,12 @@ struct NGALiveThreadRepository: ThreadRepository {
 enum NGAThreadParseQuality {
     private static let rawImageMarkerPattern = #"(?i)(?:\[图片\]|\[img\]|<img\b)"#
 
-    static func needsWebEnrichment(thread: ForumThread, rawText: String) -> Bool {
+    static func needsWebEnrichment(thread: ForumThread, rawText _: String) -> Bool {
         let body = thread.body.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rawImageCount = rawText.matches(pattern: rawImageMarkerPattern).count
+        // `rawText` 包含当前页全部回帖。若把所有楼层的图片都与主楼比较，
+        // 任意回帖带图都会把完整主楼误判为缺失，进而触发不稳定的网页兜底。
+        // 主楼原始文档才是主楼完整度的唯一比较对象。
+        let rawImageCount = thread.contentDocument.rawMarkup.matches(pattern: rawImageMarkerPattern).count
         let parsedImageCount = ForumContentParser.parse(thread.body).reduce(into: 0) { count, block in
             if case .image = block.content {
                 count += 1
@@ -818,14 +834,33 @@ enum NGAThreadParseQuality {
             || (thread.replyCount > 0 && thread.replies.isEmpty)
             || parsedImageCount < rawImageCount
     }
+
 }
 
 enum NGAThreadDetailMerger {
-    nonisolated static func merge(apiThread: ForumThread, webThread: ForumThread) -> ForumThread {
-        let resolvedBody = mergedBody(apiBody: apiThread.body, webBody: webThread.body)
-        // 网页正则会命中引用区块，不能把它当作楼层数据源。
-        // API 已成功解析时，帖子身份、顺序和作者均必须以 API 回帖集合为准。
-        let resolvedReplies = apiThread.replies
+    static func merge(apiThread: ForumThread, webThread: ForumThread) -> ForumThread {
+        let resolvedDocument = mergedDocument(
+            apiDocument: apiThread.contentDocument,
+            webDocument: webThread.contentDocument
+        )
+        let webRepliesByFloor = Dictionary(
+            webThread.replies.compactMap { reply in
+                reply.floorNumber.map { ($0, reply) }
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        // API 提供稳定的帖子身份、作者和顺序；网页只补全同一楼层的内容文档。
+        let resolvedReplies = apiThread.replies.map { apiReply in
+            guard let floor = apiReply.floorNumber,
+                  let webReply = webRepliesByFloor[floor]
+            else {
+                return apiReply
+            }
+            return apiReply.replacingContent(with: mergedDocument(
+                apiDocument: apiReply.contentDocument,
+                webDocument: webReply.contentDocument
+            ))
+        }
 
         return ForumThread(
             id: apiThread.id,
@@ -837,7 +872,8 @@ enum NGAThreadDetailMerger {
             lastReplyAt: apiThread.lastReplyAt.isUsefulForumValue ? apiThread.lastReplyAt : webThread.lastReplyAt,
             replyCount: max(apiThread.replyCount, webThread.replyCount, resolvedReplies.count),
             viewCount: max(apiThread.viewCount, webThread.viewCount),
-            body: resolvedBody,
+            body: resolvedDocument.normalizedText,
+            contentDocument: resolvedDocument,
             replies: resolvedReplies,
             source: apiThread.source,
             channelID: apiThread.channelID,
@@ -845,20 +881,23 @@ enum NGAThreadDetailMerger {
         )
     }
 
-    private nonisolated static func mergedBody(apiBody: String, webBody: String) -> String {
-        let apiValue = apiBody.trimmingCharacters(in: .whitespacesAndNewlines)
-        let webValue = webBody.trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func mergedDocument(
+        apiDocument: ForumPostDocument,
+        webDocument: ForumPostDocument
+    ) -> ForumPostDocument {
+        let apiValue = apiDocument.normalizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let webValue = webDocument.normalizedText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !apiValue.isEmpty else { return webValue }
-        guard !webValue.isEmpty else { return apiValue }
+        guard !apiValue.isEmpty else { return webDocument }
+        guard !webValue.isEmpty else { return apiDocument }
 
         let normalizedAPI = normalized(apiValue)
         let normalizedWeb = normalized(webValue)
         if normalizedAPI.contains(normalizedWeb) {
-            return apiValue
+            return apiDocument
         }
         if normalizedWeb.contains(normalizedAPI) {
-            return webValue
+            return webDocument
         }
 
         var knownUnits = Set(contentUnits(in: apiValue).map(normalized))
@@ -874,11 +913,16 @@ enum NGAThreadDetailMerger {
             missingUnits.append(unit)
         }
 
-        guard !missingUnits.isEmpty else { return apiValue }
-        return ([apiValue] + missingUnits).joined(separator: "\n")
+        guard !missingUnits.isEmpty else { return webDocument }
+        return ForumPostDocument(
+            rawMarkup: webDocument.rawMarkup,
+            normalizedText: ([apiValue] + missingUnits).joined(separator: "\n"),
+            markupFormat: webDocument.markupFormat,
+            sourceURL: webDocument.sourceURL
+        )
     }
 
-    private nonisolated static func contentUnits(in body: String) -> [String] {
+    private static func contentUnits(in body: String) -> [String] {
         body
             .split(whereSeparator: \.isNewline)
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }

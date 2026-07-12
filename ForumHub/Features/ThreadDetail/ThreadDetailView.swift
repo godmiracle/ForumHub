@@ -158,7 +158,7 @@ struct ThreadDetailView: View {
                                 VStack(spacing: 10) {
                                     ProgressView()
                                         .tint(PaperTheme.mutedText)
-                                    Text("正在加载回帖")
+                                    Text("正在加载帖子内容")
                                         .font(.subheadline.weight(.medium))
                                         .foregroundStyle(PaperTheme.mutedText)
                                 }

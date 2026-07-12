@@ -247,6 +247,7 @@ struct ForumThread: Identifiable, Equatable {
     let replyCount: Int
     let viewCount: Int
     let body: String
+    let contentDocument: ForumPostDocument
     let replies: [Reply]
     let source: ForumSource
     let channelID: Int?
@@ -263,6 +264,7 @@ struct ForumThread: Identifiable, Equatable {
         replyCount: Int,
         viewCount: Int,
         body: String,
+        contentDocument: ForumPostDocument? = nil,
         replies: [Reply],
         source: ForumSource = .nga,
         channelID: Int? = nil,
@@ -278,14 +280,11 @@ struct ForumThread: Identifiable, Equatable {
         self.replyCount = replyCount
         self.viewCount = viewCount
         self.body = body
+        self.contentDocument = contentDocument ?? .plainText(body)
         self.replies = replies
         self.source = source
         self.channelID = channelID
         self.channelTitle = channelTitle
-    }
-
-    static func == (lhs: ForumThread, rhs: ForumThread) -> Bool {
-        lhs.id == rhs.id && lhs.source == rhs.source
     }
 
     var authorReplies: [Reply] {
@@ -327,6 +326,7 @@ struct ForumThread: Identifiable, Equatable {
             replyCount: max(replyCount, combinedReplies.count),
             viewCount: viewCount,
             body: body,
+            contentDocument: contentDocument,
             replies: combinedReplies,
             source: source,
             channelID: channelID,
@@ -346,6 +346,7 @@ struct ForumThread: Identifiable, Equatable {
             replyCount: replyCount,
             viewCount: viewCount,
             body: body,
+            contentDocument: contentDocument,
             replies: replies,
             source: source,
             channelID: channel.id,
@@ -369,6 +370,7 @@ struct ForumThread: Identifiable, Equatable {
             replyCount: replyCount ?? self.replyCount,
             viewCount: viewCount,
             body: body,
+            contentDocument: contentDocument,
             replies: newReplies,
             source: source,
             channelID: channelID,
@@ -388,6 +390,7 @@ struct ForumThread: Identifiable, Equatable {
             replyCount: max(replyCount, fallback.replyCount),
             viewCount: max(viewCount, fallback.viewCount),
             body: body.isUsefulForumValue ? body : fallback.body,
+            contentDocument: body.isUsefulForumValue ? contentDocument : fallback.contentDocument,
             replies: replies,
             source: source,
             channelID: channelID ?? fallback.channelID,
@@ -506,6 +509,7 @@ struct Reply: Identifiable, Equatable {
     let author: String
     let createdAt: String
     let body: String
+    let contentDocument: ForumPostDocument
     let avatarURL: URL?
     let floorNumber: Int?
 
@@ -515,6 +519,7 @@ struct Reply: Identifiable, Equatable {
         author: String,
         createdAt: String,
         body: String,
+        contentDocument: ForumPostDocument? = nil,
         avatarURL: URL? = nil,
         floorNumber: Int? = nil
     ) {
@@ -523,6 +528,7 @@ struct Reply: Identifiable, Equatable {
         self.author = author
         self.createdAt = createdAt
         self.body = body
+        self.contentDocument = contentDocument ?? .plainText(body)
         self.avatarURL = avatarURL
         self.floorNumber = floorNumber
     }
@@ -538,6 +544,19 @@ struct Reply: Identifiable, Equatable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         return "\(normalizedAuthor)|\(normalizedCreatedAt)|\(normalizedBody)"
+    }
+
+    func replacingContent(with document: ForumPostDocument) -> Reply {
+        Reply(
+            id: id,
+            sourcePostID: sourcePostID,
+            author: author,
+            createdAt: createdAt,
+            body: document.normalizedText,
+            contentDocument: document,
+            avatarURL: avatarURL,
+            floorNumber: floorNumber
+        )
     }
 }
 

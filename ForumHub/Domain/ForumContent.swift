@@ -1,5 +1,54 @@
 import Foundation
 
+/// 帖子正文的可追溯表示。`normalizedText` 只服务于原生阅读器，不能替代
+/// `rawMarkup`；后者用于网页保真渲染及后续扩展富文本节点。
+struct ForumPostDocument: Equatable {
+    enum MarkupFormat: Equatable {
+        case plainText
+        case ngaBBCode
+        case html
+        case markdown
+    }
+
+    let rawMarkup: String
+    let normalizedText: String
+    let markupFormat: MarkupFormat
+    let sourceURL: URL?
+
+    init(
+        rawMarkup: String,
+        normalizedText: String,
+        markupFormat: MarkupFormat,
+        sourceURL: URL? = nil
+    ) {
+        self.rawMarkup = rawMarkup
+        self.normalizedText = normalizedText
+        self.markupFormat = markupFormat
+        self.sourceURL = sourceURL
+    }
+
+    static func plainText(_ text: String) -> ForumPostDocument {
+        ForumPostDocument(rawMarkup: text, normalizedText: text, markupFormat: .plainText)
+    }
+
+    static func ngaBBCode(_ markup: String) -> ForumPostDocument {
+        ForumPostDocument(
+            rawMarkup: markup,
+            normalizedText: markup.structuredForumText,
+            markupFormat: .ngaBBCode
+        )
+    }
+
+    static func html(_ markup: String, sourceURL: URL? = nil) -> ForumPostDocument {
+        ForumPostDocument(
+            rawMarkup: markup,
+            normalizedText: markup.structuredForumText,
+            markupFormat: .html,
+            sourceURL: sourceURL
+        )
+    }
+}
+
 struct ForumContentBlock: Identifiable, Equatable {
     enum Content: Equatable {
         case text(String)

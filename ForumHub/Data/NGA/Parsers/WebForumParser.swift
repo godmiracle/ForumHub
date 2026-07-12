@@ -117,13 +117,9 @@ struct WebForumParser {
         .replacingOccurrences(of: " - NGA玩家社区", with: "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let contentMatches = html.matches(
-            // NGA 正文节点使用精确的 `postcontent<楼层序号>` ID。不能匹配
-            // `postcontentandsubject` 等包装器或任意 `content` 类，否则首个命中
-            // 可能不是主楼，导致 1L 渲染为空或错位。
-            pattern: #"<(?:p|span|div|td)\b[^>]*\bid=['\"]postcontent\d+['\"][^>]*>(.*?)</(?:p|span|div|td)>"#,
-            options: [.caseInsensitive, .dotMatchesLineSeparators]
-        )
+        // 不能用 `.*?</div>` 一类正则提取正文：主楼中只要有嵌套 `div`，
+        // 就会在首个内层闭合标签提前截断。按标签层级取出精确的楼层节点。
+        let contentNodes = HTMLPostContentExtractor.postContentNodes(in: html)
 
         let pageAuthor = html.matches(
             pattern: #"(?:用户名|作者|poster|username)[^<]{0,24}<[^>]*>([^<]{1,40})</"#,
@@ -134,16 +130,19 @@ struct WebForumParser {
         .first?
         .cleanedForumText
 
-        var replies = contentMatches.enumerated().compactMap { index, match -> Reply? in
-            guard match.count >= 2 else { return nil }
-            let body = match[1].structuredForumText
+        var replies = contentNodes.compactMap { node -> Reply? in
+            let floor = node.floor
+            let rawMarkup = node.innerHTML
+            let body = rawMarkup.structuredForumText
             guard body.count >= 2 else { return nil }
 
             return Reply(
-                id: tid * 1000 + index,
+                id: tid * 100_000 + floor,
                 author: pageAuthor?.isUsefulForumValue == true ? pageAuthor! : "未知作者",
                 createdAt: "",
-                body: body
+                body: body,
+                contentDocument: .html(rawMarkup),
+                floorNumber: floor
             )
         }
         .uniquedByID()
@@ -179,7 +178,129 @@ struct WebForumParser {
             replyCount: replies.count,
             viewCount: 0,
             body: firstPost.body,
+            contentDocument: firstPost.contentDocument,
             replies: replies
         )
+    }
+
+}
+
+/// 仅负责定位 NGA 的 `postcontent<楼层号>` 节点。它不是通用 HTML 渲染器，
+/// 但会按相同标签的嵌套层级配对，避免正文中的嵌套容器截断主楼内容。
+private enum HTMLPostContentExtractor {
+    struct Node {
+        let floor: Int
+        let innerHTML: String
+    }
+
+    static func postContentNodes(in html: String) -> [Node] {
+        var nodes: [Node] = []
+        var cursor = html.startIndex
+
+        while let openingStart = html[cursor...].firstIndex(of: "<"),
+              let openingEnd = tagEnd(in: html, from: openingStart) {
+            let openingTag = String(html[openingStart...openingEnd])
+            guard let tagName = openingTagName(in: openingTag),
+                  let floor = postContentFloor(in: openingTag),
+                  !isSelfClosing(openingTag),
+                  let closingRange = matchingClosingTag(
+                    for: tagName,
+                    in: html,
+                    contentStart: html.index(after: openingEnd)
+                  )
+            else {
+                cursor = html.index(after: openingStart)
+                continue
+            }
+
+            nodes.append(Node(
+                floor: floor,
+                innerHTML: String(html[html.index(after: openingEnd)..<closingRange.lowerBound])
+            ))
+            cursor = closingRange.upperBound
+        }
+
+        var seenFloors = Set<Int>()
+        return nodes.filter { seenFloors.insert($0.floor).inserted }
+    }
+
+    private static func matchingClosingTag(
+        for tagName: String,
+        in html: String,
+        contentStart: String.Index
+    ) -> Range<String.Index>? {
+        var depth = 1
+        var cursor = contentStart
+
+        while let tagStart = html[cursor...].firstIndex(of: "<"),
+              let tagEndIndex = tagEnd(in: html, from: tagStart) {
+            let tag = String(html[tagStart...tagEndIndex])
+            if let closingName = closingTagName(in: tag), closingName == tagName {
+                depth -= 1
+                if depth == 0 {
+                    return tagStart..<html.index(after: tagEndIndex)
+                }
+            } else if openingTagName(in: tag) == tagName, !isSelfClosing(tag) {
+                depth += 1
+            }
+            cursor = html.index(after: tagEndIndex)
+        }
+
+        return nil
+    }
+
+    private static func tagEnd(in html: String, from start: String.Index) -> String.Index? {
+        var cursor = html.index(after: start)
+        var quote: Character?
+
+        while cursor < html.endIndex {
+            let character = html[cursor]
+            if let activeQuote = quote {
+                if character == activeQuote {
+                    quote = nil
+                }
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character == ">" {
+                return cursor
+            }
+            cursor = html.index(after: cursor)
+        }
+        return nil
+    }
+
+    private static func openingTagName(in tag: String) -> String? {
+        let trimmed = tag
+            .dropFirst()
+            .dropLast()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.hasPrefix("/"), !trimmed.hasPrefix("!"), !trimmed.hasPrefix("?") else {
+            return nil
+        }
+        return trimmed.split(whereSeparator: { $0.isWhitespace || $0 == "/" }).first?.lowercased()
+    }
+
+    private static func closingTagName(in tag: String) -> String? {
+        let trimmed = tag
+            .dropFirst()
+            .dropLast()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/") else { return nil }
+        return trimmed.dropFirst().split(whereSeparator: { $0.isWhitespace || $0 == ">" }).first?.lowercased()
+    }
+
+    private static func postContentFloor(in openingTag: String) -> Int? {
+        openingTag.matches(
+            pattern: #"\bid\s*=\s*['\"]postcontent(\d+)['\"]"#,
+            options: [.caseInsensitive]
+        )
+        .first?
+        .dropFirst()
+        .first
+        .flatMap(Int.init)
+    }
+
+    private static func isSelfClosing(_ tag: String) -> Bool {
+        tag.dropLast().trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("/")
     }
 }

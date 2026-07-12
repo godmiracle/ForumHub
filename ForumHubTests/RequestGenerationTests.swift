@@ -53,6 +53,66 @@ struct RequestGenerationTests {
         #expect(viewModel.content.thread.title == "主题 2")
         #expect(!viewModel.content.isLoading)
     }
+
+    @Test func detailNeverUsesFeedSummaryAsMainPostBeforeLoadCompletes() async {
+        let repository = DelayedThreadRepository()
+        let feedThread = ForumThread(
+            id: 1,
+            title: "主题标题",
+            summary: "列表摘要，不能作为主楼正文",
+            author: "测试用户",
+            createdAt: "",
+            lastReplyAt: "",
+            replyCount: 3,
+            viewCount: 0,
+            body: "列表摘要，不能作为主楼正文",
+            replies: []
+        )
+        let viewModel = ThreadDetailViewModel(thread: feedThread)
+
+        #expect(viewModel.content.thread.body.isEmpty)
+        #expect(viewModel.content.thread.contentDocument.normalizedText.isEmpty)
+        #expect(viewModel.content.thread.replies.isEmpty)
+        #expect(viewModel.content.replyTotalCount == 3)
+        #expect(viewModel.content.isLoading)
+
+        let refresh = Task { @MainActor in
+            await viewModel.refresh(thread: feedThread, repository: repository)
+        }
+        await refresh.value
+
+        #expect(viewModel.content.thread.body == "正文")
+        #expect(!viewModel.content.isLoading)
+    }
+
+    @Test func threadContentChangeIsNotEqualToFeedSummaryWithSameIdentity() {
+        let feedThread = ForumThread(
+            id: 1,
+            title: "主题标题",
+            summary: "列表摘要",
+            author: "测试用户",
+            createdAt: "",
+            lastReplyAt: "",
+            replyCount: 0,
+            viewCount: 0,
+            body: "列表摘要",
+            replies: []
+        )
+        let detailThread = ForumThread(
+            id: 1,
+            title: "主题标题",
+            summary: "列表摘要",
+            author: "测试用户",
+            createdAt: "",
+            lastReplyAt: "",
+            replyCount: 0,
+            viewCount: 0,
+            body: "完整正文",
+            replies: []
+        )
+
+        #expect(feedThread != detailThread)
+    }
 }
 
 private struct DelayedThreadRepository: ThreadRepository {

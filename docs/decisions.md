@@ -220,6 +220,55 @@ Model each first-page feed load as an immutable request context. Starting a new 
 - Genuine parser failures remain visible when they belong to the currently active request
 - Feed loading code has a more explicit lifecycle, at the cost of maintaining request-context fields
 
+## ADR-010 Thread Content Keeps Source Markup As The Authority
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+NGA 的 API 与网页正文此前都会过早转换为纯字符串。富文本格式一旦被清洗，原生渲染器无法恢复链接、嵌套结构或未来的新标签；网页回帖也无法与 API 楼层安全合并。
+
+### Decision
+
+每个主楼和回复保存 `ForumPostDocument`：保留原始标记、来源格式与原生阅读投影。NGA 以 API 的稳定楼层元数据为准，以网页 `postcontent<楼层号>` 节点补全同一楼层的内容文档；网页原帖仍可作为保真阅读入口。
+
+### Consequences
+
+- 新的原生富文本节点可从原始标记派生，不需要重新抓取帖子
+- 未支持格式不会因字符串清洗而永久丢失
+- API/Web 合并不再按正文猜测楼层，减少把引用区或其他包装节点误当回复的风险
+- 详情模型需要在复制、分页与截图链路中持续保留内容文档
+
+## ADR-011 Separate Thread Identity From Content Equality
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+信息流中的 `ForumThread` 只包含摘要，详情请求会用同一帖子 ID 回写完整正文和回帖。此前手写的 `Equatable` 只比较 `source + id`，导致摘要版与完整详情版被视为内容相等，Observation 无法可靠驱动当前详情页更新。
+
+### Decision
+
+`ForumThread` 使用完整字段的内容相等语义。收藏、历史、信息流去重、搜索追加和导航身份等场景必须显式使用 `source + id`，不再复用 `Equatable` 表达身份。
+
+### Consequences
+
+- 同一帖子正文、内容文档、回帖或展示元数据变化时能触发详情更新
+- 帖子身份判断不受内容更新影响，仍由各调用点显式使用 `source + id`
+- 新增字段会自动参与合成的内容相等，需要确保字段本身遵循 `Equatable`
+
 ## Template
 
 Use this structure for future decisions:

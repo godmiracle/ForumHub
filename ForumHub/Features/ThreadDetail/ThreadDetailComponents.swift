@@ -29,7 +29,7 @@ struct ThreadDetailHeaderSection: View {
 
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            TagChip(title: "1楼")
+                            TagChip(title: thread.source == .nga ? "0楼" : "主楼")
                             TagChip(title: thread.author)
                             TagChip(title: "\(threadReplyTotalCount) 回复")
                             TagChip(title: "\(thread.viewCount) 浏览")
@@ -44,7 +44,7 @@ struct ThreadDetailHeaderSection: View {
                 }
 
                 ForumRichContentView(
-                    text: thread.body,
+                    document: thread.contentDocument,
                     fontSize: 18,
                     activeGIFPlaybackImageIDs: activeInlineGIFPlaybackIDs,
                     scrollTrackingSpaceName: scrollTrackingSpaceName
@@ -170,7 +170,7 @@ struct ThreadDetailReplyRow: View {
                         }
 
                         ForumRichContentView(
-                            text: entry.reply.body,
+                            document: entry.reply.contentDocument,
                             fontSize: 17,
                             activeGIFPlaybackImageIDs: activeInlineGIFPlaybackIDs,
                             scrollTrackingSpaceName: scrollTrackingSpaceName

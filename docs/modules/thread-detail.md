@@ -28,6 +28,8 @@ It includes:
 ## Notes
 
 - Presentation state is layered on top of provider data rather than rewriting repository ordering.
+- 信息流传入的主题只可作为详情页的元数据占位；0 楼正文和回帖必须等待 `fetchThread` 成功后才可展示，避免摘要被误认为完整正文。
+- 列表摘要与完整详情即使拥有相同 `source + id` 也不是内容相等值，确保 Observation 能在详情回写时驱动当前页面更新。
 - Thread detail should use a scroll container that exposes continuous geometry signals for paging and scroll affordances; `List` cell lifecycle is not reliable enough for NGA's direct-pagination auto-advance.
 - NGA thread detail should accumulate fetched continuation pages into one continuous reading flow instead of replacing the visible reply slice page by page.
 - Intermediate NGA pages should preload when one of the last few visible reply rows appears, so readers can scroll continuously without seeing a dedicated "load next page" card between reply pages.
