@@ -114,6 +114,7 @@
 - Added the first NGA reply-emoji flow in the composer: users can open grouped NG娘 / AC娘v1 / AC娘v2 pickers and append smile assets into the reply body as image UBB markup without touching the attachment upload pipeline
 - Upgraded the NGA reply composer from plain text to a rich emoji-aware editor so selected smile assets insert at the current caret position and render inline in the input area while still serializing back to the original body markup for posting
 - Stabilized inline emoji editing in the NGA reply composer by giving each inserted smile a hidden text anchor, preventing attachment-only input rows from rendering as blank while keeping outgoing markup unchanged
+- Redesigned the thread reply composer as a compact expandable glass panel above the keyboard, with a clearer reply target, inline attachments, fixed publishing controls, and a quick emoji row while preserving the existing NGA posting pipeline
 - Fixed thread "截图此层/长图" rendering so vertically taller images also expand to the card width instead of appearing narrower than earlier images on the same snapshot
 - Refactored the account screen's "社区连接" area to render from shared auth session descriptors, unifying `NGA`, `V2EX`, and `LINUX DO` connection summaries without flattening their underlying auth flows
 - Redesigned the user screen to emphasize shared account summaries, hide low-level credential implementation details, and group account, personal data, and maintenance actions more clearly

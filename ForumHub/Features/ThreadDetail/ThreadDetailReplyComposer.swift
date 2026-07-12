@@ -16,151 +16,206 @@ struct ReplyComposerSheet: View {
     @State private var showsEmojiPicker = false
     @State private var shouldFocusRichEditor = false
 
+    private var quickEmojis: [NGAForumEmojiItem] {
+        Array(NGAForumEmojiGroup.ng.items.prefix(8))
+    }
+
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(target.displayTitle)
-                        .font(.headline)
-                        .foregroundStyle(PaperTheme.ink)
+        VStack(alignment: .leading, spacing: 12) {
+            composerHeader
 
-                    HStack(alignment: .center, spacing: 10) {
-                        Text("将作为 \(source.title) \(target.composerDescription)发送。")
-                            .font(.footnote)
-                            .foregroundStyle(PaperTheme.mutedText)
-
-                        Spacer(minLength: 0)
-
-                        if case .reply = target {
-                            Button("改为回复主题") {
-                                target = .thread
-                            }
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(PaperTheme.accent)
-                            .disabled(isSubmitting)
-                        }
-                    }
-                    .padding(12)
-                    .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-
-                if case let .reply(targetReply) = target {
-                    ForumQuoteBlockCard(
-                        quote: ForumQuoteBlock(
-                            author: targetReply.author,
-                            createdAt: targetReply.createdAt,
-                            body: targetReply.bodyPreview
-                        ),
-                        fontSize: 16
-                    )
-                }
-
-                if capabilities.supportsImageUpload {
-                    HStack(spacing: 12) {
-                        PhotosPicker(
-                            selection: $selectedPhotoItems,
-                            maxSelectionCount: 9,
-                            matching: .images
-                        ) {
-                            Label("添加图片", systemImage: "photo.on.rectangle.angled")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(PaperTheme.accent)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        }
-                        .disabled(isSubmitting)
-
-                        Button {
-                            showsEmojiPicker = true
-                        } label: {
-                            Label("添加表情", systemImage: "face.smiling")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(PaperTheme.accent)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(isSubmitting)
-                    }
-
-                    if !attachments.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                ForEach(attachments) { attachment in
-                                    attachmentPreview(for: attachment)
-                                }
-                            }
-                            .padding(.horizontal, 2)
-                        }
-                    }
-                }
-
-                ReplyComposerRichTextEditor(
-                    document: $document,
-                    shouldFocus: $shouldFocusRichEditor,
-                    isEditable: !isSubmitting
+            if case let .reply(targetReply) = target {
+                ForumQuoteBlockCard(
+                    quote: ForumQuoteBlock(
+                        author: targetReply.author,
+                        createdAt: targetReply.createdAt,
+                        body: targetReply.bodyPreview
+                    ),
+                    fontSize: 14
                 )
-                .frame(minHeight: 180)
-                .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                HStack {
-                    Text("\(document.displayCharacterCount) 字")
-                        .font(.caption)
-                        .foregroundStyle(PaperTheme.mutedText)
-                    Spacer()
-                    if !attachments.isEmpty {
-                        Text("\(attachments.count) 张图片")
-                            .font(.caption)
-                            .foregroundStyle(PaperTheme.mutedText)
-                    }
-                }
-
-                Spacer(minLength: 0)
+                .frame(maxHeight: 76)
+                .clipped()
             }
-            .padding(20)
-            .background(PaperBackground())
-            .navigationTitle("写回复")
-            .navigationBarTitleDisplayMode(.inline)
-            .onChange(of: selectedPhotoItems) { _, items in
-                guard !items.isEmpty else { return }
-                Task {
-                    await loadSelectedImages(items)
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("取消", action: onCancel)
-                        .disabled(isSubmitting)
-                }
 
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        onSubmit()
-                    } label: {
-                        if isSubmitting {
-                            ProgressView()
-                        } else {
-                            Text("发送")
+            ReplyComposerRichTextEditor(
+                document: $document,
+                shouldFocus: $shouldFocusRichEditor,
+                isEditable: !isSubmitting
+            )
+            .frame(minHeight: 104, maxHeight: .infinity)
+            .padding(.horizontal, 4)
+            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            if !attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(attachments) { attachment in
+                            attachmentPreview(for: attachment)
                         }
                     }
-                    .disabled(isSubmitting || document.isEmpty)
+                    .padding(.horizontal, 2)
                 }
             }
-            .alert("图片处理失败", isPresented: imageLoadErrorBinding) {
-                Button("好", role: .cancel) {}
-            } message: {
-                Text(imageLoadErrorMessage ?? "请换一张图片重试。")
-            }
-            .sheet(isPresented: $showsEmojiPicker) {
-                NGAEmojiPickerSheet { emoji in
-                    document.insert(emoji: ReplyComposerEmoji(emoji))
-                    shouldFocusRichEditor = true
-                    showsEmojiPicker = false
-                }
+
+            composerToolbar
+            if source == .nga {
+                quickEmojiBar
             }
         }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 4)
+        .background {
+            LinearGradient(
+                colors: [PaperTheme.accent.opacity(0.13), Color.clear],
+                startPoint: .topLeading,
+                endPoint: .center
+            )
+            .allowsHitTesting(false)
+        }
+        .onAppear {
+            shouldFocusRichEditor = true
+        }
+        .onChange(of: selectedPhotoItems) { _, items in
+            guard !items.isEmpty else { return }
+            Task {
+                await loadSelectedImages(items)
+            }
+        }
+        .alert("图片处理失败", isPresented: imageLoadErrorBinding) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(imageLoadErrorMessage ?? "请换一张图片重试。")
+        }
+        .sheet(isPresented: $showsEmojiPicker) {
+            NGAEmojiPickerSheet { emoji in
+                insertEmoji(emoji)
+                showsEmojiPicker = false
+            }
+        }
+    }
+
+    private var composerHeader: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(PaperTheme.accent)
+                .frame(width: 4, height: 30)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(target.displayTitle)
+                    .font(.headline)
+                    .foregroundStyle(PaperTheme.ink)
+                    .lineLimit(1)
+
+                Text("通过 \(source.title) 发送")
+                    .font(.caption)
+                    .foregroundStyle(PaperTheme.mutedText)
+            }
+
+            Spacer(minLength: 8)
+
+            if case .reply = target {
+                Button("回复主题") {
+                    target = .thread
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(PaperTheme.accent)
+                .disabled(isSubmitting)
+            }
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(PaperTheme.mutedText)
+                    .frame(width: 32, height: 32)
+                    .background(Color.primary.opacity(0.08), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isSubmitting)
+            .accessibilityLabel("关闭回复编辑器")
+        }
+    }
+
+    private var composerToolbar: some View {
+        HStack(spacing: 18) {
+            if source == .nga {
+                Button {
+                    showsEmojiPicker = true
+                } label: {
+                    Image(systemName: "face.smiling")
+                }
+            }
+
+            if capabilities.supportsImageUpload {
+                PhotosPicker(
+                    selection: $selectedPhotoItems,
+                    maxSelectionCount: max(1, 9 - attachments.count),
+                    matching: .images
+                ) {
+                    Image(systemName: "photo.on.rectangle.angled")
+                }
+                .disabled(isSubmitting || attachments.count >= 9)
+            }
+
+            Button {
+                document.insert(text: "@")
+                shouldFocusRichEditor = true
+            } label: {
+                Image(systemName: "at")
+            }
+
+            Button {
+                document.insert(text: "#")
+                shouldFocusRichEditor = true
+            } label: {
+                Image(systemName: "number")
+            }
+
+            Spacer(minLength: 4)
+
+            Text("\(document.displayCharacterCount) 字")
+                .font(.caption)
+                .foregroundStyle(PaperTheme.mutedText)
+
+            Button(action: onSubmit) {
+                Group {
+                    if isSubmitting {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Text("发布")
+                            .font(.subheadline.weight(.bold))
+                    }
+                }
+                .frame(minWidth: 58, minHeight: 34)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .tint(PaperTheme.accent)
+            .disabled(isSubmitting || document.isEmpty)
+        }
+        .font(.title3)
+        .foregroundStyle(PaperTheme.mutedText)
+        .buttonStyle(.plain)
+    }
+
+    private var quickEmojiBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 18) {
+                ForEach(quickEmojis) { emoji in
+                    ReplyComposerQuickEmojiButton(emoji: emoji) {
+                        insertEmoji($0)
+                    }
+                    .disabled(isSubmitting)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+
+    private func insertEmoji(_ emoji: NGAForumEmojiItem) {
+        document.insert(emoji: ReplyComposerEmoji(emoji))
+        shouldFocusRichEditor = true
     }
 
     private var imageLoadErrorBinding: Binding<Bool> {
@@ -176,14 +231,8 @@ struct ReplyComposerSheet: View {
                 Image(uiImage: attachment.previewImage)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: 96, height: 96)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                Text(attachment.filename)
-                    .font(.caption2)
-                    .foregroundStyle(PaperTheme.mutedText)
-                    .lineLimit(1)
-                    .frame(width: 96)
+                    .frame(width: 68, height: 68)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
 
             Button {
@@ -221,6 +270,35 @@ struct ReplyComposerSheet: View {
         } catch {
             imageLoadErrorMessage = error.localizedDescription
             selectedPhotoItems = []
+        }
+    }
+}
+
+private struct ReplyComposerQuickEmojiButton: View {
+    let emoji: NGAForumEmojiItem
+    let onSelect: (NGAForumEmojiItem) -> Void
+    @State private var image: UIImage?
+
+    var body: some View {
+        Button {
+            onSelect(emoji.withPreviewImage(image))
+        } label: {
+            Group {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    Image(systemName: "face.smiling")
+                        .foregroundStyle(PaperTheme.mutedText)
+                }
+            }
+            .frame(width: 34, height: 34)
+        }
+        .buttonStyle(.plain)
+        .task(id: emoji.id) {
+            guard image == nil else { return }
+            image = try? await NGAImageLoader.load(url: emoji.imageURL)
         }
     }
 }
@@ -539,6 +617,49 @@ struct ReplyComposerDocument: Equatable {
         }
 
         components.append(.emoji(emoji))
+        selection = NSRange(location: visualLength, length: 0)
+    }
+
+    mutating func insert(text insertedText: String) {
+        guard !insertedText.isEmpty else { return }
+
+        let insertionOffset = max(0, min(selection.location, visualLength))
+        var remainingOffset = insertionOffset
+
+        for index in components.indices {
+            switch components[index] {
+            case let .text(text):
+                let length = (text as NSString).length
+                guard remainingOffset <= length else {
+                    remainingOffset -= length
+                    continue
+                }
+                let splitIndex = String.Index(utf16Offset: remainingOffset, in: text)
+                components[index] = .text(
+                    String(text[..<splitIndex]) + insertedText + String(text[splitIndex...])
+                )
+                components = Self.normalized(components)
+                selection = NSRange(
+                    location: insertionOffset + (insertedText as NSString).length,
+                    length: 0
+                )
+                return
+            case .emoji:
+                guard remainingOffset > 0 else {
+                    components.insert(.text(insertedText), at: index)
+                    components = Self.normalized(components)
+                    selection = NSRange(
+                        location: insertionOffset + (insertedText as NSString).length,
+                        length: 0
+                    )
+                    return
+                }
+                remainingOffset -= 2
+            }
+        }
+
+        components.append(.text(insertedText))
+        components = Self.normalized(components)
         selection = NSRange(location: visualLength, length: 0)
     }
 

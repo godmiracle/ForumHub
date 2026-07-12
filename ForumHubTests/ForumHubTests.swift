@@ -28,6 +28,16 @@ struct ForumHubTests {
         #expect(!document.isEmpty)
     }
 
+    @Test func replyComposerDocumentInsertsToolbarTextAtCurrentSelection() {
+        var document = ReplyComposerDocument(text: "前后")
+        document.updateSelection(NSRange(location: 1, length: 0))
+
+        document.insert(text: "@")
+
+        #expect(document.markup == "前@后")
+        #expect(document.selection == NSRange(location: 2, length: 0))
+    }
+
     @Test func ngaReplySubmissionFormIncludesServerIssuedAuthToken() {
         let form = NGAReplySubmissionForm.make(
             action: "reply",
