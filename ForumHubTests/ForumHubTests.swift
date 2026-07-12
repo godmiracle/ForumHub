@@ -1267,6 +1267,48 @@ struct ForumHubTests {
         #expect(ThreadSnapshotRenderer.replyChunks([]).count == 1)
     }
 
+    @Test func snapshotFooterDescribesItsActualScope() {
+        let reply = Reply(
+            id: 12,
+            author: "用户",
+            createdAt: "",
+            body: "回复",
+            floorNumber: 12
+        )
+
+        #expect(ThreadSnapshotRenderer.footerText(scope: .mainPost, replyCount: 0) == "由汇坛生成 · 主楼")
+        #expect(ThreadSnapshotRenderer.footerText(scope: .singleReply(reply), replyCount: 1) == "由汇坛生成 · 12楼")
+        #expect(ThreadSnapshotRenderer.footerText(scope: .loadedContent, replyCount: 40) == "由汇坛生成 · 当前已加载 40 条回复")
+    }
+
+    @Test func threadShareContentBuildsSourceSpecificOriginalURLs() {
+        func thread(id: Int, source: ForumSource) -> ForumThread {
+            ForumThread(
+                id: id,
+                title: "测试主题",
+                summary: "",
+                author: "作者",
+                lastReplyAt: "",
+                replyCount: 0,
+                viewCount: 0,
+                body: "",
+                replies: [],
+                source: source
+            )
+        }
+
+        let ngaThread = thread(id: 123, source: .nga)
+        let v2exThread = thread(id: 456, source: .v2ex)
+        let linuxDoThread = thread(id: 789, source: .linuxDo)
+
+        #expect(ThreadShareContent.originalURL(for: ngaThread)?.absoluteString == "https://bbs.nga.cn/read.php?tid=123")
+        #expect(ThreadShareContent.originalURL(for: v2exThread)?.absoluteString == "https://www.v2ex.com/t/456")
+        #expect(ThreadShareContent.originalURL(for: linuxDoThread)?.absoluteString == "https://linux.do/t/789")
+        let shareItems = ThreadShareContent.activityItems(for: ngaThread)
+        #expect(shareItems.count == 1)
+        #expect(shareItems.first as? String == "测试主题\nhttps://bbs.nga.cn/read.php?tid=123")
+    }
+
     @Test func threadDetailScrollStateResetsOnlyPresentationTracking() {
         let state = ThreadDetailScrollState()
         state.visiblePage = 3

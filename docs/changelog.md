@@ -4,6 +4,10 @@
 
 ### Thread Detail And Content
 
+- Unified thread sharing under one detail action, with separate choices for the original thread link, the main-post snapshot, and loaded-content snapshots; link shares include the post title before the original URL.
+- Branded generated snapshots as “汇坛”, added source-provided floor numbers to reply snapshots, and made the footer describe whether the image contains the main post, one reply, or the currently loaded reply count.
+- Promoted sharing to the thread detail action bar after the author filter, and moved the state-aware favorite action into the More menu.
+- Prioritized the main-post snapshot as the first action in the thread sharing menu.
 - Prevented an empty detail response from promoting a feed summary into the main post; feed metadata can still fill title, author, counts, and channel information.
 - Made saved favorites restore as lightweight thread metadata without storing their summary as authoritative post content.
 - Updated long-image generation to consume `ForumPostDocument` projections directly instead of extending the legacy `body` dependency.

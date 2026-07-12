@@ -9,6 +9,26 @@ enum ThreadSnapshotScope {
     case singleReply(Reply)
 }
 
+enum ThreadShareContent {
+    static func originalURL(for thread: ForumThread) -> URL? {
+        switch thread.source {
+        case .nga:
+            var components = URLComponents(string: "https://bbs.nga.cn/read.php")
+            components?.queryItems = [URLQueryItem(name: "tid", value: "\(thread.id)")]
+            return components?.url
+        case .v2ex:
+            return URL(string: "https://www.v2ex.com/t/\(thread.id)")
+        case .linuxDo:
+            return URL(string: "https://linux.do/t/\(thread.id)")
+        }
+    }
+
+    static func activityItems(for thread: ForumThread) -> [Any] {
+        guard let url = originalURL(for: thread) else { return [] }
+        return ["\(thread.title)\n\(url.absoluteString)"]
+    }
+}
+
 @MainActor
 enum ThreadSnapshotRenderer {
     static let repliesPerImage = 6
@@ -34,6 +54,7 @@ enum ThreadSnapshotRenderer {
         let imageURLs = collectImageURLs(thread: thread, replies: includedReplies)
         let loadedImages = await loadImages(from: imageURLs)
         let chunks = replyChunks(includedReplies)
+        let footerText = footerText(scope: scope, replyCount: includedReplies.count)
 
         return try chunks.enumerated().map { index, replies in
             let content = ThreadSnapshotPageView(
@@ -42,7 +63,8 @@ enum ThreadSnapshotRenderer {
                 loadedImages: loadedImages,
                 includesMainPost: includesMainPostOnFirstPage && index == 0,
                 pageNumber: index + 1,
-                pageCount: chunks.count
+                pageCount: chunks.count,
+                footerText: footerText
             )
             let renderer = ImageRenderer(content: content)
             renderer.scale = 2
@@ -60,6 +82,20 @@ enum ThreadSnapshotRenderer {
 
         return stride(from: 0, to: replies.count, by: repliesPerImage).map { start in
             Array(replies[start..<min(start + repliesPerImage, replies.count)])
+        }
+    }
+
+    static func footerText(scope: ThreadSnapshotScope, replyCount: Int) -> String {
+        switch scope {
+        case .mainPost:
+            return "由汇坛生成 · 主楼"
+        case .loadedContent:
+            return "由汇坛生成 · 当前已加载 \(replyCount) 条回复"
+        case let .singleReply(reply):
+            if let floorNumber = reply.floorNumber {
+                return "由汇坛生成 · \(floorNumber)楼"
+            }
+            return "由汇坛生成 · 单层回复"
         }
     }
 
@@ -109,6 +145,7 @@ private struct ThreadSnapshotPageView: View {
     let includesMainPost: Bool
     let pageNumber: Int
     let pageCount: Int
+    let footerText: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -161,6 +198,11 @@ private struct ThreadSnapshotPageView: View {
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(PaperTheme.ink)
                         Spacer()
+                        if let floorNumber = reply.floorNumber {
+                            Text("\(floorNumber)楼")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(PaperTheme.secondaryInk)
+                        }
                         Text(reply.createdAt)
                             .font(.caption)
                             .foregroundStyle(PaperTheme.mutedText)
@@ -176,7 +218,7 @@ private struct ThreadSnapshotPageView: View {
                 .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
 
-            Text("由社区阅读器生成 · 当前已加载内容")
+            Text(footerText)
                 .font(.caption2)
                 .foregroundStyle(PaperTheme.mutedText.opacity(0.8))
                 .frame(maxWidth: .infinity, alignment: .center)

@@ -22,6 +22,8 @@ struct ThreadDetailView: View {
     @State private var isPreparingSnapshot = false
     @State private var snapshotImages: [UIImage] = []
     @State private var showsSnapshotPreview = false
+    @State private var threadShareItems: [Any] = []
+    @State private var showsThreadShareSheet = false
     @State private var snapshotErrorMessage: String?
     @State private var rawResponseCopied = false
     @State private var showsOriginalThread = false
@@ -62,16 +64,7 @@ struct ThreadDetailView: View {
     private var rawResponse: String { detailViewModel.content.rawText }
 
     private var originalThreadURL: URL? {
-        switch repository.source {
-        case .nga:
-            var components = URLComponents(string: "https://bbs.nga.cn/read.php")
-            components?.queryItems = [URLQueryItem(name: "tid", value: "\(thread.id)")]
-            return components?.url
-        case .v2ex:
-            return URL(string: "https://www.v2ex.com/t/\(thread.id)")
-        case .linuxDo:
-            return URL(string: "https://linux.do/t/\(thread.id)")
-        }
+        ThreadShareContent.originalURL(for: detailThread)
     }
 
     private var currentPage: Int {
@@ -285,6 +278,7 @@ struct ThreadDetailView: View {
                         isLoading: isLoading,
                         showsRepliesInReverseOrder: showsRepliesInReverseOrder,
                         loadedSnapshotTitle: showsOnlyThreadAuthor ? "生成已加载楼主内容" : "生成已加载整贴",
+                        canShareThread: originalThreadURL != nil,
                         canBrowseOriginalThread: originalThreadURL != nil,
                         hasRawResponse: !rawResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                         onReply: {
@@ -303,6 +297,7 @@ struct ThreadDetailView: View {
                                 showsRepliesInReverseOrder.toggle()
                             }
                         },
+                        onShareThreadLink: shareThreadLink,
                         onSnapshotMainPost: {
                             Task { await prepareSnapshot(scope: .mainPost) }
                         },
@@ -410,6 +405,11 @@ struct ThreadDetailView: View {
             snapshotImages = []
         }) {
             SnapshotPreviewSheet(images: snapshotImages)
+        }
+        .sheet(isPresented: $showsThreadShareSheet, onDismiss: {
+            threadShareItems = []
+        }) {
+            ActivityShareView(activityItems: threadShareItems)
         }
         .sheet(isPresented: $showsOriginalThread) {
             if let originalThreadURL {
@@ -668,6 +668,13 @@ struct ThreadDetailView: View {
         } catch {
             snapshotErrorMessage = userFacingMessage(for: error)
         }
+    }
+
+    private func shareThreadLink() {
+        let items = ThreadShareContent.activityItems(for: detailThread)
+        guard !items.isEmpty else { return }
+        threadShareItems = items
+        showsThreadShareSheet = true
     }
 
     @discardableResult

@@ -19,6 +19,8 @@ This document tracks which user-facing capabilities are available for each integ
 | Image preview | Yes | Yes | Yes |
 | GIF playback | Yes | Depends on remote asset | Depends on remote asset |
 | Save image to Photos | Yes | Yes | Yes |
+| Share thread link | Yes | Yes | Yes |
+| Share post snapshots | Yes | Yes | Yes |
 | Native favorite API | Yes | No | No |
 | Local favorites fallback | Yes | Yes | Yes |
 | Reply thread | Yes | No | No |

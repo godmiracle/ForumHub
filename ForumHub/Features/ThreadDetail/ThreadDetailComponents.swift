@@ -232,6 +232,7 @@ struct ThreadDetailActionBar: View {
     let isLoading: Bool
     let showsRepliesInReverseOrder: Bool
     let loadedSnapshotTitle: String
+    let canShareThread: Bool
     let canBrowseOriginalThread: Bool
     let hasRawResponse: Bool
     let onReply: () -> Void
@@ -239,6 +240,7 @@ struct ThreadDetailActionBar: View {
     let onToggleAuthorFilter: () -> Void
     let onRefresh: () -> Void
     let onToggleReplyOrder: () -> Void
+    let onShareThreadLink: () -> Void
     let onSnapshotMainPost: () -> Void
     let onSnapshotLoadedContent: () -> Void
     let onBrowseOriginalThread: () -> Void
@@ -261,14 +263,6 @@ struct ThreadDetailActionBar: View {
                 }
 
                 ThreadActionButton(
-                    title: isFavorited ? "已收藏" : "收藏",
-                    systemImage: isFavorited ? "star.fill" : "star",
-                    isActive: isFavorited,
-                    isDisabled: isUpdatingFavorite,
-                    action: onToggleFavorite
-                )
-
-                ThreadActionButton(
                     title: showsOnlyThreadAuthor ? "查看全部" : "只看楼主",
                     systemImage: showsOnlyThreadAuthor ? "person.2" : "person.crop.circle.badge.checkmark",
                     isActive: showsOnlyThreadAuthor,
@@ -277,6 +271,39 @@ struct ThreadDetailActionBar: View {
                 )
 
                 Menu {
+                    Button(action: onSnapshotMainPost) {
+                        Label("分享主楼截图", systemImage: "camera.viewfinder")
+                    }
+
+                    if canShareThread {
+                        Button(action: onShareThreadLink) {
+                            Label("分享帖子链接", systemImage: "link")
+                        }
+                    }
+
+                    Button(action: onSnapshotLoadedContent) {
+                        Label(loadedSnapshotTitle, systemImage: "rectangle.stack")
+                    }
+                } label: {
+                    ThreadActionButtonLabel(
+                        title: "分享",
+                        systemImage: "square.and.arrow.up",
+                        isActive: false,
+                        isProminent: false
+                    )
+                }
+                .disabled(isPreparingSnapshot || isLoading)
+                .accessibilityLabel("分享")
+
+                Menu {
+                    Button(action: onToggleFavorite) {
+                        Label(
+                            isFavorited ? "取消收藏" : "收藏帖子",
+                            systemImage: isFavorited ? "star.fill" : "star"
+                        )
+                    }
+                    .disabled(isUpdatingFavorite)
+
                     if canBrowseOriginalThread {
                         Button(action: onBrowseOriginalThread) {
                             Label("浏览网页原帖", systemImage: "safari")
@@ -292,14 +319,6 @@ struct ThreadDetailActionBar: View {
                             showsRepliesInReverseOrder ? "恢复正序" : "倒叙排列",
                             systemImage: showsRepliesInReverseOrder ? "arrow.down.to.line" : "arrow.up.arrow.down"
                         )
-                    }
-
-                    Button(action: onSnapshotMainPost) {
-                        Label("截图此层", systemImage: "camera.viewfinder")
-                    }
-
-                    Button(action: onSnapshotLoadedContent) {
-                        Label(loadedSnapshotTitle, systemImage: "rectangle.stack")
                     }
 
                     #if DEBUG
