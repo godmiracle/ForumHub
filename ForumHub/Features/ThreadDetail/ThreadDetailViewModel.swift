@@ -33,6 +33,7 @@ final class ThreadDetailViewModel {
                 self.content.thread = mergedThread
                 self.content.canonicalThread = mergedThread
                 self.content.replyTotalCount = replyTotal
+                self.content.rawText = result.rawText
                 self.pagination.currentPage = 1
                 self.pagination.visiblePage = 1
                 self.pagination.pageStartReplyIndices = [1: 0]

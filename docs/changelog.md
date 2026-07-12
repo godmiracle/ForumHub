@@ -24,6 +24,7 @@
 
 ### Thread Detail
 
+- Added an in-app NGA "Browse original web thread" reader in the detail More menu. It restores and injects the active NGA cookie session before loading; a Debug-only action can copy the current raw response for parser regression investigation.
 - Added thread detail floor labels
 - Added only-author mode
 - Added reverse reply ordering
@@ -65,6 +66,9 @@
 
 ### Images And Rich Content
 
+- Added a separate V2EX in-app web-login session for authenticated original-page browsing without exposing the API token to webpages.
+- Added a unified in-app “浏览网页原帖” action in thread details for NGA, V2EX, and LINUX DO.
+- Fixed NGA `[s:…]` smile markup being removed during native thread parsing; common expressions now render inline and unknown ones retain their readable name.
 - Added in-thread image preview
 - Added GIF playback support
 - Added image saving to Photos

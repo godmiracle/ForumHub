@@ -118,7 +118,10 @@ struct WebForumParser {
         .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let contentMatches = html.matches(
-            pattern: #"<(?:p|span|div|td)[^>]+(?:id|class)=['"][^'"]*(?:postcontent|post_content|postbody|content)[^'"]*['"][^>]*>(.*?)</(?:p|span|div|td)>"#,
+            // NGA 正文节点使用精确的 `postcontent<楼层序号>` ID。不能匹配
+            // `postcontentandsubject` 等包装器或任意 `content` 类，否则首个命中
+            // 可能不是主楼，导致 1L 渲染为空或错位。
+            pattern: #"<(?:p|span|div|td)\b[^>]*\bid=['\"]postcontent\d+['\"][^>]*>(.*?)</(?:p|span|div|td)>"#,
             options: [.caseInsensitive, .dotMatchesLineSeparators]
         )
 
@@ -145,14 +148,9 @@ struct WebForumParser {
         }
         .uniquedByID()
 
-        if replies.isEmpty {
-            let bodyText = html.cleanedForumText
-            let excerpt = String(bodyText.prefix(3000))
-            guard excerpt.count >= 2 else { return nil }
-            replies = [
-                Reply(id: tid * 1000, author: "网页内容", createdAt: "", body: excerpt)
-            ]
-        }
+        // 权限错误、登录页等网页响应没有帖子正文容器，不能把整页提示文本
+        // 误认为主贴内容；调用方会在此时保留已成功解析的 API 正文。
+        guard !replies.isEmpty else { return nil }
 
         if page > 1 {
             return ForumThread(

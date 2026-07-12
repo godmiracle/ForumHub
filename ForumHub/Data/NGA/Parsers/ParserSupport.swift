@@ -101,7 +101,7 @@ extension String {
                 options: [.regularExpression, .caseInsensitive]
             )
             .replacingOccurrences(of: #"\[img(?:=[^\]]+)?\](.*?)\[/img\]"#, with: "\n[图片] $1\n", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"\[/?(?!引用\b)[a-zA-Z][^\]]*\]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\[/?(?!引用\b|s:)[a-zA-Z][^\]]*\]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)

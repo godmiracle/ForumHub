@@ -802,7 +802,7 @@ struct NGALiveThreadRepository: ThreadRepository {
     }
 }
 
-private enum NGAThreadParseQuality {
+enum NGAThreadParseQuality {
     private static let rawImageMarkerPattern = #"(?i)(?:\[图片\]|\[img\]|<img\b)"#
 
     static func needsWebEnrichment(thread: ForumThread, rawText: String) -> Bool {

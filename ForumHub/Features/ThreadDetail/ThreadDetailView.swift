@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import WebKit
 
 private enum ThreadDetailScrollAnchor: Hashable {
     case top
@@ -22,6 +23,8 @@ struct ThreadDetailView: View {
     @State private var snapshotImages: [UIImage] = []
     @State private var showsSnapshotPreview = false
     @State private var snapshotErrorMessage: String?
+    @State private var rawResponseCopied = false
+    @State private var showsOriginalThread = false
     @State private var showsPagePicker = false
     @State private var detailViewModel: ThreadDetailViewModel
     @State private var showsScrollToTopButton = false
@@ -55,6 +58,20 @@ struct ThreadDetailView: View {
     private var isLoading: Bool { get { detailViewModel.content.isLoading } nonmutating set { detailViewModel.content.isLoading = newValue } }
     private var isLoadingMore: Bool { get { detailViewModel.content.isLoadingMore } nonmutating set { detailViewModel.content.isLoadingMore = newValue } }
     private var contentError: ForumError? { get { detailViewModel.content.error } nonmutating set { detailViewModel.content.error = newValue } }
+    private var rawResponse: String { detailViewModel.content.rawText }
+
+    private var originalThreadURL: URL? {
+        switch repository.source {
+        case .nga:
+            var components = URLComponents(string: "https://bbs.nga.cn/read.php")
+            components?.queryItems = [URLQueryItem(name: "tid", value: "\(thread.id)")]
+            return components?.url
+        case .v2ex:
+            return URL(string: "https://www.v2ex.com/t/\(thread.id)")
+        case .linuxDo:
+            return URL(string: "https://linux.do/t/\(thread.id)")
+        }
+    }
 
     private var currentPage: Int {
         get { paginationState.currentPage }
@@ -267,6 +284,8 @@ struct ThreadDetailView: View {
                         isLoading: isLoading,
                         showsRepliesInReverseOrder: showsRepliesInReverseOrder,
                         loadedSnapshotTitle: showsOnlyThreadAuthor ? "生成已加载楼主内容" : "生成已加载整贴",
+                        canBrowseOriginalThread: originalThreadURL != nil,
+                        hasRawResponse: !rawResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                         onReply: {
                             replyTarget = .thread
                             showsReplyComposer = true
@@ -288,7 +307,11 @@ struct ThreadDetailView: View {
                         },
                         onSnapshotLoadedContent: {
                             Task { await prepareSnapshot(scope: .loadedContent) }
-                        }
+                        },
+                        onBrowseOriginalThread: {
+                            showsOriginalThread = true
+                        },
+                        onCopyRawResponse: copyRawResponse
                     )
                 }
                 .overlay(alignment: .bottomTrailing) {
@@ -387,10 +410,20 @@ struct ThreadDetailView: View {
         }) {
             SnapshotPreviewSheet(images: snapshotImages)
         }
+        .sheet(isPresented: $showsOriginalThread) {
+            if let originalThreadURL {
+                OriginalThreadSheet(url: originalThreadURL, source: repository.source)
+            }
+        }
         .alert("长图生成失败", isPresented: snapshotErrorBinding) {
             Button("好", role: .cancel) {}
         } message: {
             Text(snapshotErrorMessage ?? "请稍后重试。")
+        }
+        .alert("原始响应已复制", isPresented: $rawResponseCopied) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text("可直接粘贴保存，供定位帖子解析问题。")
         }
         .alert("收藏失败", isPresented: favoriteErrorBinding) {
             Button("好", role: .cancel) {}
@@ -664,6 +697,13 @@ struct ThreadDetailView: View {
         }
     }
 
+    private func copyRawResponse() {
+        let value = rawResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        UIPasteboard.general.string = value
+        rawResponseCopied = true
+    }
+
     @discardableResult
     private func loadSpecificPage(
         _ page: Int,
@@ -780,6 +820,71 @@ struct ThreadDetailView: View {
         ForumError.resolve(error)?.userMessage ?? "操作未完成，请稍后重试。"
     }
 
+}
+
+private struct OriginalThreadSheet: View {
+    let url: URL
+    let source: ForumSource
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            OriginalThreadWebView(url: url, source: source)
+                .navigationTitle("网页原帖")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("关闭") {
+                            dismiss()
+                        }
+                    }
+                }
+        }
+    }
+}
+
+private struct OriginalThreadWebView: UIViewRepresentable {
+    let url: URL
+    let source: ForumSource
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+
+        Task {
+            if source == .nga {
+                _ = await NGAAuthStore.shared.currentLoginState()
+            }
+            let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
+            for cookie in cookies {
+                await context.coordinator.set(cookie: cookie, in: configuration.websiteDataStore.httpCookieStore)
+            }
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                _ = webView.load(URLRequest(url: url))
+            }
+        }
+
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        func set(cookie: HTTPCookie, in store: WKHTTPCookieStore) async {
+            await withCheckedContinuation { continuation in
+                store.setCookie(cookie) {
+                    continuation.resume()
+                }
+            }
+        }
+    }
 }
 
 private extension ThreadDetailView {

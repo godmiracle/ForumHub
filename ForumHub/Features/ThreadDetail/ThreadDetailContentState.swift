@@ -6,6 +6,7 @@ final class ThreadDetailContentState {
     var thread: ForumThread
     var canonicalThread: ForumThread?
     var replyTotalCount: Int
+    var rawText = ""
     var isLoading = false
     var isLoadingMore = false
     var error: ForumError?

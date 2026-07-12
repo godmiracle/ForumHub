@@ -232,6 +232,8 @@ struct ThreadDetailActionBar: View {
     let isLoading: Bool
     let showsRepliesInReverseOrder: Bool
     let loadedSnapshotTitle: String
+    let canBrowseOriginalThread: Bool
+    let hasRawResponse: Bool
     let onReply: () -> Void
     let onToggleFavorite: () -> Void
     let onToggleAuthorFilter: () -> Void
@@ -239,6 +241,8 @@ struct ThreadDetailActionBar: View {
     let onToggleReplyOrder: () -> Void
     let onSnapshotMainPost: () -> Void
     let onSnapshotLoadedContent: () -> Void
+    let onBrowseOriginalThread: () -> Void
+    let onCopyRawResponse: () -> Void
 
     var body: some View {
         HStack {
@@ -273,6 +277,12 @@ struct ThreadDetailActionBar: View {
                 )
 
                 Menu {
+                    if canBrowseOriginalThread {
+                        Button(action: onBrowseOriginalThread) {
+                            Label("浏览网页原帖", systemImage: "safari")
+                        }
+                    }
+
                     Button(action: onRefresh) {
                         Label("刷新", systemImage: "arrow.clockwise")
                     }
@@ -291,6 +301,14 @@ struct ThreadDetailActionBar: View {
                     Button(action: onSnapshotLoadedContent) {
                         Label(loadedSnapshotTitle, systemImage: "rectangle.stack")
                     }
+
+                    #if DEBUG
+                    if hasRawResponse {
+                        Button(action: onCopyRawResponse) {
+                            Label("复制当前原始响应（调试）", systemImage: "doc.on.doc")
+                        }
+                    }
+                    #endif
                 } label: {
                     ThreadActionButtonLabel(
                         title: "更多",

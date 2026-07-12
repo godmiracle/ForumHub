@@ -67,7 +67,16 @@ enum ThreadSnapshotRenderer {
         let texts = [thread.body] + replies.map(\.body)
         var seen = Set<URL>()
         return texts.flatMap(ForumContentParser.parse).compactMap { block in
-            guard case let .image(url) = block.content, seen.insert(url).inserted else {
+            let url: URL?
+            switch block.content {
+            case let .image(imageURL):
+                url = imageURL
+            case let .smile(smile):
+                url = smile.url
+            case .text, .quote:
+                url = nil
+            }
+            guard let url, seen.insert(url).inserted else {
                 return nil
             }
             return url
@@ -223,6 +232,17 @@ private struct SnapshotRichContent: View {
                             .padding(.vertical, 24)
                             .background(PaperTheme.paperDeep.opacity(0.3))
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                case let .smile(smile):
+                    if let image = loadedImages[smile.url] {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 40, height: 40, alignment: .leading)
+                    } else {
+                        Text("[\(smile.name)]")
+                            .font(.system(size: fontSize, design: .serif))
+                            .foregroundStyle(PaperTheme.mutedText)
                     }
                 case let .quote(quote):
                     ForumQuoteBlockCard(quote: quote, fontSize: fontSize)

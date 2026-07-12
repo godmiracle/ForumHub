@@ -373,6 +373,17 @@ struct ForumHubTests {
         })
     }
 
+    @Test func structuredForumTextRendersNGAEmojiMarkupWithoutDroppingContent() throws {
+        let content = "好看吗[s:ac:哭笑] 来杯[s:ac:茶] [s:ac:未知表情]"
+        let blocks = ForumContentParser.parse(content.structuredForumText)
+
+        #expect(blocks[0].content == .text("好看吗"))
+        #expect(blocks[1].content == .smile(try #require(NGAForumSmile(markup: "[s:ac:哭笑]"))))
+        #expect(blocks[2].content == .text("来杯"))
+        #expect(blocks[3].content == .smile(try #require(NGAForumSmile(markup: "[s:ac:茶]"))))
+        #expect(blocks[4].content == .text("[s:ac:未知表情]"))
+    }
+
     @Test func contentParserPreservesNGARelativeMainPostImage() {
         let content = "主贴正文[img]./mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg[/img]结尾"
         let blocks = ForumContentParser.parse(content.structuredForumText)
@@ -435,6 +446,91 @@ struct ForumHubTests {
             return nil
         }.count == 2)
         #expect(merged.replies.map(\.body) == ["API 已有回复"])
+    }
+
+    @Test func webThreadParserRejectsAccessDeniedPage() {
+        let html = """
+        <html><head><title>访客不能直接访问</title></head>
+        <body>(ERROR:15) 访客不能直接访问，请登录。</body></html>
+        """
+
+        #expect(WebForumParser.parseThreadHTML(html, tid: 47151166) == nil)
+    }
+
+    @Test func webThreadParserUsesExactPostContentNodeInsteadOfWrapper() throws {
+        let html = """
+        <html><head><title>带图片的主贴 NGA玩家社区</title></head><body>
+        <span id='postcontentandsubject0'>
+          <p id='postcontent0' class='postcontent ubbcode'>[img]./mon_202607/12/main-one.jpg[/img]<br/>[img]./mon_202607/12/main-two.jpg[/img]<br/><br/>主贴后续文字</p>
+        </span>
+        <span id='postcontentandsubject1'><span id='postcontent1' class='postcontent ubbcode'>第一条回复</span></span>
+        </body></html>
+        """
+
+        let thread = try #require(WebForumParser.parseThreadHTML(html, tid: 47162747))
+        #expect(thread.body.contains("主贴后续文字"))
+        #expect(thread.replies.map(\.body) == ["第一条回复"])
+        #expect(ForumContentParser.parse(thread.body).compactMap { block -> URL? in
+            if case let .image(url) = block.content { return url }
+            return nil
+        }.count == 2)
+    }
+
+    @Test func threadDetailParserPreservesAllImagesFromRealNGAAPIShape() throws {
+        let json = """
+        {
+          "code": 0,
+          "result": [
+            {
+              "pid": 0,
+              "tid": 47164535,
+              "lou": 0,
+              "postdate": "2026-07-12 16:03",
+              "content": "[img]https://img.nga.178.com/attachments/mon_202607/12/first.jpg[/img]<br/>第一段正文<br/>[img]https://img.nga.178.com/attachments/mon_202607/12/second.jpg[/img][img]https://img.nga.178.com/attachments/mon_202607/12/third.jpg[/img]<br/>后续正文",
+              "author": { "username": "楼主" }
+            },
+            {
+              "pid": 874846760,
+              "tid": 47164535,
+              "lou": 1,
+              "content": "第一条回复",
+              "author": { "username": "回复者" }
+            }
+          ]
+        }
+        """
+        let data = try #require(json.data(using: .utf8))
+        let thread = try #require(ThreadDetailParser.parse(
+            data: data,
+            fallbackText: json,
+            tid: 47164535
+        ))
+
+        #expect(thread.body.contains("后续正文"))
+        #expect(ForumContentParser.parse(thread.body).compactMap { block -> URL? in
+            if case let .image(url) = block.content { return url }
+            return nil
+        }.count == 3)
+        #expect(!NGAThreadParseQuality.needsWebEnrichment(thread: thread, rawText: json))
+    }
+
+    @Test func ngaNonemptyAPIContentDoesNotRequireWebEnrichment() {
+        let thread = ForumThread(
+            id: 47151166,
+            title: "可能截断的主贴",
+            summary: "前半段正文",
+            author: "楼主",
+            lastReplyAt: "",
+            replyCount: 1,
+            viewCount: 0,
+            body: "前半段正文\n[图片] https://img.nga.178.com/attachments/first.jpg",
+            replies: [Reply(id: 1, author: "回复作者", createdAt: "", body: "回复")]
+        )
+        let rawText = """
+        {"content":"前半段正文[图片] https://img.nga.178.com/attachments/first.jpg"}
+        """
+
+        #expect(!NGAThreadParseQuality.needsWebEnrichment(thread: thread, rawText: rawText))
     }
 
     @Test func forumImageURLResolverUpgradesTrustedNGAHTTPOnly() throws {

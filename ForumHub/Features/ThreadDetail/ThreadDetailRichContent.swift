@@ -41,6 +41,8 @@ struct ForumRichContentView: View {
                             scrollTrackingSpaceName: scrollTrackingSpaceName
                         )
                     }
+                case let .smile(smile):
+                    InlineNGAForumEmoji(url: smile.url, name: smile.name)
                 case let .quote(quote):
                     ForumQuoteBlockCard(quote: quote, fontSize: fontSize)
                 }
@@ -51,6 +53,7 @@ struct ForumRichContentView: View {
 
 private struct InlineNGAForumEmoji: View {
     let url: URL
+    var name = "NGA 表情"
     @State private var image: UIImage?
     @State private var failed = false
 
@@ -61,7 +64,7 @@ private struct InlineNGAForumEmoji: View {
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
-                    .frame(width: 88, height: 88, alignment: .leading)
+                    .frame(width: 40, height: 40, alignment: .leading)
             } else if failed {
                 Image(systemName: "face.smiling")
                     .font(.title2)
@@ -74,7 +77,7 @@ private struct InlineNGAForumEmoji: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel("NGA 表情")
+        .accessibilityLabel(name)
         .task(id: url) {
             do {
                 image = try await NGAImageLoader.load(url: url)
