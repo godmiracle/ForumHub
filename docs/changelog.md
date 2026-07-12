@@ -4,6 +4,8 @@
 
 ### Thread Detail And Content
 
+- Split the icon-only thread action bar into a prominent circular reply action and a compact secondary tool capsule, removing nested backgrounds from inactive secondary icons while retaining full-size hit targets.
+- Combined the lower-right scroll-to-top and direct-pagination controls into one compact capsule, removing redundant `TOP` and `PAGE` labels while preserving standalone scroll-to-top access for sources without direct pagination.
 - Unified thread sharing under one detail action, with separate choices for the original thread link, the main-post snapshot, and loaded-content snapshots; link shares include the post title before the original URL.
 - Branded generated snapshots as “汇坛”, added source-provided floor numbers to reply snapshots, and made the footer describe whether the image contains the main post, one reply, or the currently loaded reply count.
 - Promoted sharing to the thread detail action bar after the author filter, and moved the state-aware favorite action into the More menu.

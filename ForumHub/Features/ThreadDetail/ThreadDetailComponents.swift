@@ -250,8 +250,7 @@ struct ThreadDetailActionBar: View {
         HStack {
             Spacer(minLength: 0)
 
-            ForumFloatingBar {
-                HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 if supportsReply {
                     ThreadActionButton(
                         title: "回复",
@@ -262,82 +261,85 @@ struct ThreadDetailActionBar: View {
                     )
                 }
 
-                ThreadActionButton(
-                    title: showsOnlyThreadAuthor ? "查看全部" : "只看楼主",
-                    systemImage: showsOnlyThreadAuthor ? "person.2" : "person.crop.circle.badge.checkmark",
-                    isActive: showsOnlyThreadAuthor,
-                    isDisabled: !canFilterByAuthor,
-                    action: onToggleAuthorFilter
-                )
-
-                Menu {
-                    Button(action: onSnapshotMainPost) {
-                        Label("分享主楼截图", systemImage: "camera.viewfinder")
-                    }
-
-                    if canShareThread {
-                        Button(action: onShareThreadLink) {
-                            Label("分享帖子链接", systemImage: "link")
-                        }
-                    }
-
-                    Button(action: onSnapshotLoadedContent) {
-                        Label(loadedSnapshotTitle, systemImage: "rectangle.stack")
-                    }
-                } label: {
-                    ThreadActionButtonLabel(
-                        title: "分享",
-                        systemImage: "square.and.arrow.up",
-                        isActive: false,
-                        isProminent: false
-                    )
-                }
-                .disabled(isPreparingSnapshot || isLoading)
-                .accessibilityLabel("分享")
-
-                Menu {
-                    Button(action: onToggleFavorite) {
-                        Label(
-                            isFavorited ? "取消收藏" : "收藏帖子",
-                            systemImage: isFavorited ? "star.fill" : "star"
+                ForumFloatingBar(padding: 4) {
+                    HStack(spacing: 2) {
+                        ThreadActionButton(
+                            title: showsOnlyThreadAuthor ? "查看全部" : "只看楼主",
+                            systemImage: showsOnlyThreadAuthor ? "person.2" : "person.crop.circle.badge.checkmark",
+                            isActive: showsOnlyThreadAuthor,
+                            isDisabled: !canFilterByAuthor,
+                            action: onToggleAuthorFilter
                         )
-                    }
-                    .disabled(isUpdatingFavorite)
 
-                    if canBrowseOriginalThread {
-                        Button(action: onBrowseOriginalThread) {
-                            Label("浏览网页原帖", systemImage: "safari")
+                        Menu {
+                            Button(action: onSnapshotMainPost) {
+                                Label("分享主楼截图", systemImage: "camera.viewfinder")
+                            }
+
+                            if canShareThread {
+                                Button(action: onShareThreadLink) {
+                                    Label("分享帖子链接", systemImage: "link")
+                                }
+                            }
+
+                            Button(action: onSnapshotLoadedContent) {
+                                Label(loadedSnapshotTitle, systemImage: "rectangle.stack")
+                            }
+                        } label: {
+                            ThreadActionButtonLabel(
+                                title: "分享",
+                                systemImage: "square.and.arrow.up",
+                                isActive: false,
+                                isProminent: false
+                            )
                         }
-                    }
+                        .disabled(isPreparingSnapshot || isLoading)
+                        .accessibilityLabel("分享")
 
-                    Button(action: onRefresh) {
-                        Label("刷新", systemImage: "arrow.clockwise")
-                    }
+                        Menu {
+                            Button(action: onToggleFavorite) {
+                                Label(
+                                    isFavorited ? "取消收藏" : "收藏帖子",
+                                    systemImage: isFavorited ? "star.fill" : "star"
+                                )
+                            }
+                            .disabled(isUpdatingFavorite)
 
-                    Button(action: onToggleReplyOrder) {
-                        Label(
-                            showsRepliesInReverseOrder ? "恢复正序" : "倒叙排列",
-                            systemImage: showsRepliesInReverseOrder ? "arrow.down.to.line" : "arrow.up.arrow.down"
-                        )
-                    }
+                            if canBrowseOriginalThread {
+                                Button(action: onBrowseOriginalThread) {
+                                    Label("浏览网页原帖", systemImage: "safari")
+                                }
+                            }
 
-                    #if DEBUG
-                    if hasRawResponse {
-                        Button(action: onCopyRawResponse) {
-                            Label("复制当前原始响应（调试）", systemImage: "doc.on.doc")
+                            Button(action: onRefresh) {
+                                Label("刷新", systemImage: "arrow.clockwise")
+                            }
+
+                            Button(action: onToggleReplyOrder) {
+                                Label(
+                                    showsRepliesInReverseOrder ? "恢复正序" : "倒叙排列",
+                                    systemImage: showsRepliesInReverseOrder ? "arrow.down.to.line" : "arrow.up.arrow.down"
+                                )
+                            }
+
+                            #if DEBUG
+                            if hasRawResponse {
+                                Button(action: onCopyRawResponse) {
+                                    Label("复制当前原始响应（调试）", systemImage: "doc.on.doc")
+                                }
+                            }
+                            #endif
+                        } label: {
+                            ThreadActionButtonLabel(
+                                title: "更多",
+                                systemImage: "ellipsis.circle",
+                                isActive: false,
+                                isProminent: false
+                            )
                         }
+                        .disabled(isPreparingSnapshot || isLoading)
+                        .accessibilityLabel("更多")
                     }
-                    #endif
-                } label: {
-                    ThreadActionButtonLabel(
-                        title: "更多",
-                        systemImage: "ellipsis.circle",
-                        isActive: false,
-                        isProminent: false
-                    )
-                }
-                .disabled(isPreparingSnapshot || isLoading)
-                .accessibilityLabel("更多")
                 }
             }
         }
@@ -362,38 +364,32 @@ struct ThreadDetailFloatingControls: View {
     let onOpenPagePicker: () -> Void
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 7) {
-            if showsScrollToTopControl {
+        Group {
+            if supportsDirectPagination, totalPageCount > 1, !isLoading {
+                ThreadDetailFloatingPaginationControl(
+                    showsScrollToTopControl: showsScrollToTopControl,
+                    visiblePage: visiblePage,
+                    totalPageCount: totalPageCount,
+                    isLoadingMore: isLoadingMore,
+                    onScrollToTop: onScrollToTop,
+                    onNavigateToPreviousPage: onNavigateToPreviousPage,
+                    onNavigateToNextPage: onNavigateToNextPage,
+                    onOpenPagePicker: onOpenPagePicker
+                )
+                .transition(floatingControlTransition)
+            } else if showsScrollToTopControl {
                 Button(action: onScrollToTop) {
-                    VStack(spacing: 1) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 14, weight: .bold))
-                        Text("TOP")
-                            .font(.system(size: 7, weight: .heavy, design: .rounded))
-                            .tracking(0.7)
-                            .foregroundStyle(PaperTheme.mutedText)
-                    }
-                    .foregroundStyle(PaperTheme.secondaryInk)
-                    .frame(width: 46, height: 46)
-                    .forumGlass(in: Circle())
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(PaperTheme.secondaryInk)
+                        .frame(width: 44, height: 44)
+                        .forumGlass(in: Circle())
                 }
                 .buttonStyle(.plain)
                 .contentShape(Circle())
                 .transition(floatingControlTransition)
                 .accessibilityLabel("回到顶部")
                 .accessibilityIdentifier("thread-detail-scroll-to-top")
-            }
-
-            if supportsDirectPagination, totalPageCount > 1, !isLoading {
-                ThreadDetailFloatingPaginationControl(
-                    visiblePage: visiblePage,
-                    totalPageCount: totalPageCount,
-                    isLoadingMore: isLoadingMore,
-                    onNavigateToPreviousPage: onNavigateToPreviousPage,
-                    onNavigateToNextPage: onNavigateToNextPage,
-                    onOpenPagePicker: onOpenPagePicker
-                )
-                .transition(floatingControlTransition)
             }
         }
         .padding(.trailing, 18)
@@ -407,72 +403,74 @@ struct ThreadDetailFloatingControls: View {
 }
 
 struct ThreadDetailFloatingPaginationControl: View {
+    let showsScrollToTopControl: Bool
     let visiblePage: Int
     let totalPageCount: Int
     let isLoadingMore: Bool
+    let onScrollToTop: () -> Void
     let onNavigateToPreviousPage: () -> Void
     let onNavigateToNextPage: () -> Void
     let onOpenPagePicker: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
+            if showsScrollToTopControl {
+                paginationIconButton(
+                    systemImage: "arrow.up",
+                    accessibilityLabel: "回到顶部",
+                    accessibilityIdentifier: "thread-detail-scroll-to-top",
+                    action: onScrollToTop
+                )
+                controlDivider
+            }
+
             paginationIconButton(
                 systemImage: "chevron.left",
                 isDisabled: isLoadingMore || visiblePage <= 1,
+                accessibilityLabel: "上一页",
+                accessibilityIdentifier: "thread-detail-previous-page",
                 action: onNavigateToPreviousPage
             )
+            controlDivider
 
             Button(action: onOpenPagePicker) {
-                VStack(spacing: 1) {
-                    Text("\(visiblePage) / \(totalPageCount)")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                    Text("PAGE")
-                        .font(.system(size: 8, weight: .heavy, design: .rounded))
-                        .tracking(0.8)
-                        .foregroundStyle(PaperTheme.mutedText)
-                }
-                .foregroundStyle(PaperTheme.secondaryInk)
-                .frame(minWidth: 74)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background {
-                    Capsule()
-                        .fill(Color.white.opacity(0.1))
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 2)
-                }
+                Text("\(visiblePage) / \(totalPageCount)")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(PaperTheme.secondaryInk)
+                    .frame(minWidth: 62, minHeight: 44)
+                    .padding(.horizontal, 6)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("thread-detail-current-page")
             .accessibilityLabel("当前页码")
             .accessibilityValue("\(visiblePage) / \(totalPageCount)")
 
+            controlDivider
             paginationIconButton(
                 systemImage: "chevron.right",
                 isDisabled: isLoadingMore || visiblePage >= totalPageCount,
+                accessibilityLabel: "下一页",
+                accessibilityIdentifier: "thread-detail-next-page",
                 action: onNavigateToNextPage
             )
         }
         .forumGlass(in: Capsule())
-        .overlay {
-            HStack {
-                Capsule()
-                    .fill(Color.white.opacity(0.16))
-                    .frame(width: 1, height: 18)
-                    .padding(.leading, 38)
-                Spacer()
-                Capsule()
-                    .fill(Color.white.opacity(0.16))
-                    .frame(width: 1, height: 18)
-                    .padding(.trailing, 38)
-            }
+        .animation(.easeInOut(duration: 0.18), value: showsScrollToTopControl)
+    }
+
+    private var controlDivider: some View {
+        Capsule()
+            .fill(Color.white.opacity(0.16))
+            .frame(width: 1, height: 18)
             .allowsHitTesting(false)
-        }
     }
 
     private func paginationIconButton(
         systemImage: String,
-        isDisabled: Bool,
+        isDisabled: Bool = false,
+        accessibilityLabel: String,
+        accessibilityIdentifier: String,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -489,6 +487,8 @@ struct ThreadDetailFloatingPaginationControl: View {
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 
@@ -703,27 +703,30 @@ private struct ThreadActionButtonLabel: View {
     var body: some View {
         ZStack {
             backgroundCircle
-            Circle()
-                .stroke(borderColor, lineWidth: 0.8)
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(isProminent ? 0.16 : 0.2),
-                            Color.white.opacity(0.02)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+            if isProminent || isActive {
+                Circle()
+                    .stroke(borderColor, lineWidth: 0.8)
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(isProminent ? 0.16 : 0.12),
+                                Color.white.opacity(0.02)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
-                .padding(1)
+                    .padding(1)
+            }
 
             Image(systemName: systemImage)
-                .font(.system(size: isProminent ? 14 : 13, weight: .semibold))
+                .font(.system(size: isProminent ? 17 : 15, weight: .semibold))
                 .foregroundColor(foregroundColor)
         }
-        .frame(width: isProminent ? 36 : 32, height: isProminent ? 36 : 32)
-        .shadow(color: shadowColor, radius: 8, y: 4)
+        .frame(width: isProminent ? 48 : 44, height: isProminent ? 48 : 44)
+        .contentShape(Circle())
+        .shadow(color: shadowColor, radius: isProminent ? 10 : 0, y: isProminent ? 5 : 0)
     }
 
     private var foregroundColor: Color {
@@ -763,8 +766,7 @@ private struct ThreadActionButtonLabel: View {
                     )
                 )
         } else {
-            Circle()
-                .fill(.ultraThinMaterial)
+            Color.clear
         }
     }
 

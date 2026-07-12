@@ -35,7 +35,7 @@ It includes:
 - NGA thread detail should accumulate fetched continuation pages into one continuous reading flow instead of replacing the visible reply slice page by page.
 - Intermediate NGA pages should preload when one of the last few visible reply rows appears, so readers can scroll continuously without seeing a dedicated "load next page" card between reply pages.
 - The lower-right floating page control should reflect the page currently near the top of the viewport, not just the highest page fetched so far.
-- The lower-right reading controls should stay visually grouped: the page capsule anchors the group, and the scroll-to-top affordance sits just above it once the reader has moved beyond the opening position.
+- The lower-right reading controls should stay visually grouped: when direct pagination is available, the scroll-to-top affordance joins the page capsule as its leading action; sources without direct pagination keep a standalone scroll-to-top button.
 - Automatic preloading should append data without advancing the visible-page selection; explicit previous/next controls and picker jumps are responsible for scrolling to a page anchor.
 - Visible-page tracking should prefer lightweight per-page anchor geometry instead of per-reply listeners, so long threads keep smoother scrolling while the floating control stays in sync.
 - NGA auto-pagination should use the simplest possible rule: when a near-end reply row appears, load the next source page once.
@@ -45,6 +45,7 @@ It includes:
 - The page picker should feel visually related to the floating controls: compact glass surfaces, quick first/last-page shortcuts, and a lightweight confirmation row instead of a dense divider-heavy list.
 - Floor labels in NGA thread detail should prefer source-provided floor numbers and only fall back to page-aware local inference when the parser cannot recover them.
 - Reply composition should stay as one shared sheet. The main action bar opens a thread-level reply, while per-floor menus can retarget the same composer to a specific floor when the active source exposes stable reply identifiers.
+- The bottom action bar should separate hierarchy without adding text labels: reply remains an independent prominent circular action, while author filtering, sharing, and more actions sit on one compact secondary glass capsule; inactive secondary actions do not add nested circular surfaces.
 - When the source returns quote metadata, the detail body should render it as a dedicated inline quote card instead of flattening it into plain text, so users can immediately distinguish "回复主题" from "回复某层".
 - Reply pagination must protect against duplicate content from source-specific continuation pages.
 - Refresh, explicit page jumps, and automatic continuation loading share one cancellable content-load task. A monotonically increasing generation prevents a stale request from committing state after a newer load has begun.
