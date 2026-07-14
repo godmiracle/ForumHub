@@ -1,10 +1,15 @@
 import Foundation
 
 enum V2EXRequestBuilder {
-    static func publicRequest(url: URL, accept: String) -> URLRequest {
+    static func publicRequest(
+        url: URL,
+        accept: String,
+        handlesCookies: Bool = true
+    ) -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("ForumHub/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        request.httpShouldHandleCookies = handlesCookies
         return request
     }
 
@@ -16,7 +21,11 @@ enum V2EXRequestBuilder {
             throw ForumProviderError.invalidResponse
         }
 
-        var request = publicRequest(url: url, accept: "application/json")
+        var request = publicRequest(
+            url: url,
+            accept: "application/json",
+            handlesCookies: false
+        )
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }
@@ -26,7 +35,7 @@ struct V2EXThreadRepository: ThreadRepository {
     let source = ForumSource.v2ex
     let capabilities = ForumCapabilities(
         supportsSearch: false,
-        supportsFavorites: false,
+        supportsFavorites: true,
         supportsReply: false,
         supportsReplyTargeting: false,
         supportsAuthentication: true,
@@ -42,7 +51,7 @@ struct V2EXThreadRepository: ThreadRepository {
 
     init(
         session: URLSession = .shared,
-        tokenProvider: @escaping () -> String? = { V2EXTokenKeychainStore().loadToken() }
+        tokenProvider: @escaping () -> String? = { try? V2EXTokenKeychainStore().loadToken() }
     ) {
         self.session = session
         self.tokenProvider = tokenProvider
@@ -129,7 +138,21 @@ struct V2EXThreadRepository: ThreadRepository {
     }
 
     func fetchFavoriteThreads(page: Int) async throws -> ThreadFetchResult {
-        throw ForumProviderError.unsupported("V2EX 官方接口暂不提供主题收藏列表。")
+        let resolvedPage = max(page, 1)
+        let data = try await getAuthenticatedWebPage(
+            path: "my/topics",
+            queryItems: [URLQueryItem(name: "p", value: String(resolvedPage))]
+        )
+        let favoritePage = V2EXFavoritePageParser.parse(data: data, page: resolvedPage)
+        return ThreadFetchResult(
+            payload: V2EXMapper.payload(
+                title: "V2EX 收藏",
+                channel: defaultChannel,
+                topics: favoritePage.topics
+            ),
+            rawText: String(decoding: data, as: UTF8.self),
+            hasMore: favoritePage.hasNextPage
+        )
     }
 
     func searchThreads(query: String, page: Int) async throws -> ThreadFetchResult {
@@ -178,11 +201,11 @@ struct V2EXThreadRepository: ThreadRepository {
     }
 
     func addFavoriteThread(tid: Int) async throws {
-        throw ForumProviderError.unsupported("V2EX 当前官方 API 未提供主题收藏接口。")
+        try await updateFavorite(tid: tid, action: .add)
     }
 
     func removeFavoriteThread(tid: Int) async throws {
-        throw ForumProviderError.unsupported("V2EX 当前官方 API 未提供主题收藏接口。")
+        try await updateFavorite(tid: tid, action: .remove)
     }
 
     func replyThread(
@@ -202,7 +225,11 @@ struct V2EXThreadRepository: ThreadRepository {
         components.queryItems = queryItems.isEmpty ? nil : queryItems
         guard let url = components.url else { throw ForumProviderError.invalidResponse }
 
-        let request = V2EXRequestBuilder.publicRequest(url: url, accept: "application/json")
+        let request = V2EXRequestBuilder.publicRequest(
+            url: url,
+            accept: "application/json",
+            handlesCookies: false
+        )
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
             throw ForumProviderError.invalidResponse
@@ -255,6 +282,67 @@ struct V2EXThreadRepository: ThreadRepository {
         }
         guard (200..<300).contains(response.statusCode) else {
             throw ForumProviderError.httpStatus(response.statusCode)
+        }
+        return data
+    }
+
+    private func updateFavorite(tid: Int, action: V2EXFavoriteAction) async throws {
+        let topicData = try await getAuthenticatedWebPage(path: "t/\(tid)")
+        if V2EXFavoriteActionParser.isAlreadyApplied(action, threadID: tid, data: topicData) {
+            return
+        }
+        guard let actionURL = V2EXFavoriteActionParser.actionURL(
+            action,
+            threadID: tid,
+            data: topicData
+        ) else {
+            throw ForumProviderError.invalidResponse
+        }
+
+        _ = try await getAuthenticatedWebPage(url: actionURL)
+        let refreshedTopicData = try await getAuthenticatedWebPage(path: "t/\(tid)")
+        guard V2EXFavoriteActionParser.isAlreadyApplied(
+            action,
+            threadID: tid,
+            data: refreshedTopicData
+        ) else {
+            throw ForumProviderError.invalidResponse
+        }
+    }
+
+    private func getAuthenticatedWebPage(
+        path: String,
+        queryItems: [URLQueryItem] = []
+    ) async throws -> Data {
+        var components = URLComponents(
+            url: webBaseURL.appendingPathComponent(path),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+        guard let url = components.url else { throw ForumProviderError.invalidResponse }
+        return try await getAuthenticatedWebPage(url: url)
+    }
+
+    private func getAuthenticatedWebPage(url: URL) async throws -> Data {
+        guard url.scheme == "https", url.host?.lowercased() == "www.v2ex.com" else {
+            throw ForumProviderError.invalidResponse
+        }
+
+        let request = V2EXRequestBuilder.publicRequest(
+            url: url,
+            accept: "text/html,application/xhtml+xml"
+        )
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse else {
+            throw ForumProviderError.invalidResponse
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw ForumProviderError.httpStatus(response.statusCode)
+        }
+        guard response.url?.host?.lowercased() == "www.v2ex.com",
+              response.url?.path != "/signin"
+        else {
+            throw ForumProviderError.unsupported("请先在用户页完成 V2EX 网页登录。")
         }
         return data
     }
@@ -495,6 +583,74 @@ private struct V2EXTopicsEnvelope: Decodable {
 struct V2EXRecentPage {
     let topics: [V2EXTopicDTO]
     let hasNextPage: Bool
+}
+
+enum V2EXFavoriteAction {
+    case add
+    case remove
+
+    fileprivate var pathComponent: String {
+        switch self {
+        case .add: return "favorite"
+        case .remove: return "unfavorite"
+        }
+    }
+
+    fileprivate var appliedPageAction: V2EXFavoriteAction {
+        switch self {
+        case .add: return .remove
+        case .remove: return .add
+        }
+    }
+}
+
+enum V2EXFavoriteActionParser {
+    private static let baseURL = URL(string: "https://www.v2ex.com/")!
+
+    static func actionURL(
+        _ action: V2EXFavoriteAction,
+        threadID: Int,
+        data: Data
+    ) -> URL? {
+        let html = String(decoding: data, as: UTF8.self)
+        let hrefs = html.matches(
+            pattern: #"href=["']([^"']+)["']"#,
+            options: .caseInsensitive
+        ).map { $0[1].replacingOccurrences(of: "&amp;", with: "&") }
+
+        return hrefs.compactMap { URL(string: $0, relativeTo: baseURL)?.absoluteURL }
+            .first { url in
+                guard url.scheme == "https",
+                      url.host?.lowercased() == "www.v2ex.com",
+                      url.path == "/\(action.pathComponent)/topic/\(threadID)",
+                      let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                else { return false }
+                return components.queryItems?.contains {
+                    $0.name == "once" && !($0.value ?? "").isEmpty
+                } == true
+            }
+    }
+
+    static func isAlreadyApplied(
+        _ action: V2EXFavoriteAction,
+        threadID: Int,
+        data: Data
+    ) -> Bool {
+        actionURL(action.appliedPageAction, threadID: threadID, data: data) != nil
+    }
+}
+
+enum V2EXFavoritePageParser {
+    static func parse(data: Data, page: Int) -> V2EXRecentPage {
+        let parsed = V2EXRecentPageParser.parse(data: data)
+        let html = String(decoding: data, as: UTF8.self)
+        let nextPage = max(page, 1) + 1
+        let hasNextPage = parsed.hasNextPage || html.range(
+            of: #"href=["']/my/topics\?p=\#(nextPage)["']"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        return V2EXRecentPage(topics: parsed.topics, hasNextPage: hasNextPage)
+    }
 }
 
 enum V2EXRecentPageParser {

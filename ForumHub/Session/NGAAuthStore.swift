@@ -5,6 +5,7 @@ import WebKit
 final class NGAAuthStore {
     static let shared = NGAAuthStore()
     private let keychain = NGAKeychainCookieStore()
+    private(set) var keychainErrorMessage: String?
 
     func currentLoginState() async -> NGALoginState {
         await restorePersistedCookies()
@@ -47,7 +48,12 @@ final class NGAAuthStore {
             HTTPCookieStorage.shared.deleteCookie(cookie)
         }
 
-        keychain.deleteCookies()
+        do {
+            try keychain.deleteCookies()
+            keychainErrorMessage = nil
+        } catch {
+            keychainErrorMessage = error.localizedDescription
+        }
     }
 
     private func mirrorCookiesToSharedStorage(_ cookies: [HTTPCookie]) {
@@ -57,7 +63,14 @@ final class NGAAuthStore {
     }
 
     private func restorePersistedCookies() async {
-        let cookies = keychain.loadCookies()
+        let cookies: [HTTPCookie]
+        do {
+            cookies = try keychain.loadCookies()
+            keychainErrorMessage = nil
+        } catch {
+            keychainErrorMessage = error.localizedDescription
+            return
+        }
         guard !cookies.isEmpty else { return }
 
         let webCookieStore = WKWebsiteDataStore.default().httpCookieStore
@@ -73,7 +86,12 @@ final class NGAAuthStore {
         }
 
         guard !loginCookies.isEmpty else { return }
-        keychain.saveCookies(loginCookies)
+        do {
+            try keychain.saveCookies(loginCookies)
+            keychainErrorMessage = nil
+        } catch {
+            keychainErrorMessage = error.localizedDescription
+        }
     }
 }
 
@@ -136,7 +154,7 @@ struct NGAKeychainCookieStore {
     private let legacyService = "com.godmiracle.nga.cookies"
     private let account = "nga-login-cookies"
 
-    func saveCookies(_ cookies: [HTTPCookie]) {
+    func saveCookies(_ cookies: [HTTPCookie]) throws {
         let encodedCookies = cookies.compactMap { cookie -> [String: Any]? in
             var properties: [String: Any] = [
                 HTTPCookiePropertyKey.name.rawValue: cookie.name,
@@ -153,25 +171,12 @@ struct NGAKeychainCookieStore {
             return properties
         }
 
-        guard let data = try? JSONSerialization.data(withJSONObject: encodedCookies) else {
-            return
-        }
-
-        deleteCookies()
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-
-        SecItemAdd(query as CFDictionary, nil)
+        let data = try JSONSerialization.data(withJSONObject: encodedCookies)
+        try itemStore(for: service).save(data)
     }
 
-    func loadCookies() -> [HTTPCookie] {
-        let data = loadData(forService: service) ?? loadData(forService: legacyService)
+    func loadCookies() throws -> [HTTPCookie] {
+        let data = try itemStore(for: service).load() ?? itemStore(for: legacyService).load()
         guard let data,
               let encodedCookies = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
         else { return [] }
@@ -191,35 +196,13 @@ struct NGAKeychainCookieStore {
         }
     }
 
-    func deleteCookies() {
-        deleteData(forService: service)
-        deleteData(forService: legacyService)
+    func deleteCookies() throws {
+        try itemStore(for: service).delete()
+        try itemStore(for: legacyService).delete()
     }
 
-    private func loadData(forService service: String) -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else {
-            return nil
-        }
-        return result as? Data
-    }
-
-    private func deleteData(forService service: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-
-        SecItemDelete(query as CFDictionary)
+    private func itemStore(for service: String) -> SynchronizableKeychainStore {
+        SynchronizableKeychainStore(service: service, account: account)
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 import UIKit
 @testable import ForumHub
@@ -784,14 +785,11 @@ struct ForumHubTests {
         let thread = try #require(ForumPayload.mock.threads.first)
         let favorite = SavedForumThread(thread: thread)
         let history = BrowsingHistoryEntry(thread: thread)
-        let blocked = BlockedForumUser(source: .nga, username: "CJ")
         defaults.set(try JSONEncoder().encode([favorite]), forKey: "favorite-forum-threads-v1")
         defaults.set(try JSONEncoder().encode([history]), forKey: "forum-browsing-history-v1")
-        defaults.set(try JSONEncoder().encode([blocked]), forKey: "blocked-forum-users-v2")
 
         #expect(FavoriteThreadsStore(defaults: defaults).entries == [favorite])
         #expect(BrowsingHistoryStore(defaults: defaults).entries == [history])
-        #expect(BlockedUsersStore(defaults: defaults).blockedUsers == [blocked])
 
         let favoriteSnapshot = try JSONDecoder().decode(
             VersionedLocalSnapshot<[SavedForumThread]>.self,
@@ -801,13 +799,8 @@ struct ForumHubTests {
             VersionedLocalSnapshot<[BrowsingHistoryEntry]>.self,
             from: try #require(defaults.data(forKey: "forum-browsing-history-v1"))
         )
-        let blockedSnapshot = try JSONDecoder().decode(
-            VersionedLocalSnapshot<[BlockedForumUser]>.self,
-            from: try #require(defaults.data(forKey: "blocked-forum-users-v2"))
-        )
         #expect(favoriteSnapshot.version == 1)
         #expect(historySnapshot.version == 1)
-        #expect(blockedSnapshot.version == 1)
     }
 
     @Test func corruptedUserContentSnapshotsDegradeToEmptyState() throws {
@@ -817,12 +810,16 @@ struct ForumHubTests {
         let corrupted = Data("not-json".utf8)
         defaults.set(corrupted, forKey: "favorite-forum-threads-v1")
         defaults.set(corrupted, forKey: "forum-browsing-history-v1")
-        defaults.set(corrupted, forKey: "blocked-forum-users-v2")
-        defaults.set(["legacy-user"], forKey: "blocked-forum-usernames")
+        defaults.set(corrupted, forKey: "blocked-forum-users-v3")
 
         #expect(FavoriteThreadsStore(defaults: defaults).entries.isEmpty)
         #expect(BrowsingHistoryStore(defaults: defaults).entries.isEmpty)
-        #expect(BlockedUsersStore(defaults: defaults).blockedUsers.isEmpty)
+        #expect(
+            BlockedUsersStore(
+                defaults: defaults,
+                cloudStore: TestICloudKeyValueStore()
+            ).blockedUsers.isEmpty
+        )
     }
 
     @Test func channelPagingCyclesInBothDirections() throws {
@@ -906,18 +903,142 @@ struct ForumHubTests {
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        let store = BlockedUsersStore(defaults: defaults)
+        let cloudStore = TestICloudKeyValueStore()
+        let store = BlockedUsersStore(defaults: defaults, cloudStore: cloudStore)
         store.block(source: .nga, username: "CJ")
 
         #expect(store.isBlocked(source: .nga, username: "cj"))
         #expect(!store.isBlocked(source: .v2ex, username: "cj"))
         #expect(store.filtering(ForumPayload.mock.threads).contains { $0.author == "CJ" } == false)
 
-        let restored = BlockedUsersStore(defaults: defaults)
+        let restored = BlockedUsersStore(defaults: defaults, cloudStore: cloudStore)
         #expect(restored.blockedUsers == [BlockedForumUser(source: .nga, username: "CJ")])
 
         restored.unblock(try #require(restored.blockedUsers.first))
         #expect(restored.blockedUsers.isEmpty)
+    }
+
+    @Test func blockedUsersMergeAcrossICloudStoresWithoutLosingIndependentChanges() throws {
+        let firstSuite = "ForumHubTests.blocked-users.first.\(UUID().uuidString)"
+        let secondSuite = "ForumHubTests.blocked-users.second.\(UUID().uuidString)"
+        let firstDefaults = try #require(UserDefaults(suiteName: firstSuite))
+        let secondDefaults = try #require(UserDefaults(suiteName: secondSuite))
+        defer {
+            firstDefaults.removePersistentDomain(forName: firstSuite)
+            secondDefaults.removePersistentDomain(forName: secondSuite)
+        }
+        let cloudStore = TestICloudKeyValueStore()
+        let first = BlockedUsersStore(defaults: firstDefaults, cloudStore: cloudStore)
+        #expect(cloudStore.setCount == 0)
+        first.block(source: .nga, username: "Alice")
+
+        let second = BlockedUsersStore(defaults: secondDefaults, cloudStore: cloudStore)
+        #expect(second.isBlocked(source: .nga, username: "alice"))
+
+        second.block(source: .v2ex, username: "Bob")
+        first.refreshFromICloud()
+        #expect(first.isBlocked(source: .nga, username: "Alice"))
+        #expect(first.isBlocked(source: .v2ex, username: "Bob"))
+
+        second.unblock(BlockedForumUser(source: .nga, username: "Alice"))
+        first.refreshFromICloud()
+        #expect(!first.isBlocked(source: .nga, username: "Alice"))
+        #expect(first.isBlocked(source: .v2ex, username: "Bob"))
+    }
+
+    @Test func blockedUsersInitializationNeverWritesWholeLocalSnapshotBackToICloud() throws {
+        let suiteName = "ForumHubTests.blocked-users-stale.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let cloudStore = TestICloudKeyValueStore()
+        let first = BlockedUsersStore(defaults: defaults, cloudStore: cloudStore)
+        first.block(source: .nga, username: "Local")
+        cloudStore.seed(BlockedUserSyncRecord(
+            source: .v2ex,
+            username: "Remote",
+            isBlocked: true,
+            updatedAt: .now
+        ))
+        let writesBeforeRestore = cloudStore.setCount
+
+        let restored = BlockedUsersStore(defaults: defaults, cloudStore: cloudStore)
+
+        #expect(cloudStore.setCount == writesBeforeRestore)
+        #expect(restored.isBlocked(source: .nga, username: "Local"))
+        #expect(restored.isBlocked(source: .v2ex, username: "Remote"))
+    }
+
+    @Test func blockedUsersAccountChangeDiscardsPreviousAccountCache() throws {
+        let suiteName = "ForumHubTests.blocked-users-account.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let cloudStore = TestICloudKeyValueStore()
+        let store = BlockedUsersStore(defaults: defaults, cloudStore: cloudStore)
+        store.block(source: .nga, username: "OldAccount")
+        cloudStore.removeAllValues()
+        cloudStore.seed(BlockedUserSyncRecord(
+            source: .v2ex,
+            username: "NewAccount",
+            isBlocked: true,
+            updatedAt: .now
+        ))
+
+        store.handleICloudChange(reason: NSUbiquitousKeyValueStoreAccountChange)
+
+        #expect(!store.isBlocked(source: .nga, username: "OldAccount"))
+        #expect(store.isBlocked(source: .v2ex, username: "NewAccount"))
+    }
+
+    @Test func blockedUsersSurfacesQuotaViolationWithoutLosingLocalChange() throws {
+        let suiteName = "ForumHubTests.blocked-users-quota.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = BlockedUsersStore(defaults: defaults, cloudStore: TestICloudKeyValueStore())
+        store.block(source: .nga, username: "Local")
+
+        store.handleICloudChange(reason: NSUbiquitousKeyValueStoreQuotaViolationChange)
+
+        #expect(store.isBlocked(source: .nga, username: "Local"))
+        #expect(store.iCloudSyncState == .failed("iCloud 屏蔽名单已达到同步容量上限，新修改仅保存在本机。"))
+    }
+
+    @Test func synchronizableKeychainStoreUpdatesWithoutDeletingExistingItem() throws {
+        let access = TestKeychainDataAccess()
+        access.storedData = Data("old".utf8)
+        let store = SynchronizableKeychainStore(service: "test", account: "account", access: access)
+
+        try store.save(Data("new".utf8))
+
+        #expect(access.updateCount == 1)
+        #expect(access.addCount == 0)
+        #expect(access.deleteCount == 0)
+        #expect(access.storedData == Data("new".utf8))
+    }
+
+    @Test func synchronizableKeychainStoreAddsOnlyWhenItemDoesNotExist() throws {
+        let access = TestKeychainDataAccess()
+        let store = SynchronizableKeychainStore(service: "test", account: "account", access: access)
+
+        try store.save(Data("new".utf8))
+
+        #expect(access.updateCount == 1)
+        #expect(access.addCount == 1)
+        #expect(access.deleteCount == 0)
+        #expect(access.storedData == Data("new".utf8))
+    }
+
+    @Test func synchronizableKeychainStorePreservesExistingItemWhenUpdateFails() {
+        let access = TestKeychainDataAccess()
+        access.storedData = Data("old".utf8)
+        access.updateStatus = errSecInteractionNotAllowed
+        let store = SynchronizableKeychainStore(service: "test", account: "account", access: access)
+
+        #expect(throws: SynchronizableKeychainError.operationFailed(errSecInteractionNotAllowed)) {
+            try store.save(Data("new".utf8))
+        }
+        #expect(access.addCount == 0)
+        #expect(access.deleteCount == 0)
+        #expect(access.storedData == Data("old".utf8))
     }
 
     @Test func favoriteThreadsPersistAndToggleBySource() throws {
@@ -938,14 +1059,28 @@ struct ForumHubTests {
             replies: [],
             source: .v2ex
         )
+        let linuxDoThread = ForumThread(
+            id: ngaThread.id,
+            title: "LINUX DO 不支持远端收藏",
+            summary: "",
+            author: "linuxdo-user",
+            lastReplyAt: "",
+            replyCount: 0,
+            viewCount: 0,
+            body: "",
+            replies: [],
+            source: .linuxDo
+        )
 
         let store = FavoriteThreadsStore(defaults: defaults)
         store.save(ngaThread)
         store.save(v2exThread)
+        store.save(linuxDoThread)
 
         #expect(store.contains(ngaThread))
         #expect(store.contains(v2exThread))
         #expect(store.entries.count == 2)
+        #expect(!store.contains(linuxDoThread))
 
         let restored = FavoriteThreadsStore(defaults: defaults)
         #expect(restored.entries.count == 2)
@@ -1432,6 +1567,115 @@ struct ForumHubTests {
         #expect(page.hasNextPage)
     }
 
+    @Test func v2exFavoriteActionParserAcceptsOnlyMatchingSameOriginAction() throws {
+        let html = Data("""
+        <a href="/favorite/topic/1226835?once=71692">加入收藏</a>
+        <a href="https://example.com/favorite/topic/1226835?once=stolen">外部链接</a>
+        <a href="/favorite/topic/9?once=wrong-topic">其他主题</a>
+        """.utf8)
+
+        let actionURL = try #require(
+            V2EXFavoriteActionParser.actionURL(.add, threadID: 1_226_835, data: html)
+        )
+
+        #expect(actionURL.absoluteString == "https://www.v2ex.com/favorite/topic/1226835?once=71692")
+        #expect(V2EXFavoriteActionParser.actionURL(.remove, threadID: 1_226_835, data: html) == nil)
+        #expect(!V2EXFavoriteActionParser.isAlreadyApplied(.add, threadID: 1_226_835, data: html))
+        #expect(V2EXFavoriteActionParser.isAlreadyApplied(.remove, threadID: 1_226_835, data: html))
+    }
+
+    @Test func v2exFavoriteActionParserRecognizesAppliedFavoriteState() {
+        let html = Data(#"<a href='/unfavorite/topic/42?once=123&amp;next=/my/topics'>取消收藏</a>"#.utf8)
+
+        #expect(V2EXFavoriteActionParser.isAlreadyApplied(.add, threadID: 42, data: html))
+        #expect(
+            V2EXFavoriteActionParser.actionURL(.remove, threadID: 42, data: html)?.absoluteString
+                == "https://www.v2ex.com/unfavorite/topic/42?once=123&next=/my/topics"
+        )
+    }
+
+    @Test func v2exFavoritePageParserExtractsTopicsAndPagination() {
+        let html = Data("""
+        <html><body>
+        <div class="cell item"><img class="avatar" alt="alice" />
+        <a href="/t/42#reply3" class="topic-link">收藏主题</a>
+        <a class="count_livid">3</a></div>
+        <a href="/my/topics?p=2">2</a>
+        </body></html>
+        """.utf8)
+
+        let page = V2EXFavoritePageParser.parse(data: html, page: 1)
+
+        #expect(page.topics.map(\.id) == [42])
+        #expect(page.topics.first?.member?.username == "alice")
+        #expect(page.hasNextPage)
+    }
+
 }
 
 private final class FixtureLocator {}
+
+@MainActor
+private final class TestICloudKeyValueStore: ICloudKeyValueStoring {
+    private var values: [String: Any] = [:]
+    private(set) var setCount = 0
+
+    var dictionaryRepresentation: [String: Any] { values }
+
+    func data(forKey key: String) -> Data? {
+        values[key] as? Data
+    }
+
+    func set(_ value: Any?, forKey key: String) {
+        setCount += 1
+        values[key] = value
+    }
+
+    func removeObject(forKey key: String) {
+        values.removeValue(forKey: key)
+    }
+
+    func seed(_ record: BlockedUserSyncRecord) {
+        values[BlockedUserCloudCodec.key(for: record.id)] = BlockedUserCloudCodec.encode(record)
+    }
+
+    func removeAllValues() {
+        values = [:]
+    }
+
+    func synchronize() -> Bool {
+        true
+    }
+}
+
+private final class TestKeychainDataAccess: KeychainDataAccessing {
+    var storedData: Data?
+    var updateStatus: OSStatus = errSecSuccess
+    private(set) var updateCount = 0
+    private(set) var addCount = 0
+    private(set) var deleteCount = 0
+
+    func update(query: [String: Any], attributes: [String: Any]) -> OSStatus {
+        updateCount += 1
+        guard updateStatus == errSecSuccess else { return updateStatus }
+        guard storedData != nil else { return errSecItemNotFound }
+        storedData = attributes[kSecValueData as String] as? Data
+        return errSecSuccess
+    }
+
+    func add(attributes: [String: Any]) -> OSStatus {
+        addCount += 1
+        storedData = attributes[kSecValueData as String] as? Data
+        return errSecSuccess
+    }
+
+    func loadData(query: [String: Any]) -> (OSStatus, Data?) {
+        storedData.map { (errSecSuccess, $0) } ?? (errSecItemNotFound, nil)
+    }
+
+    func delete(query: [String: Any]) -> OSStatus {
+        deleteCount += 1
+        storedData = nil
+        return errSecSuccess
+    }
+}

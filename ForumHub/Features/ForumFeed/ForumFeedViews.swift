@@ -300,13 +300,15 @@ struct BlockableThreadLink: View {
             if !navigationDisabled { onOpen() }
         })
         .contextMenu {
-            Button {
-                Task { await toggleFavorite() }
-            } label: {
-                Label(
-                    favoriteThreads.contains(thread) ? "取消收藏" : "收藏帖子",
-                    systemImage: favoriteThreads.contains(thread) ? "star.slash" : "star"
-                )
+            if repository.capabilities.supportsFavorites {
+                Button {
+                    Task { await toggleFavorite() }
+                } label: {
+                    Label(
+                        favoriteThreads.contains(thread) ? "取消收藏" : "收藏帖子",
+                        systemImage: favoriteThreads.contains(thread) ? "star.slash" : "star"
+                    )
+                }
             }
 
             if thread.author.isUsefulForumValue, thread.author != "未知作者" {
@@ -335,18 +337,14 @@ struct BlockableThreadLink: View {
         favoriteErrorMessage = nil
 
         do {
-            if repository.capabilities.supportsFavorites {
-                if favoriteThreads.contains(thread) {
-                    try await repository.removeFavoriteThread(tid: thread.id)
-                    favoriteThreads.remove(thread)
-                } else {
-                    try await repository.addFavoriteThread(tid: thread.id)
-                    favoriteThreads.save(thread)
-                }
-                return
+            guard repository.capabilities.supportsFavorites else { return }
+            if favoriteThreads.contains(thread) {
+                try await repository.removeFavoriteThread(tid: thread.id)
+                favoriteThreads.remove(thread)
+            } else {
+                try await repository.addFavoriteThread(tid: thread.id)
+                favoriteThreads.save(thread)
             }
-
-            favoriteThreads.toggle(thread)
         } catch {
             favoriteErrorMessage = error.localizedDescription
         }

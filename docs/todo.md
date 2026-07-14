@@ -256,6 +256,97 @@
     - 不顺手创建全局 Use Case、依赖容器或重排目录；
     - 相关测试和用户文档同步。
 
+- [x] **SD-7.3 接入 V2EX 站点收藏**
+  - 具体问题：V2EX 网站支持主题收藏，但 ForumHub 仅保存在本地；已有 Web 登录 UI 没有持久化、验证和恢复 Cookie，也未接入收藏列表与增删请求。
+  - 涉及文件或模块：`ForumHub/Session/V2EXWebSession.swift`、`V2EXAuthStore`、`V2EXThreadRepository`、V2EX 账户页、收藏页
+  - 优先级：P1
+  - 状态：已完成。真机构建、自动化测试、会话重启恢复及真实账号收藏增删回归均已通过。
+  - 验收标准：
+    - Token 与 Web Cookie 会话隔离，API Token 不进入网页请求；
+    - Web Cookie 可从 Keychain 恢复并通过 `/my/topics` 验证；
+    - 收藏列表支持分页并写入本地轻量镜像；
+    - 收藏和取消收藏只执行当前主题页返回的同源、同 tid、带非空 `once` 的 action；
+    - 网页会话失效时引导重新登录，不静默降级成本地收藏；
+    - 相关自动化测试、真机构建和真实账号增删回归通过。
+
+- [ ] **SD-7.4 接入 iCloud 屏蔽名单与账号凭证同步**
+  - 具体问题：屏蔽名单和账号凭证仅保存在单机，独立本地收藏入口与站点收藏形成重复产品语义。
+  - 涉及文件或模块：`ForumHub/Sync`、`BlockedUsersStore`、Session Keychain Stores、账户页、收藏动作、App Entitlements
+  - 优先级：P1
+  - 状态：代码、真机构建、自动化测试及 V2EX WebKit/账户状态一致性人工验证已通过，等待第二台同 Apple Account 设备完成跨设备实测。
+  - 验收标准：
+    - App 签名包含 iCloud KVS entitlement；
+    - 屏蔽、解除及两台设备独立修改可按记录合并，空首次启动不覆盖云端；
+    - Token/Cookie 仅通过 iCloud Keychain 同步，不进入 KVS；
+    - 删除独立本地收藏入口，无远端收藏能力的数据源不显示收藏动作；
+    - 真机构建与自动化测试通过；
+    - 第二台设备验证屏蔽名单及至少一种账号凭证可恢复。
+
+- [x] **R-511 等待 KVS 首次同步完成后再允许屏蔽名单回写**
+  - 具体问题：`BlockedUsersStore` 初始化时读取 KVS 后立即把整份本地合并结果写回；`synchronize()` 不保证首次云端下载已经完成，旧设备的非空本地快照可能覆盖尚未到达的云端记录。
+  - 涉及文件或模块：`ForumHub/Features/BlockedUsers/BlockedUsersStore.swift`、`ForumHub/Sync/ICloudBlockedUsersSync.swift`、`ForumHub/ContentView.swift`、同步测试
+  - 优先级：P0
+  - 状态：已完成；改为逐记录 KVS key，启动和 initial sync 只读合并，不再上传整份本地快照；延迟云端记录模拟测试及真机构建通过。
+  - 验收标准：
+    - 首次 KVS 下载完成前不上传由旧本地快照组成的整包数据；
+    - 模拟延迟首次同步时，本地旧记录和云端独立记录均不丢失；
+    - 首次同步期间发生本地屏蔽或解除操作时，最终仍按记录合并；
+    - 相关单元测试与真机构建通过。
+
+- [x] **R-512 按 KVS 通知原因隔离 Apple Account 切换**
+  - 具体问题：当前忽略 `didChangeExternallyNotification` 的 reason，Apple Account 切换后仍把旧账号的本地屏蔽记录与新账号 KVS 合并，后续写入会造成跨账号数据污染。
+  - 涉及文件或模块：`ForumHub/ContentView.swift`、`BlockedUsersStore`、本地缓存命名空间、同步测试
+  - 优先级：P0
+  - 状态：已完成；通知 reason 已分类处理，account change 会先清除旧账号本地缓存再读取新账号数据；账号切换测试及真机构建通过。
+  - 验收标准：
+    - 区分 server change、initial sync、quota violation 和 account change；
+    - Apple Account 切换时不把旧账号屏蔽记录上传到新账号；
+    - 本地缓存按账号隔离或在账号切换时安全重置；
+    - 覆盖账号切换通知的自动化测试并通过。
+
+- [x] **R-513 明确并实现跨设备退出登录语义**
+  - 具体问题：删除同步 Keychain item 后，另一设备仍存在的 WebKit Cookie 会在恢复流程中再次保存到同步 Keychain；LINUX DO 还会保留本地账号摘要，因此当前实现不能保证 ADR-015 声明的跨设备退出传播。
+  - 涉及文件或模块：`NGAAuthStore`、`V2EXWebSession`、`LinuxDoAuthStore`、`V2EXAuthStore`、ADR-015、账户文案
+  - 优先级：P1
+  - 状态：已完成；产品语义收敛为“清除本机状态并请求删除同步备份”，不再声称能够撤销其他设备已经存在的论坛 Cookie；ADR、模块文档和账户文案一致。
+  - 验收标准：
+    - 产品明确“仅本机退出”或“所有设备退出”语义；
+    - 若为所有设备退出，设备 B 的旧 WebKit Cookie 不得重新创建已删除的同步凭证；
+    - 同步凭证删除后，LINUX DO 等本地账号摘要不会继续显示已连接；
+    - ADR、用户文案和自动化测试与最终语义一致。
+
+- [x] **R-514 将同步 Keychain 写入改为可检查的原子 upsert**
+  - 具体问题：Cookie Store 使用 `SecItemDelete` 后 `SecItemAdd`，且忽略新增状态；Token Store 虽抛错但也先删除旧值，新增失败时会丢失原有有效凭证。
+  - 涉及文件或模块：NGA、V2EX Token、V2EX Web Cookie、LINUX DO Keychain Stores
+  - 优先级：P1
+  - 状态：已完成；四类凭证统一使用 `SecItemUpdate`，仅在 item 不存在时 `SecItemAdd`，所有状态可抛给调用层；新增、更新和失败保留旧值测试及真机构建通过。
+  - 验收标准：
+    - 优先使用 `SecItemUpdate`，不存在时再 `SecItemAdd`；
+    - 所有 `OSStatus` 均被检查并可反馈给调用方；
+    - 更新失败时不先删除已有有效凭证；
+    - 使用可注入 Security 接缝覆盖新增、更新、失败和删除测试。
+
+- [ ] **R-515 为延迟到达的同步 Keychain 凭证增加恢复入口**
+  - 具体问题：三类会话主要只在 App 启动时读取一次 Keychain；同步项在启动恢复之后到达时，NGA 和 LINUX DO 没有统一的前台或账户页重读路径。
+  - 涉及文件或模块：`AuthSessionRegistry`、`ContentView` Scene 生命周期、NGA/V2EX/LINUX DO 账户状态
+  - 优先级：P1
+  - 状态：已修改，等待人工验证；App 返回前台时会以 30 秒间隔节流重跑三类会话恢复，真机构建与完整单元测试通过，但没有第二台设备制造真实 Keychain 延迟到达。
+  - 验收标准：
+    - Keychain 项晚于首次 restore 到达时，无需杀 App 即可恢复账号状态；
+    - 恢复入口有节流并避免重复网络校验；
+    - 无凭证和网络失败时不误报已连接；
+    - 延迟到达、删除和前后台切换测试通过。
+
+- [x] **R-516 处理 KVS quota 与同步失败状态**
+  - 具体问题：`synchronize()` 返回值和 KVS 通知原因均被忽略，墓碑持续增长或配额异常时用户仍会看到正常本地状态，但无法知道云同步已经失败。
+  - 涉及文件或模块：`ICloudKeyValueStoring`、`BlockedUsersStore`、账户或屏蔽页同步状态、同步测试
+  - 优先级：P1
+  - 状态：已完成；同步失败、quota 和未知通知状态会在屏蔽页显示并保留本地修改。墓碑为避免旧设备复活而不自动删除，并以 900 条安全上限降级；quota 测试及真机构建通过。
+  - 验收标准：
+    - quota violation 和同步失败可观察、可重试且不误报同步成功；
+    - 墓碑有明确且不会复活旧记录的保留与容量策略；
+    - 配额通知、写入失败和恢复测试通过。
+
 ---
 
 ## 已完成基线（不再重复迁移）
@@ -269,7 +360,7 @@
 - `ForumThread` 内容相等与 `source + id` 身份判断已分离。
 - NGA 连续分页、重复主楼移除、页码追踪和连续回顶已有真机回归。
 - NGA 图片 Header 域名隔离、登录恢复、LINUX DO 解析已有单元测试。
-- 正式测试策略文档已建立，iCloud 同步保持禁用。
+- 正式测试策略文档已建立；iCloud KVS 与 iCloud Keychain 同步已启用，跨设备实测由 SD-7.4 跟踪。
 
 ---
 

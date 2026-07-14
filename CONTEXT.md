@@ -21,11 +21,11 @@ Current sources:
 - **Topic**: A forum thread summary shown in a Forum Feed.
 - **Thread Detail**: The first post and replies for a Topic, with local presentation options such as only-author filtering, reverse order, floor labels, image preview, and pagination.
 - **Thread Reply Target**: The destination for a reply submission inside Thread Detail. It can be the thread itself or a specific reply floor when the source supports targeted replies.
-- **Login Session**: Source-specific credentials. NGA and LINUX DO use WebKit cookies plus shared HTTP cookie storage; V2EX uses a Personal Access Token with API v2.
+- **Login Session**: Source-specific credentials. NGA and LINUX DO use WebKit cookies plus shared HTTP cookie storage. V2EX keeps its API v2 Personal Access Token separate from a WebKit cookie session used for source-native favorites and original-page browsing.
 - **Auth Session Descriptor**: A shared account-screen summary for one Forum Source. It describes how a source session should be presented in upper-layer UI without exposing raw cookie or token details.
 - **Forum Provider**: The module behind the `ThreadRepository` seam. NGA, V2EX, and Discourse-based adapters map native data into shared domain models.
-- **Favorite Thread**: A locally persisted thread bookmark, optionally backed by a source-native favorite API when available.
-- **Blocked User**: A local per-source suppression rule that hides content by username without mutating remote data.
+- **Favorite Thread**: A source-native bookmark entry. NGA and V2EX treat the source account as authoritative and keep only a lightweight local UI cache; sources without remote bookmark capability do not expose a favorite action.
+- **Blocked User**: A per-source suppression rule synchronized through iCloud KVS. It hides content by username without mutating remote forum data.
 
 ## Invariants
 
@@ -39,7 +39,7 @@ Current sources:
 - Reply composition should keep one shared entry flow while letting each source adapter decide whether it supports thread-level reply only or reply-to-floor targeting.
 - Persisted member identities are scoped by Forum Source so same-name users do not collide.
 - The first launch subscribes to 网事杂谈 (`-7`), 大时代 (`706`), and 晴风村 (`-7955747`); at least one Forum Subscription remains active.
-- iCloud-backed sync is currently disabled and should not be treated as an active feature.
+- Public forum usernames in the blocked-user list sync through iCloud KVS; credentials sync separately through iCloud Keychain and never enter the KVS payload.
 - NGA thread detail pagination should preserve source fetch order, accumulate continuation pages into one reading flow, and must not reintroduce the main post as a reply row.
 
 ## Current Focus Areas

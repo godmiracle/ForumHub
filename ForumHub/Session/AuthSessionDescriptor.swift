@@ -62,7 +62,7 @@ struct AuthSessionRegistry {
 
 extension NGALoginState: AuthSessionDescriptorProviding {
     var authSessionDescriptor: AuthSessionDescriptor {
-        AuthSessionDescriptor(
+        return AuthSessionDescriptor(
             source: .nga,
             title: ForumSource.nga.title,
             statusText: isLoggedIn ? "已连接" : "游客浏览",
@@ -77,15 +77,27 @@ extension NGALoginState: AuthSessionDescriptorProviding {
 
 extension V2EXAuthStore: AuthSessionDescriptorProviding {
     var authSessionDescriptor: AuthSessionDescriptor {
-        AuthSessionDescriptor(
+        let isConnected = isAuthenticated || hasWebSession
+        let connectionKind: String
+        if isAuthenticated, hasWebSession {
+            connectionKind = "访问令牌 + 网页登录"
+        } else if hasWebSession {
+            connectionKind = "网页登录"
+        } else {
+            connectionKind = "访问令牌"
+        }
+
+        return AuthSessionDescriptor(
             source: .v2ex,
             title: ForumSource.v2ex.title,
-            statusText: isAuthenticated ? "已连接" : "未连接",
-            detailText: isAuthenticated ? "@\(username ?? "V2EX")" : "连接后可使用账号相关能力",
-            connectionKindText: "访问令牌",
-            isAuthenticated: isAuthenticated,
+            statusText: isConnected ? "已连接" : "未连接",
+            detailText: isAuthenticated
+                ? "@\(username ?? "V2EX")"
+                : (hasWebSession ? "网页收藏会话有效" : "连接后可使用账号相关能力"),
+            connectionKindText: connectionKind,
+            isAuthenticated: isConnected,
             action: .manage,
-            actionTitle: isAuthenticated ? "管理" : "连接"
+            actionTitle: isConnected ? "管理" : "连接"
         )
     }
 }

@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import Security
+import WebKit
 
 struct V2EXAccount: Equatable {
     let id: Int
@@ -42,6 +43,8 @@ struct V2EXAuthService: V2EXAuthenticating {
 @Observable
 final class V2EXAuthStore {
     private(set) var account: V2EXAccount?
+    private(set) var hasWebSession = false
+    private(set) var webSessionSyncErrorMessage: String?
     private(set) var isValidating = false
     private(set) var errorMessage: String?
 
@@ -62,11 +65,20 @@ final class V2EXAuthStore {
     }
 
     func restoreSession() async {
-        guard let token = keychain.loadToken() else { return }
-        await validateAndSave(token: token, savesToken: false)
-        if account == nil {
-            keychain.deleteToken()
+        async let webSession = V2EXWebSession.restore()
+        do {
+            if let token = try keychain.loadToken() {
+                await validateAndSave(token: token, savesToken: false)
+                if account == nil {
+                    try? keychain.deleteToken()
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
         }
+        let webResult = await webSession
+        hasWebSession = webResult.isValid
+        webSessionSyncErrorMessage = webResult.keychainErrorMessage
     }
 
     @discardableResult
@@ -82,9 +94,32 @@ final class V2EXAuthStore {
     }
 
     func logout() {
-        keychain.deleteToken()
-        account = nil
-        errorMessage = nil
+        do {
+            try keychain.deleteToken()
+            account = nil
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func syncWebSession(from cookieStore: WKHTTPCookieStore) async -> Bool {
+        let result = await V2EXWebSession.syncCookies(from: cookieStore)
+        hasWebSession = result.isValid
+        webSessionSyncErrorMessage = result.keychainErrorMessage
+        return hasWebSession
+    }
+
+    func refreshWebSession() async {
+        let result = await V2EXWebSession.restore()
+        hasWebSession = result.isValid
+        webSessionSyncErrorMessage = result.keychainErrorMessage
+    }
+
+    func logoutWebSession() async {
+        webSessionSyncErrorMessage = await V2EXWebSession.clearCookies()
+        hasWebSession = false
     }
 
     func clearError() {
@@ -157,54 +192,22 @@ struct V2EXTokenKeychainStore {
         guard let data = token.data(using: .utf8) else {
             throw V2EXAuthError.invalidToken
         }
-        deleteToken()
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else {
-            throw V2EXAuthError.invalidResponse
-        }
+        try itemStore(for: service).save(data)
     }
 
-    func loadToken() -> String? {
-        guard let data = loadData(forService: service) ?? loadData(forService: legacyService) else {
+    func loadToken() throws -> String? {
+        guard let data = try itemStore(for: service).load() ?? itemStore(for: legacyService).load() else {
             return nil
         }
         return String(data: data, encoding: .utf8)
     }
 
-    func deleteToken() {
-        deleteData(forService: service)
-        deleteData(forService: legacyService)
+    func deleteToken() throws {
+        try itemStore(for: service).delete()
+        try itemStore(for: legacyService).delete()
     }
 
-    private func loadData(forService service: String) -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else {
-            return nil
-        }
-        return result as? Data
-    }
-
-    private func deleteData(forService service: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
+    private func itemStore(for service: String) -> SynchronizableKeychainStore {
+        SynchronizableKeychainStore(service: service, account: account)
     }
 }

@@ -6,6 +6,25 @@ struct BlockedUsersView: View {
 
     var body: some View {
         List {
+            Section {
+                Label {
+                    Text(blockedUsers.iCloudSyncState.message)
+                } icon: {
+                    switch blockedUsers.iCloudSyncState {
+                    case .syncing:
+                        ProgressView()
+                    case .synced:
+                        Image(systemName: "icloud.and.arrow.up")
+                    case .failed:
+                        Image(systemName: "exclamationmark.icloud")
+                            .foregroundStyle(PaperTheme.accent)
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(PaperTheme.mutedText)
+                .listRowBackground(PaperTheme.card)
+            }
+
             if blockedUsers.blockedUsers.isEmpty {
                 ContentUnavailableView(
                     "没有屏蔽用户",

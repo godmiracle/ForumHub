@@ -9,7 +9,6 @@ struct V2EXAccountView: View {
     @State private var showsLogoutConfirmation = false
     @State private var showsWebLogin = false
     @State private var showsWebLogoutConfirmation = false
-    @State private var hasCompletedWebLogin = UserDefaults.standard.bool(forKey: "v2ex-web-login-completed")
 
     var body: some View {
         NavigationStack {
@@ -38,28 +37,29 @@ struct V2EXAccountView: View {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("会删除保存在本机 Keychain 中的 Token，不影响 V2EX 网站账号。")
+                Text("会删除保存在 iCloud Keychain 中的 Token，不影响 V2EX 网站账号。")
             }
             .confirmationDialog("退出 V2EX 网页登录？", isPresented: $showsWebLogoutConfirmation) {
                 Button("退出网页登录", role: .destructive) {
                     Task {
-                        await V2EXWebSession.clearCookies()
-                        hasCompletedWebLogin = false
+                        await authStore.logoutWebSession()
                     }
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("会清除 App 内网页的 V2EX Cookie，不影响 API Token。")
+                Text("会清除本机 App 内网页 Cookie，并删除 iCloud Keychain 中的会话备份，不影响 API Token。")
             }
             .sheet(isPresented: $showsWebLogin) {
-                V2EXWebLoginSheet {
-                    hasCompletedWebLogin = true
+                V2EXWebLoginSheet(authStore: authStore) {
                     showsWebLogin = false
                 }
             }
             .onChange(of: token) {
                 authStore.clearError()
             }
+        }
+        .task {
+            await authStore.refreshWebSession()
         }
     }
 
@@ -69,14 +69,20 @@ struct V2EXAccountView: View {
                 .font(.system(size: 20, weight: .bold, design: .serif))
                 .foregroundStyle(PaperTheme.ink)
 
-            Text(hasCompletedWebLogin
-                 ? "已完成网页登录。打开“浏览网页原帖”时会复用这份 Cookie 会话。"
-                 : "用于 App 内“浏览网页原帖”的账号态，不会读取或使用 API Token。")
+            Text(authStore.hasWebSession
+                 ? "网页登录有效，可同步 V2EX 站点收藏并复用到网页原帖。"
+                 : "用于 V2EX 站点收藏和网页原帖，不会向网页暴露 API Token。")
                 .font(.subheadline)
                 .foregroundStyle(PaperTheme.mutedText)
                 .lineSpacing(3)
 
-            if hasCompletedWebLogin {
+            if let message = authStore.webSessionSyncErrorMessage {
+                Label(message, systemImage: "exclamationmark.icloud")
+                    .font(.footnote)
+                    .foregroundStyle(PaperTheme.accent)
+            }
+
+            if authStore.hasWebSession {
                 Button(role: .destructive) {
                     showsWebLogoutConfirmation = true
                 } label: {
@@ -187,13 +193,14 @@ struct V2EXAccountView: View {
 }
 
 private struct V2EXWebLoginSheet: View {
+    @Bindable var authStore: V2EXAuthStore
     let onCompleted: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var hasDetectedLogin = false
 
     var body: some View {
         NavigationStack {
-            V2EXWebLoginView {
+            V2EXWebLoginView(authStore: authStore) {
                 hasDetectedLogin = true
             }
             .navigationTitle("登录 V2EX 网页")
@@ -214,10 +221,11 @@ private struct V2EXWebLoginSheet: View {
 }
 
 private struct V2EXWebLoginView: UIViewRepresentable {
+    @Bindable var authStore: V2EXAuthStore
     let onLoginDetected: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onLoginDetected: onLoginDetected)
+        Coordinator(authStore: authStore, onLoginDetected: onLoginDetected)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -233,35 +241,22 @@ private struct V2EXWebLoginView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
     final class Coordinator: NSObject, WKNavigationDelegate {
+        @MainActor @Bindable private var authStore: V2EXAuthStore
         private let onLoginDetected: () -> Void
         private var didDetectLogin = false
 
-        init(onLoginDetected: @escaping () -> Void) {
+        init(authStore: V2EXAuthStore, onLoginDetected: @escaping () -> Void) {
+            _authStore = Bindable(authStore)
             self.onLoginDetected = onLoginDetected
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            let script = "!location.pathname.startsWith('/signin') && document.querySelector('a[href*=/signin]') === null"
-            webView.evaluateJavaScript(script) { value, _ in
-                guard value as? Bool == true, !self.didDetectLogin else { return }
-                self.didDetectLogin = true
-                DispatchQueue.main.async {
-                    self.onLoginDetected()
-                }
-            }
-        }
-    }
-}
-
-private enum V2EXWebSession {
-    static func clearCookies() async {
-        let store = WKWebsiteDataStore.default().httpCookieStore
-        let cookies = await withCheckedContinuation { continuation in
-            store.getAllCookies { continuation.resume(returning: $0) }
-        }
-        for cookie in cookies where cookie.domain == "v2ex.com" || cookie.domain.hasSuffix(".v2ex.com") {
-            await withCheckedContinuation { continuation in
-                store.delete(cookie) { continuation.resume() }
+            Task {
+                guard await authStore.syncWebSession(
+                    from: webView.configuration.websiteDataStore.httpCookieStore
+                ), !didDetectLogin else { return }
+                didDetectLogin = true
+                await MainActor.run { onLoginDetected() }
             }
         }
     }

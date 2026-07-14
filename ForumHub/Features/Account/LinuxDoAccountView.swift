@@ -63,6 +63,12 @@ struct LinuxDoAccountView: View {
                         .foregroundStyle(PaperTheme.accent)
                 }
 
+                if let message = authStore.keychainErrorMessage {
+                    Label(message, systemImage: "exclamationmark.icloud")
+                        .font(.footnote)
+                        .foregroundStyle(PaperTheme.accent)
+                }
+
                 Button {
                     Task {
                         await authStore.refreshAccount()
@@ -107,6 +113,13 @@ struct LinuxDoAccountView: View {
 
                 if let message = authStore.errorMessage {
                     Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(PaperTheme.accent)
+                }
+
+
+                if let message = authStore.keychainErrorMessage {
+                    Label(message, systemImage: "exclamationmark.icloud")
                         .font(.footnote)
                         .foregroundStyle(PaperTheme.accent)
                 }

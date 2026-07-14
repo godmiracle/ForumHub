@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-13 iCloud 同步可靠性修复
+
+- 屏蔽名单改为逐记录 KVS key，避免首次同步或并发修改整包覆盖；
+- 区分首次同步、服务端变化、配额异常和 Apple Account 切换；
+- 屏蔽页显示 iCloud 同步状态与失败降级；
+- Token/Cookie Keychain 写入改为原子 upsert，失败时保留旧凭证；
+- App 返回前台时节流重试凭证恢复；
+- 明确 App 退出登录不等同于论坛服务端的全设备会话撤销。
+
 ## 2026-07
 
 ### Thread Detail And Content
@@ -14,6 +23,21 @@
 - Made saved favorites restore as lightweight thread metadata without storing their summary as authoritative post content.
 - Updated long-image generation to consume `ForumPostDocument` projections directly instead of extending the legacy `body` dependency.
 - Updated reply previews, pagination main-post deduplication, and NGA content-quality checks to use the authoritative `ForumPostDocument` projection.
+
+### V2EX Accounts And Favorites
+
+- Upgraded the existing V2EX web-login shell into a verified, Keychain-persisted cookie session that restores into WebKit and shared HTTP cookie storage without exposing the API token.
+- Added V2EX source-native favorite listing, add, and remove flows through the authenticated website session; action URLs are parsed from the current topic page and restricted to the matching V2EX host and topic ID.
+- Kept the existing local favorite Store as a lightweight mirror after the remote V2EX operation succeeds.
+- Verified favorite mutations by reloading the topic page because V2EX action responses do not consistently contain the updated topic controls.
+
+### iCloud Sync
+
+- Enabled the iCloud key-value-store entitlement for the production app target.
+- Added per-source blocked-user synchronization using timestamped records and deletion tombstones, with UserDefaults retained as an offline cache.
+- Moved NGA, V2EX, and LINUX DO Token/Cookie Keychain items to iCloud-synchronizable storage; credentials never enter iCloud KVS.
+- Removed the standalone local-favorites screen and disabled favorite actions for sources without source-native favorites. NGA and V2EX retain only a lightweight UI cache.
+- Unified V2EX web-session status with the default WebKit cookie store so account connection state, original-page browsing, and source-native favorites observe the same verified session.
 
 ## 2026-06
 

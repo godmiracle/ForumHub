@@ -49,6 +49,7 @@ final class LinuxDoAuthStore {
     private(set) var account: LinuxDoAccount?
     private(set) var isRefreshing = false
     private(set) var errorMessage: String?
+    private(set) var keychainErrorMessage: String?
 
     private let session: URLSession
     private let keychain = LinuxDoKeychainCookieStore()
@@ -66,7 +67,13 @@ final class LinuxDoAuthStore {
     func restoreSession() async {
         await restorePersistedCookies()
         account = accountStore.loadAccount()
-        await syncDefaultCookies()
+        let cookies = await syncDefaultCookies()
+        guard !cookies.isEmpty else {
+            accountStore.deleteAccount()
+            account = nil
+            errorMessage = nil
+            return
+        }
 
         do {
             let account = try await fetchCurrentAccount()
@@ -134,7 +141,12 @@ final class LinuxDoAuthStore {
             HTTPCookieStorage.shared.deleteCookie(cookie)
         }
 
-        keychain.deleteCookies()
+        do {
+            try keychain.deleteCookies()
+            keychainErrorMessage = nil
+        } catch {
+            keychainErrorMessage = error.localizedDescription
+        }
         accountStore.deleteAccount()
         account = nil
         errorMessage = nil
@@ -170,7 +182,14 @@ final class LinuxDoAuthStore {
     }
 
     private func restorePersistedCookies() async {
-        let cookies = keychain.loadCookies()
+        let cookies: [HTTPCookie]
+        do {
+            cookies = try keychain.loadCookies()
+            keychainErrorMessage = nil
+        } catch {
+            keychainErrorMessage = error.localizedDescription
+            return
+        }
         guard !cookies.isEmpty else { return }
 
         let webCookieStore = WKWebsiteDataStore.default().httpCookieStore
@@ -182,7 +201,12 @@ final class LinuxDoAuthStore {
 
     private func persistLoginCookies(_ cookies: [HTTPCookie]) {
         guard !cookies.isEmpty else { return }
-        keychain.saveCookies(cookies)
+        do {
+            try keychain.saveCookies(cookies)
+            keychainErrorMessage = nil
+        } catch {
+            keychainErrorMessage = error.localizedDescription
+        }
     }
 
     private func linuxDoCookies(from cookies: [HTTPCookie]) -> [HTTPCookie] {
@@ -282,7 +306,7 @@ private struct LinuxDoKeychainCookieStore {
     private let service = "com.godmiracle.forumhub.linuxdo.cookies"
     private let account = "linuxdo-login-cookies"
 
-    func saveCookies(_ cookies: [HTTPCookie]) {
+    func saveCookies(_ cookies: [HTTPCookie]) throws {
         let encodedCookies = cookies.compactMap { cookie -> [String: Any]? in
             var properties: [String: Any] = [
                 HTTPCookiePropertyKey.name.rawValue: cookie.name,
@@ -299,35 +323,12 @@ private struct LinuxDoKeychainCookieStore {
             return properties
         }
 
-        guard let data = try? JSONSerialization.data(withJSONObject: encodedCookies) else {
-            return
-        }
-
-        deleteCookies()
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-
-        SecItemAdd(query as CFDictionary, nil)
+        let data = try JSONSerialization.data(withJSONObject: encodedCookies)
+        try itemStore.save(data)
     }
 
-    func loadCookies() -> [HTTPCookie] {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
+    func loadCookies() throws -> [HTTPCookie] {
+        guard let data = try itemStore.load(),
               let encodedCookies = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
         else { return [] }
 
@@ -346,13 +347,11 @@ private struct LinuxDoKeychainCookieStore {
         }
     }
 
-    func deleteCookies() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
+    func deleteCookies() throws {
+        try itemStore.delete()
+    }
 
-        SecItemDelete(query as CFDictionary)
+    private var itemStore: SynchronizableKeychainStore {
+        SynchronizableKeychainStore(service: service, account: account)
     }
 }

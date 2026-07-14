@@ -22,8 +22,12 @@ It includes:
 
 ## Notes
 
-- Favorites and blocked users are currently local-first.
-- Sync hooks exist conceptually, but iCloud sync is disabled.
+- Blocked users persist locally for offline use and merge through iCloud KVS.
+- NGA and V2EX favorites use the source account as authority and keep a lightweight local UI cache; sources without remote bookmark integration do not expose favorite actions.
+- Token and login-cookie Keychain items opt into iCloud Keychain synchronization and remain separate from user-content KVS data.
+- Synchronizable Keychain items are updated atomically; failed updates preserve the previous credential and surface a sync error where the source has an observable account store.
+- Session restore runs at launch and is retried with a 30-second throttle when the app returns to the foreground, covering credentials that arrive after initial startup.
+- App logout clears the current device and deletes the synchronized backup request, but does not claim to revoke website sessions that already exist on another device.
 - Auth flows differ sharply by source and should remain isolated.
 
 ## Current Sources
@@ -40,6 +44,10 @@ It includes:
 - Uses a user-provided Personal Access Token
 - Validates the token against the V2EX API before treating the source as connected
 - Persists the token in Keychain
+- Keeps a separate WebKit cookie session for V2EX website actions
+- Persists only `v2ex.com` cookies in a dedicated Keychain item and restores them into WebKit plus shared HTTP cookie storage
+- Loads `/my/topics` to validate the web session and provide the remote favorite list
+- Parses the current topic page for the same-origin `favorite` or `unfavorite` action carrying V2EX's current `once` value; the API token is never attached to webpage requests
 
 ### LINUX DO
 

@@ -27,7 +27,7 @@ Remote Source
 - `ForumHub/DesignSystem`
   Shared theme primitives and reusable styling.
 - `ForumHub/Sync`
-  Reserved for sync-related work; iCloud sync is currently disabled.
+  iCloud KVS records, merge policy, and other cross-device sync boundaries.
 
 ## Source Adapter Model
 
@@ -77,11 +77,11 @@ ForumHub currently uses local persistence for:
 
 - Selected source
 - Channel subscriptions and ordering
-- Favorites
-- Blocked users
+- Source-native favorite UI caches
+- iCloud-synchronized blocked users
 - Browsing history
 
-Credential-like state uses Keychain or shared cookie stores where appropriate.
+Credential-like state uses synchronizable Keychain items and shared cookie stores where appropriate.
 
 See also:
 

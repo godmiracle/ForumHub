@@ -13,8 +13,8 @@ ForumHub 是一个使用 SwiftUI 开发的多社区 iOS 阅读客户端，目前
 | 数据源 | 列表 | 详情 | 登录 | 收藏 | 回复 |
 | --- | --- | --- | --- | --- | --- |
 | NGA | 支持 | 支持 | Web + Cookie | 支持 | 支持 |
-| V2EX | 支持 | 支持 | Token | 仅本地 | 暂不支持 |
-| LINUX DO | 支持 | 支持 | Web + Cookie | 仅本地 | 暂不支持 |
+| V2EX | 支持 | 支持 | Token + Web Cookie | 支持 | 暂不支持 |
+| LINUX DO | 支持 | 支持 | Web + Cookie | 暂不支持 | 暂不支持 |
 
 主要功能：
 

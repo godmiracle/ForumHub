@@ -30,6 +30,28 @@ struct UserAccountView: View {
         )
     }
 
+    private var hasActiveFavoriteSession: Bool {
+        switch activeSource {
+        case .nga:
+            return isAuthenticated
+        case .v2ex:
+            return v2exAuthStore.hasWebSession
+        case .linuxDo:
+            return linuxDoAuthStore.isAuthenticated
+        }
+    }
+
+    private func openActiveFavoriteLogin() {
+        switch activeSource {
+        case .nga:
+            onLogin()
+        case .v2ex:
+            showsV2EXAccount = true
+        case .linuxDo:
+            showsLinuxDoAccount = true
+        }
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -52,24 +74,7 @@ struct UserAccountView: View {
 
                     sectionHeader("我的内容")
 
-                    NavigationLink {
-                        SavedThreadsView(
-                            favorites: favoriteThreads,
-                            blockedUsers: blockedUsers,
-                            repositoryForSource: repositoryForSource
-                        )
-                    } label: {
-                        menuRow(
-                            icon: favoriteThreads.entries.isEmpty ? "star" : "star.fill",
-                            title: "本地收藏",
-                            subtitle: favoriteThreads.entries.isEmpty
-                                ? "收藏帖子后会保存在本机"
-                                : "已收藏 \(favoriteThreads.entries.count) 个帖子"
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    if capabilities.supportsFavorites, isAuthenticated {
+                    if capabilities.supportsFavorites, hasActiveFavoriteSession {
                         NavigationLink {
                             FavoriteThreadsView(
                                 repository: repository,
@@ -86,12 +91,12 @@ struct UserAccountView: View {
                         .buttonStyle(.plain)
                     } else if capabilities.supportsFavorites {
                         Button {
-                            onLogin()
+                            openActiveFavoriteLogin()
                         } label: {
                             menuRow(
                                 icon: "star",
                                 title: "我的收藏",
-                                subtitle: "登录 NGA 后查看收藏帖子"
+                                subtitle: "完成 \(activeSource.title) 登录后查看站点收藏"
                             )
                         }
                         .buttonStyle(.plain)

@@ -323,7 +323,7 @@ Accepted
 
 收藏、历史和屏蔽用户使用包含 `version` 与 `payload` 的本地快照信封，当前版本为 1；读取时兼容旧裸数组并就地升级，损坏或不支持的快照安全降级为空状态。频道订阅保留现有多键格式，增加独立 schema version，并在恢复时丢弃未知来源或缺少 native key 的条目。
 
-数据源选择和网页登录完成标记等单值 Settings 继续使用标量 UserDefaults，由枚举解析或默认值处理非法数据，不套用 JSON 信封。Token、Cookie、密码及账号会话不得进入用户内容快照，继续由 Session 层的 Keychain/Cookie 接缝管理。iCloud 同步保持禁用。
+数据源选择和网页登录完成标记等单值 Settings 继续使用标量 UserDefaults，由枚举解析或默认值处理非法数据，不套用 JSON 信封。Token、Cookie、密码及账号会话不得进入用户内容快照，继续由 Session 层的 Keychain/Cookie 接缝管理。iCloud 同步边界由 ADR-015 定义。
 
 ### Consequences
 
@@ -331,6 +331,67 @@ Accepted
 - 损坏内容不会导致启动失败，也不会让更旧的屏蔽名单意外复活
 - 每个持久化类别可以独立演进 schema，不把认证凭证混入通用迁移
 - 未来增加版本时必须显式实现迁移，不能假定 Codable 自动兼容
+
+## ADR-014 V2EX Uses Separate Token And Web Sessions
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+V2EX API v2 的 Personal Access Token 可读取账号和主题，但当前公开接口没有主题收藏列表及收藏增删能力。V2EX 网站提供账号收藏，不过操作依赖网页登录 Cookie，以及主题页面当次返回的 `once` 参数。此前项目已有 V2EX Web 登录 UI，但只保存一个完成标记，没有持久化、恢复或验证 Cookie，也没有连接收藏调用链。
+
+### Decision
+
+保留 Token 与 Web Cookie 两套相互隔离的会话：Token 只用于官方 `/api/v2/` 请求；Web Cookie 只用于 V2EX 原网页、`/my/topics` 和收藏操作。Web Cookie 仅收集 `v2ex.com` 域名，保存于独立 Keychain item，并在启动时恢复到 WebKit 与共享 HTTP Cookie Store。
+
+收藏和取消收藏不硬编码 `once`。Repository 先加载当前主题页，从 HTML 中解析 `favorite` 或 `unfavorite` action，并验证 HTTPS、`www.v2ex.com`、目标 topic ID 和非空 `once` 后才请求。Action 响应成功后重新加载主题页确认最终状态，不依赖 action 响应正文包含主题操作控件。远端操作成功后再更新本地轻量收藏镜像。
+
+### Consequences
+
+- V2EX 站点账号成为收藏权威来源，换设备后可通过网站账号重新获取收藏列表
+- API Token 不会发送到网页接口，Cookie 也不会进入 API Authorization
+- 网页结构变化会使收藏操作明确失败，而不会回退为静默本地收藏
+- Cookie 过期后需要重新完成 V2EX Web 登录
+- 收藏动作依赖未承诺稳定的网页合约，需要 HTML Fixture、同源校验和真机回归保护
+
+## ADR-015 iCloud KVS Syncs Blocked Users And iCloud Keychain Syncs Credentials
+
+### Status
+
+Accepted; supersedes ADR-004
+
+### Date
+
+2026-07
+
+### Context
+
+项目已使用付费开发者团队并具备 iCloud entitlement。收藏已明确由 NGA、V2EX 站点账号负责，不应再维护另一套跨设备收藏真相；需要跨设备同步的是屏蔽名单和账号凭证。屏蔽名单规模小且字段稳定，不需要引入 CloudKit 数据库。
+
+### Decision
+
+使用 `NSUbiquitousKeyValueStore` 同步按数据源隔离的屏蔽记录。每个用户记录使用独立 KVS key，保存最终屏蔽状态与更新时间；解除屏蔽保留墓碑，合并时按单记录 last-write-wins 处理。UserDefaults 保存同结构离线缓存。启动和首次同步通知只读取合并，不把整份本地快照回写云端；server change 可按单记录回写冲突赢家。Apple Account 切换时先丢弃旧账号本地缓存，再读取新账号数据。
+
+NGA、V2EX 和 LINUX DO 的 Token/Cookie 使用 `kSecAttrSynchronizable=true` 的 iCloud Keychain item，并使用兼容同步的 `kSecAttrAccessibleAfterFirstUnlock`。写入使用 `SecItemUpdate`，仅在 item 不存在时 `SecItemAdd`，不得先删除有效凭证。App 启动和返回前台时会节流重读凭证，以覆盖同步项延迟到达。KVS 不保存任何 Token、Cookie、密码、历史或收藏数据。
+
+App 内“退出登录”保证清除本机 WebKit/HTTP Cookie 和本地账号状态，并请求删除同步 Keychain 备份。它不等同于社区服务端的“退出所有设备”：其他设备已经持有的有效 Cookie 仍可能继续有效，只有社区提供并执行服务端会话撤销时才能保证全设备注销。
+
+删除独立“本地收藏”产品入口。NGA 与 V2EX 的 `FavoriteThreadsStore` 仅作为当前 UI 星标缓存；没有远端收藏能力的数据源不显示收藏动作。
+
+### Consequences
+
+- 屏蔽名单能在同一 Apple Account 的设备间按记录合并，独立修改不会整包互相覆盖
+- 用户关闭 iCloud 或 iCloud Keychain 时仍可使用本地缓存和本机现有会话，但不能保证跨设备同步
+- 删除同步 Keychain 备份不保证撤销其他设备已存在的社区 Cookie 会话
+- KVS 墓碑不自动删除，以避免长期离线设备复活旧屏蔽；同步记录达到 900 条安全上限后，新修改只保存在本机并显示错误
+- 设备时间严重偏差可能影响同一用户记录的冲突结果
+- 浏览历史、频道顺序和站点收藏不进入 iCloud KVS
 
 ## Template
 

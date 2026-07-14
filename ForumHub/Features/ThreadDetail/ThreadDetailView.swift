@@ -279,6 +279,7 @@ struct ThreadDetailView: View {
                 .safeAreaInset(edge: .bottom) {
                     ThreadDetailActionBar(
                         supportsReply: repository.capabilities.supportsReply,
+                        supportsFavorites: repository.capabilities.supportsFavorites,
                         isFavorited: favoriteThreads.contains(detailThread),
                         canFilterByAuthor: detailThread.author.isUsefulForumValue,
                         showsOnlyThreadAuthor: showsOnlyThreadAuthor,

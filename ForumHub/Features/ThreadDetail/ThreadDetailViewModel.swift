@@ -150,16 +150,13 @@ final class ThreadDetailViewModel {
         defer { actions.isUpdatingFavorite = false }
 
         do {
-            if repository.capabilities.supportsFavorites {
-                if favoriteThreads.contains(thread) {
-                    try await repository.removeFavoriteThread(tid: thread.id)
-                    favoriteThreads.remove(thread)
-                } else {
-                    try await repository.addFavoriteThread(tid: thread.id)
-                    favoriteThreads.save(thread)
-                }
+            guard repository.capabilities.supportsFavorites else { return nil }
+            if favoriteThreads.contains(thread) {
+                try await repository.removeFavoriteThread(tid: thread.id)
+                favoriteThreads.remove(thread)
             } else {
-                favoriteThreads.toggle(thread)
+                try await repository.addFavoriteThread(tid: thread.id)
+                favoriteThreads.save(thread)
             }
             return nil
         } catch {

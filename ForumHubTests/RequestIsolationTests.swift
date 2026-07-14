@@ -12,6 +12,7 @@ struct RequestIsolationTests {
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
         #expect(request.value(forHTTPHeaderField: "Referer") == nil)
         #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+        #expect(request.httpShouldHandleCookies)
     }
 
     @Test func v2exTokenIsRestrictedToOfficialV2API() throws {
@@ -21,6 +22,7 @@ struct RequestIsolationTests {
         )
 
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret-test-token")
+        #expect(!request.httpShouldHandleCookies)
         #expect(throws: (any Error).self) {
             try V2EXRequestBuilder.authenticatedAPIRequest(
                 url: try #require(URL(string: "https://example.com/api/v2/member")),
@@ -33,6 +35,17 @@ struct RequestIsolationTests {
                 token: "secret-test-token"
             )
         }
+    }
+
+    @Test func v2exPublicAPIRequestDoesNotAttachWebSessionCookies() throws {
+        let request = V2EXRequestBuilder.publicRequest(
+            url: try #require(URL(string: "https://www.v2ex.com/api/topics/hot.json")),
+            accept: "application/json",
+            handlesCookies: false
+        )
+
+        #expect(!request.httpShouldHandleCookies)
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
     }
 
     @Test func linuxDoUsesBrowserFallbackOnlyForForbiddenResponses() {

@@ -223,6 +223,7 @@ struct ThreadDetailReplyMenu: View {
 
 struct ThreadDetailActionBar: View {
     let supportsReply: Bool
+    let supportsFavorites: Bool
     let isFavorited: Bool
     let canFilterByAuthor: Bool
     let showsOnlyThreadAuthor: Bool
@@ -297,13 +298,15 @@ struct ThreadDetailActionBar: View {
                         .accessibilityLabel("分享")
 
                         Menu {
-                            Button(action: onToggleFavorite) {
-                                Label(
-                                    isFavorited ? "取消收藏" : "收藏帖子",
-                                    systemImage: isFavorited ? "star.fill" : "star"
-                                )
+                            if supportsFavorites {
+                                Button(action: onToggleFavorite) {
+                                    Label(
+                                        isFavorited ? "取消收藏" : "收藏帖子",
+                                        systemImage: isFavorited ? "star.fill" : "star"
+                                    )
+                                }
+                                .disabled(isUpdatingFavorite)
                             }
-                            .disabled(isUpdatingFavorite)
 
                             if canBrowseOriginalThread {
                                 Button(action: onBrowseOriginalThread) {

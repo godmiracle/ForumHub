@@ -8,6 +8,7 @@ import WebKit
 
 @MainActor
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var viewModel: ForumViewModel
     @State private var showsLogin = false
     @State private var showsLinuxDoBrowserVerification = false
@@ -26,6 +27,7 @@ struct ContentView: View {
     @State private var feedRetapRefreshTab: FeedTab?
     @State private var feedRetapRefreshGeneration = 0
     @State private var showsPinnedThreads = true
+    @State private var lastSessionRestoreAt: Date?
 
     init() {
         if let scenario = UITestScenario.current {
@@ -79,13 +81,40 @@ struct ContentView: View {
                 v2exAuthStore: v2exAuthStore,
                 linuxDoAuthStore: linuxDoAuthStore
             )
+            lastSessionRestoreAt = .now
             subscriptions.prepareDefaults(for: viewModel.channels)
             await viewModel.reload()
             selectedChannelID = viewModel.forum.id
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+                object: NSUbiquitousKeyValueStore.default
+            )
+        ) { notification in
+            guard let reason = (notification.userInfo?[NSUbiquitousKeyValueStoreChangeReasonKey] as? NSNumber)?.intValue else {
+                return
+            }
+            blockedUsers.handleICloudChange(reason: reason)
+        }
         .onChange(of: selectedTab) { _, tab in
             Task {
                 await handleTabSelection(tab, isReselection: false)
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            blockedUsers.refreshFromICloud(reconcilesConflicts: true)
+            guard lastSessionRestoreAt.map({ Date.now.timeIntervalSince($0) >= 30 }) ?? true else {
+                return
+            }
+            lastSessionRestoreAt = .now
+            Task {
+                await AuthSessionRegistry.restoreAll(
+                    ngaRestore: viewModel.restoreSession,
+                    v2exAuthStore: v2exAuthStore,
+                    linuxDoAuthStore: linuxDoAuthStore
+                )
             }
         }
     }

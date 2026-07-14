@@ -32,7 +32,7 @@ struct FavoriteThreadsView: View {
                         ContentUnavailableView(
                             "暂无收藏帖子",
                             systemImage: "star",
-                            description: Text("在 NGA 收藏的主题会显示在这里。")
+                            description: Text("在 \(repository.source.title) 收藏的主题会显示在这里。")
                         )
                         .foregroundStyle(PaperTheme.secondaryInk)
                         .padding(.top, 80)

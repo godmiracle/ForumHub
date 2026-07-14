@@ -67,9 +67,9 @@ final class FavoriteThreadsStore {
             currentVersion: schemaVersion
         ) {
         case let .current(snapshot):
-            entries = snapshot.sorted { $0.savedAt > $1.savedAt }
+            entries = snapshot.filter(\.source.supportsRemoteFavorites).sorted { $0.savedAt > $1.savedAt }
         case let .legacy(snapshot):
-            entries = snapshot.sorted { $0.savedAt > $1.savedAt }
+            entries = snapshot.filter(\.source.supportsRemoteFavorites).sorted { $0.savedAt > $1.savedAt }
             persist()
         case .missing, .unavailable:
             entries = []
@@ -81,6 +81,7 @@ final class FavoriteThreadsStore {
     }
 
     func save(_ thread: ForumThread) {
+        guard thread.source.supportsRemoteFavorites else { return }
         let entry = SavedForumThread(thread: thread)
         entries.removeAll { $0.id == entry.id }
         entries.insert(entry, at: 0)
@@ -109,5 +110,11 @@ final class FavoriteThreadsStore {
     private func persist() {
         guard let data = VersionedLocalSnapshotCodec.encode(entries, version: schemaVersion) else { return }
         defaults.set(data, forKey: storageKey)
+    }
+}
+
+private extension ForumSource {
+    var supportsRemoteFavorites: Bool {
+        self == .nga || self == .v2ex
     }
 }
