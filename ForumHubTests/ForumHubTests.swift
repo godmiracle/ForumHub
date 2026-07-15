@@ -496,6 +496,42 @@ struct ForumHubTests {
         #expect(merged.contentDocument.markupFormat == .html)
     }
 
+    @Test func ngaThreadMergerDeduplicatesEquivalentAbsoluteAndRelativeImageURLs() throws {
+        let apiThread = ForumThread(
+            id: 47151166,
+            title: "图片去重测试",
+            summary: "API 正文",
+            author: "楼主",
+            lastReplyAt: "",
+            replyCount: 0,
+            viewCount: 0,
+            body: "API 正文\n[图片] https://img.nga.178.com/attachments/mon_202607/10/shared.jpg",
+            replies: []
+        )
+        let webThread = ForumThread(
+            id: 47151166,
+            title: "图片去重测试",
+            summary: "API 正文",
+            author: "楼主",
+            lastReplyAt: "",
+            replyCount: 0,
+            viewCount: 0,
+            body: "API 正文\n[图片] ./mon_202607/10/shared.jpg\n网页补全正文",
+            replies: []
+        )
+
+        let merged = NGAThreadDetailMerger.merge(apiThread: apiThread, webThread: webThread)
+        let imageURLs = ForumContentParser.parse(merged.contentDocument.normalizedText).compactMap { block -> URL? in
+            if case let .image(url) = block.content { return url }
+            return nil
+        }
+
+        #expect(imageURLs.map(\.absoluteString) == [
+            "https://img.nga.178.com/attachments/mon_202607/10/shared.jpg"
+        ])
+        #expect(merged.body.contains("网页补全正文"))
+    }
+
     @Test func ngaThreadResolverPreservesAPIContentWhenWebEnrichmentFails() throws {
         let bundle = Bundle(for: FixtureLocator.self)
         let apiURL = try #require(

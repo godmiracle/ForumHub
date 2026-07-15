@@ -914,12 +914,13 @@ enum NGAThreadDetailMerger {
             return webDocument
         }
 
-        var knownUnits = Set(contentUnits(in: apiValue).map(normalized))
+        var knownUnits = Set(contentUnits(in: apiValue).map(contentUnitKey))
         var missingUnits: [String] = []
         for unit in contentUnits(in: webValue) {
-            let key = normalized(unit)
+            let normalizedUnit = normalized(unit)
+            let key = contentUnitKey(unit)
             guard !key.isEmpty,
-                  !normalizedAPI.contains(key),
+                  (key.hasPrefix("image:") || !normalizedAPI.contains(normalizedUnit)),
                   knownUnits.insert(key).inserted
             else {
                 continue
@@ -941,6 +942,18 @@ enum NGAThreadDetailMerger {
             .split(whereSeparator: \.isNewline)
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    /// API 与网页可能分别使用绝对地址和 NGA 相对附件地址描述同一张图片。
+    /// 合并时按解析后的 URL 判断跨来源身份，文本仍保持原有的规范化比较语义。
+    private static func contentUnitKey(_ value: String) -> String {
+        let blocks = ForumContentParser.parse(value)
+        if blocks.count == 1,
+           case let .image(url) = blocks[0].content {
+            return "image:\(url.absoluteString)"
+        }
+
+        return "text:\(normalized(value))"
     }
 
     private nonisolated static func normalized(_ value: String) -> String {
