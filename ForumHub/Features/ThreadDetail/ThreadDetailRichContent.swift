@@ -15,7 +15,7 @@ struct ForumRichContentView: View {
         activeGIFPlaybackImageIDs: Set<UUID> = [],
         scrollTrackingSpaceName: String? = nil
     ) {
-        blocks = ForumContentParser.parse(text)
+        blocks = ForumPostDocument.plainText(text).blocks
         self.fontSize = fontSize
         self.activeGIFPlaybackImageIDs = activeGIFPlaybackImageIDs
         self.scrollTrackingSpaceName = scrollTrackingSpaceName
@@ -27,7 +27,7 @@ struct ForumRichContentView: View {
         activeGIFPlaybackImageIDs: Set<UUID> = [],
         scrollTrackingSpaceName: String? = nil
     ) {
-        blocks = ForumContentParser.parse(document.normalizedText)
+        blocks = document.blocks
         self.fontSize = fontSize
         self.activeGIFPlaybackImageIDs = activeGIFPlaybackImageIDs
         self.scrollTrackingSpaceName = scrollTrackingSpaceName
@@ -43,29 +43,66 @@ struct ForumRichContentView: View {
                         .foregroundStyle(PaperTheme.secondaryInk)
                         .lineSpacing(fontSize >= 18 ? 6 : 5)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                case let .inline(nodes):
+                    ForumInlineText(nodes: nodes)
+                        .font(.system(size: fontSize, design: .serif))
+                        .foregroundStyle(PaperTheme.secondaryInk)
+                        .lineSpacing(fontSize >= 18 ? 6 : 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                case let .link(label, destination):
+                    Link(label, destination: destination)
+                        .font(.system(size: fontSize, design: .serif))
+                        .foregroundStyle(PaperTheme.accent)
                 case let .image(url):
-                    if ForumImageURLResolver.isNGAForumEmoji(url) {
-                        InlineNGAForumEmoji(url: url)
-                    } else {
-                        InteractiveForumImage(
-                            url: url,
-                            activeGIFPlaybackImageIDs: activeGIFPlaybackImageIDs,
-                            scrollTrackingSpaceName: scrollTrackingSpaceName
-                        )
-                    }
-                case let .smile(smile):
-                    InlineNGAForumEmoji(url: smile.url, name: smile.name)
+                    InteractiveForumImage(
+                        url: url,
+                        activeGIFPlaybackImageIDs: activeGIFPlaybackImageIDs,
+                        scrollTrackingSpaceName: scrollTrackingSpaceName
+                    )
+                case let .emoji(emoji):
+                    InlineForumEmoji(url: emoji.url, name: emoji.name)
                 case let .quote(quote):
                     ForumQuoteBlockCard(quote: quote, fontSize: fontSize)
+                case let .unsupported(fallback):
+                    Text(fallback)
+                        .font(.system(size: fontSize, design: .serif))
+                        .foregroundStyle(PaperTheme.secondaryInk)
+                        .lineSpacing(fontSize >= 18 ? 6 : 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
     }
 }
 
-private struct InlineNGAForumEmoji: View {
+struct ForumInlineText: View {
+    let nodes: [ForumInlineNode]
+
+    var body: Text {
+        nodes.reduce(Text("")) { partial, node in
+            partial + Self.text(for: node)
+        }
+    }
+
+    private static func text(for node: ForumInlineNode) -> Text {
+        switch node {
+        case let .text(text), let .unsupported(text):
+            return Text(text)
+        case let .link(label, _):
+            return Text(label).foregroundColor(PaperTheme.accent)
+        case let .emphasis(children):
+            return ForumInlineText(nodes: children).body.bold()
+        case let .strikethrough(children):
+            return ForumInlineText(nodes: children).body.strikethrough()
+        case let .resource(resource):
+            return Text(resource.accessibilityLabel ?? "")
+        }
+    }
+}
+
+private struct InlineForumEmoji: View {
     let url: URL
-    var name = "NGA 表情"
+    var name = "论坛表情"
     @State private var image: UIImage?
     @State private var failed = false
 
@@ -127,11 +164,13 @@ struct ForumQuoteBlockCard: View {
                 }
             }
 
-            Text(quote.body)
-                .font(.system(size: max(fontSize - 1, 15), design: .serif))
-                .foregroundStyle(PaperTheme.secondaryInk)
-                .lineSpacing(fontSize >= 18 ? 5 : 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if quote.body.isUsefulForumValue {
+                Text(quote.body)
+                    .font(.system(size: max(fontSize - 1, 15), design: .serif))
+                    .foregroundStyle(PaperTheme.secondaryInk)
+                    .lineSpacing(fontSize >= 18 ? 5 : 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(16)
         .background(

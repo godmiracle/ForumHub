@@ -133,15 +133,15 @@ struct WebForumParser {
         var replies = contentNodes.compactMap { node -> Reply? in
             let floor = node.floor
             let rawMarkup = node.innerHTML
-            let body = rawMarkup.structuredForumText
-            guard body.count >= 2 else { return nil }
+            let document = NGAHTMLContentParser.parse(rawMarkup)
+            guard document.quality != .unusable else { return nil }
 
             return Reply(
                 id: tid * 100_000 + floor,
                 author: pageAuthor?.isUsefulForumValue == true ? pageAuthor! : "未知作者",
                 createdAt: "",
-                body: body,
-                contentDocument: .html(rawMarkup),
+                body: document.bodyText,
+                contentDocument: document,
                 floorNumber: floor
             )
         }

@@ -1,0 +1,22 @@
+{
+  "tsubject": "脱敏语义解析样本",
+  "tauthor": "脱敏楼主",
+  "vrows": 12,
+  "currentPage": 1,
+  "totalPage": 1,
+  "attachPrefix": "https://img.nga.178.com/attachments/",
+  "result": [
+    {"pid": 0, "tid": 47185513, "lou": 0, "author": {"username": "占位作者"}, "content": "主楼[s:ac:goodjob]\n[img]./sample/first.jpg[/img]"},
+    {"pid": 101, "tid": 47185513, "lou": 1, "author": {"username": "用户1"}, "content": "回复1"},
+    {"pid": 102, "tid": 47185513, "lou": 2, "author": {"username": "用户2"}, "content": "[引用 author=\"用户1\" time=\"2026-01-01\"]引用正文[/引用]回复2"},
+    {"pid": 103, "tid": 47185513, "lou": 3, "author": {"username": "用户3"}, "content": "回复3[s:ng:问号]"},
+    {"pid": 104, "tid": 47185513, "lou": 4, "author": {"username": "用户4"}, "content": "回复4"},
+    {"pid": 105, "tid": 47185513, "lou": 5, "author": {"username": "用户5"}, "content": "[img]https://img.nga.178.com/attachments/sample/second.jpg[/img]"},
+    {"pid": 106, "tid": 47185513, "lou": 6, "author": {"username": "用户6"}, "content": "回复6"},
+    {"pid": 107, "tid": 47185513, "lou": 7, "author": {"username": "用户7"}, "content": "回复7[s:a2:doge]"},
+    {"pid": 108, "tid": 47185513, "lou": 8, "author": {"username": "用户8"}, "content": "回复8"},
+    {"pid": 109, "tid": 47185513, "lou": 9, "author": {"username": "用户9"}, "content": "回复9"},
+    {"pid": 110, "tid": 47185513, "lou": 10, "author": {"username": "用户10"}, "content": "Reply to Reply Post by 用户9 (2026-01-01) 旧引用变体"},
+    {"pid": 111, "tid": 47185513, "lou": 11, "author": {"username": "用户11"}, "content": "回复11"}
+  ]
+}

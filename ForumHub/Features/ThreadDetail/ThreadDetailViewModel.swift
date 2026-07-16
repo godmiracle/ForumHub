@@ -18,6 +18,7 @@ final class ThreadDetailViewModel {
         await contentLoader.start { generation in
             guard self.contentLoader.isCurrent(generation) else { return false }
             self.content.isLoading = true
+            self.content.isLoadingMore = false
             self.content.error = nil
             defer {
                 if self.contentLoader.isCurrent(generation) {
@@ -132,6 +133,7 @@ final class ThreadDetailViewModel {
                 self.pagination.hasMoreReplies = targetPage < ThreadPaginationPolicy.totalPageCount(replyCount: total, fallbackReplyCount: fallbackThread.replyCount, capabilities: repository.capabilities)
                 return true
             } catch {
+                guard self.contentLoader.isCurrent(generation) else { return false }
                 self.content.error = ForumError.resolve(error)
                 return false
             }

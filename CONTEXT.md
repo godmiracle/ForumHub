@@ -33,7 +33,9 @@ Current sources:
 - Public forum browsing does not require a Login Session; sign-in is entered from the Account feature when needed.
 - Views consume domain models and do not parse NGA responses.
 - Source-specific field names, identifiers, encoding, and fallback rules stay inside their provider adapter.
-- Thread post content keeps an immutable source-markup document alongside its native reading projection; a lossy native projection must never become the only retained representation.
+- Thread post content keeps immutable source representations, but ordered semantic blocks are the sole reading authority for rendering, sharing, accessibility, snapshots, media enumeration, and signatures.
+- NGA thread detail is API-first. Valid or degraded API content performs no Web request; only unusable API content may select a whole same-floor Web semantic document while retaining API identity, metadata, membership, and order.
+- Cross-source content must never be reconciled through normalized strings, line splitting, global deduplication, or end-appending heuristics.
 - `ForumThread` content equality includes rendered content and metadata; source plus native topic ID is the explicit identity key for deduplication, persistence, and navigation.
 - NGA, V2EX, LINUX DO, and mock adapters satisfy the `ThreadRepository` interface.
 - Reply composition should keep one shared entry flow while letting each source adapter decide whether it supports thread-level reply only or reply-to-floor targeting.

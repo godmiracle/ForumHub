@@ -220,7 +220,7 @@ Model each first-page feed load as an immutable request context. Starting a new 
 - Genuine parser failures remain visible when they belong to the currently active request
 - Feed loading code has a more explicit lifecycle, at the cost of maintaining request-context fields
 
-## ADR-010 Thread Content Keeps Source Markup As The Authority
+## ADR-010 Semantic Thread Content Is The Reading Authority
 
 ### Status
 
@@ -232,21 +232,25 @@ Accepted
 
 ### Context
 
-NGA 的 API 与网页正文此前都会过早转换为纯字符串。富文本格式一旦被清洗，原生渲染器无法恢复链接、嵌套结构或未来的新标签；网页回帖也无法与 API 楼层安全合并。
+NGA 详情曾把 API 与网页分别转换成 `normalizedText`，再按行拆分、规范化和去重。该算法把表示差异误当内容差异，会误删合法重复段落/图片、把 Web 中间内容追加到末尾，并让每个新标签都需要扩展全局规则。对帖子 `47185513` 的真实观测显示 API 已包含 0–11 楼、两张图片、三个表情和引用；现有裁剪 Fixture 也不足以证明生产 API 普遍缺正文。
 
 ### Decision
 
-每个主楼和回复保存 `ForumPostDocument`：保留原始标记、来源格式与原生阅读投影。NGA 以 API 的稳定楼层元数据为准，以网页 `postcontent<楼层号>` 节点补全同一楼层的内容文档；网页原帖仍可作为保真阅读入口。
+每个主楼和回复保存 `ForumPostDocument`：原始 `representations` 用于追溯，带 occurrence 身份与 provenance 的有序语义 `blocks` 是原生阅读、分享、无障碍、快照、图片枚举和内容签名的唯一权威。Parser 返回 valid/degraded/unusable 质量与不含原始正文或凭证的结构化 diagnostics；未知但可读标记保留为 unsupported 节点。
 
-`ForumThread.body` 与 `Reply.body` 仅保留为从 `contentDocument.normalizedText` 计算的只读兼容投影，不再独立存储。初始化器暂时继续接受 `body`：未传入内容文档时用它构造纯文本文档，传入内容文档时则以后者为唯一权威来源。
+NGA 采用 API-first：API 文档为 valid 或 degraded 时立即返回，不请求 Web。只有 API 已确认楼层的正文为 unusable 时才请求 Web，并按楼层选择整份 Web 语义文档，同时保留 API 的 `pid`、楼层、作者、时间、成员、顺序及 root metadata；Web-only 楼层不加入结果，只记录调查 diagnostic。API transport 完全失败时返回 typed error，详情页继续提供“浏览网页原帖”动作。
+
+`ForumThread.body` 与 `Reply.body` 仅是语义 blocks 的只读纯文本 projector。禁止以 `normalizedText`、按行拆分、contains、大小写/空白归一化、全局 `Set` 或末尾追加方式协调双源正文。
+
+双源 Semantic Reconciler 暂不引入。只有至少两个彼此独立、脱敏且可重复的真实配对 Fixture 都证明“API 与 Web 分别缺少不同的用户可见语义，且整份来源切换仍不足以恢复”时，才重新评估该组件。
 
 ### Consequences
 
-- 新的原生富文本节点可从原始标记派生，不需要重新抓取帖子
-- 未支持格式不会因字符串清洗而永久丢失
-- API/Web 合并不再按正文猜测楼层，减少把引用区或其他包装节点误当回复的风险
-- 详情模型需要在复制、分页与截图链路中持续保留内容文档
-- `body` 与内容文档不再可能因复制、合并或测试构造而产生双存漂移
+- 合法重复内容和原有顺序不再被启发式去重破坏
+- API 正常路径减少一次 Web 请求及其 Cookie、HTML 和 DOM 维护成本
+- 新标签由来源 Parser 降低为既有或 unsupported 节点，共享 View 无需新增 NGA 分支
+- Web 回退不补充 API 未确认楼层；网页结构变化会明确失败而不是污染正文
+- 语义 schema、Parser 与 projector 需要版本化契约测试，且真机图片/GIF/长图仍需回归
 
 ## ADR-011 Separate Thread Identity From Content Equality
 

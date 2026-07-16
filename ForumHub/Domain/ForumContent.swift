@@ -1,7 +1,79 @@
 import Foundation
 
-/// 帖子正文的可追溯表示。`normalizedText` 只服务于原生阅读器，不能替代
-/// `rawMarkup`；后者用于网页保真渲染及后续扩展富文本节点。
+enum ForumContentParseQuality: Int, Comparable, Equatable {
+    case unusable
+    case degraded
+    case valid
+
+    static func < (lhs: ForumContentParseQuality, rhs: ForumContentParseQuality) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+struct ForumContentRepresentation: Equatable {
+    enum Origin: Equatable {
+        case local
+        case ngaAPI
+        case ngaWeb
+        case remote(ForumSource)
+    }
+
+    let origin: Origin
+    let rawMarkup: String
+    let markupFormat: ForumPostDocument.MarkupFormat
+    let sourceURL: URL?
+    let parserVersion: Int
+}
+
+struct ForumContentDiagnostic: Equatable {
+    enum Code: String, Equatable {
+        case emptyContent
+        case malformedMarkup
+        case unsupportedMarkup
+        case sourceConflict
+        case webOnlyFloorIgnored
+        case sourceUnavailable
+    }
+
+    enum Severity: Equatable {
+        case information
+        case warning
+        case error
+    }
+
+    let code: Code
+    let severity: Severity
+    /// 仅允许固定、非用户输入的调试说明；不得保存原始正文或凭证。
+    let safeMessage: String
+}
+
+struct ForumContentProvenance: Equatable {
+    let representationIndex: Int
+    let occurrencePath: [Int]
+}
+
+struct ForumContentResource: Equatable {
+    enum Kind: Equatable {
+        case image
+        case emoji
+        case attachment
+    }
+
+    let url: URL
+    let kind: Kind
+    let accessibilityLabel: String?
+}
+
+enum ForumInlineNode: Equatable {
+    case text(String)
+    case link(label: String, destination: URL)
+    case emphasis([ForumInlineNode])
+    case strikethrough([ForumInlineNode])
+    case resource(ForumContentResource)
+    case unsupported(String)
+}
+
+/// 帖子正文的语义文档。原始表示用于追溯，`blocks` 才是阅读、分享和快照的权威输入。
 struct ForumPostDocument: Equatable {
     enum MarkupFormat: Equatable {
         case plainText
@@ -11,295 +83,153 @@ struct ForumPostDocument: Equatable {
     }
 
     let rawMarkup: String
-    let normalizedText: String
     let markupFormat: MarkupFormat
     let sourceURL: URL?
+    let representations: [ForumContentRepresentation]
+    let blocks: [ForumContentBlock]
+    let diagnostics: [ForumContentDiagnostic]
+    let quality: ForumContentParseQuality
+    let schemaVersion: Int
 
     init(
         rawMarkup: String,
-        normalizedText: String,
+        fallbackText: String,
         markupFormat: MarkupFormat,
-        sourceURL: URL? = nil
+        sourceURL: URL? = nil,
+        representations: [ForumContentRepresentation]? = nil,
+        blocks: [ForumContentBlock]? = nil,
+        diagnostics: [ForumContentDiagnostic] = [],
+        quality: ForumContentParseQuality? = nil,
+        schemaVersion: Int = 1
     ) {
         self.rawMarkup = rawMarkup
-        self.normalizedText = normalizedText
         self.markupFormat = markupFormat
         self.sourceURL = sourceURL
+        self.representations = representations ?? [
+            ForumContentRepresentation(
+                origin: .local,
+                rawMarkup: rawMarkup,
+                markupFormat: markupFormat,
+                sourceURL: sourceURL,
+                parserVersion: 1
+            )
+        ]
+        let visibleFallback = fallbackText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.blocks = blocks ?? (visibleFallback.isEmpty ? [] : [
+            ForumContentBlock(id: 0, content: .text(visibleFallback))
+        ])
+        self.diagnostics = diagnostics
+        self.quality = quality ?? (visibleFallback.isEmpty ? .unusable : .valid)
+        self.schemaVersion = schemaVersion
     }
 
     static func plainText(_ text: String) -> ForumPostDocument {
-        ForumPostDocument(rawMarkup: text, normalizedText: text, markupFormat: .plainText)
+        ForumPostDocument(rawMarkup: text, fallbackText: text, markupFormat: .plainText)
     }
 
-    static func ngaBBCode(_ markup: String) -> ForumPostDocument {
-        ForumPostDocument(
-            rawMarkup: markup,
-            normalizedText: markup.structuredForumText,
-            markupFormat: .ngaBBCode
-        )
+    var bodyText: String {
+        ForumContentProjector.plainText(from: blocks)
     }
 
-    static func html(_ markup: String, sourceURL: URL? = nil) -> ForumPostDocument {
-        ForumPostDocument(
-            rawMarkup: markup,
-            normalizedText: markup.structuredForumText,
-            markupFormat: .html,
-            sourceURL: sourceURL
-        )
+    var imageURLs: [URL] {
+        ForumContentProjector.imageURLs(from: blocks)
     }
 }
 
 struct ForumContentBlock: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case paragraph
+        case image
+        case emoji
+        case quote
+        case unsupported
+    }
+
     enum Content: Equatable {
         case text(String)
+        case inline([ForumInlineNode])
+        case link(label: String, destination: URL)
         case image(URL)
-        case smile(NGAForumSmile)
+        case emoji(ForumContentEmoji)
         case quote(ForumQuoteBlock)
+        case unsupported(String)
     }
 
     let id: Int
     let content: Content
+    var provenance: ForumContentProvenance? = nil
+
+    var kind: Kind {
+        switch content {
+        case .text, .inline, .link: .paragraph
+        case .image: .image
+        case .emoji: .emoji
+        case .quote: .quote
+        case .unsupported: .unsupported
+        }
+    }
 }
 
-struct NGAForumSmile: Equatable {
-    let name: String
-    let url: URL
-
-    init?(markup: String) {
-        let pattern = #"^\[s:([a-zA-Z0-9_]+):([^\]\r\n]+)\]$"#
-        guard let expression = try? NSRegularExpression(pattern: pattern),
-              let match = expression.firstMatch(in: markup, range: NSRange(markup.startIndex..<markup.endIndex, in: markup)),
-              let groupRange = Range(match.range(at: 1), in: markup),
-              let nameRange = Range(match.range(at: 2), in: markup)
-        else {
-            return nil
+enum ForumContentProjector {
+    static func plainText(from blocks: [ForumContentBlock]) -> String {
+        blocks.compactMap { block -> String? in
+            switch block.content {
+            case let .text(text): return text
+            case let .inline(nodes): return plainText(from: nodes)
+            case let .link(label, destination): return "\(label) (\(destination.absoluteString))"
+            case let .image(url): return "[图片] \(url.absoluteString)"
+            case let .emoji(emoji): return "[表情] \(emoji.name)"
+            case let .quote(quote):
+                return "[引用 author=\"\(quote.author)\" time=\"\(quote.createdAt)\"]\(quote.body)[/引用]"
+            case let .unsupported(fallback): return fallback
+            }
         }
-
-        let group = String(markup[groupRange])
-        name = String(markup[nameRange])
-        guard let filename = Self.filenames[group]?[name],
-              let url = URL(string: "https://img4.nga.178.com/ngabbs/post/smile/\(filename)")
-        else {
-            return nil
-        }
-        self.url = url
+        .joined(separator: "\n")
     }
 
-    /// 取自 NGA `js_bbscode_core.js` 的标准 smile 表，和回复编辑器使用同一资源目录。
-    private static let filenames: [String: [String: String]] = [
-        "ac": [
-            "blink": "ac0.png", "goodjob": "ac1.png", "上": "ac2.png", "中枪": "ac3.png",
-            "偷笑": "ac4.png", "冷": "ac5.png", "凌乱": "ac6.png", "反对": "ac7.png",
-            "吓": "ac8.png", "吻": "ac9.png", "呆": "ac10.png", "咦": "ac11.png",
-            "哦": "ac12.png", "哭": "ac13.png", "哭1": "ac14.png", "哭笑": "ac15.png",
-            "哼": "ac16.png", "喘": "ac17.png", "喷": "ac18.png", "嘲笑": "ac19.png",
-            "嘲笑1": "ac20.png", "囧": "ac21.png", "委屈": "ac22.png", "心": "ac23.png",
-            "忧伤": "ac24.png", "怒": "ac25.png", "怕": "ac26.png", "惊": "ac27.png",
-            "愁": "ac28.png", "抓狂": "ac29.png", "抠鼻": "ac30.png", "擦汗": "ac31.png",
-            "无语": "ac32.png", "晕": "ac33.png", "汗": "ac34.png", "瞎": "ac35.png",
-            "羞": "ac36.png", "羡慕": "ac37.png", "花痴": "ac38.png", "茶": "ac39.png",
-            "衰": "ac40.png", "计划通": "ac41.png", "赞同": "ac42.png", "闪光": "ac43.png",
-            "黑枪": "ac44.png"
-        ],
-        "a2": [
-            "goodjob": "a2_02.png", "偷笑": "a2_03.png", "怒": "a2_04.png", "诶嘿": "a2_05.png",
-            "笑": "a2_07.png", "那个…": "a2_08.png", "哦嗬嗬嗬": "a2_09.png", "舔": "a2_10.png",
-            "有何贵干": "a2_11.png", "病娇": "a2_12.png", "lucky": "a2_13.png", "鬼脸": "a2_14.png",
-            "大哭": "a2_15.png", "冷": "a2_16.png", "哭": "a2_17.png", "妮可妮可妮": "a2_18.png",
-            "惊": "a2_19.png", "poi": "a2_20.png", "恨": "a2_21.png", "囧2": "a2_22.png",
-            "中枪": "a2_23.png", "囧": "a2_24.png", "你看看你": "a2_25.png", "yes": "a2_26.png",
-            "doge": "a2_27.png", "自戳双目": "a2_28.png", "偷吃": "a2_30.png", "冷笑": "a2_31.png",
-            "壁咚": "a2_32.png", "不活了": "a2_33.png", "不明觉厉": "a2_36.png", "jojo立": "a2_37.png",
-            "jojo立2": "a2_38.png", "jojo立3": "a2_39.png", "jojo立5": "a2_40.png", "jojo立4": "a2_41.png",
-            "威吓": "a2_42.png", "你已经死了": "a2_45.png", "异议": "a2_47.png", "认真": "a2_48.png",
-            "你这种人…": "a2_49.png", "是在下输了": "a2_51.png", "抢镜头": "a2_52.png", "你为猴这么": "a2_53.png",
-            "干杯": "a2_54.png", "干杯2": "a2_55.png"
-        ],
-        "ng": [
-            "呲牙笑": "ng_1.png", "奸笑": "ng_2.png", "问号": "ng_3.png", "茶": "ng_4.png",
-            "笑指": "ng_5.png", "燃尽": "ng_6.png", "晕": "ng_7.png", "扇笑": "ng_8.png",
-            "寄": "ng_9.png", "别急": "ng_10.png", "doge": "ng_11.png", "丧": "ng_12.png",
-            "汗": "ng_13.png", "叹气": "ng_15.png", "吃饼": "ng_16.png", "吃瓜": "ng_17.png",
-            "吐舌": "ng_18.png", "哭": "ng_19.png", "喘": "ng_20.png", "心": "ng_21.png",
-            "喷": "ng_22.png", "困": "ng_24.png", "大哭": "ng_25.png", "大惊": "ng_26.png",
-            "害怕": "ng_27.png", "惊": "ng_28.png", "暴怒": "ng_30.png", "气愤": "ng_31.png",
-            "热": "ng_32.png", "瓜不熟": "ng_33.png", "瞎": "ng_34.png", "色": "ng_35.png",
-            "斜眼": "ng_37.png", "问号大": "ng_38.png"
-        ]
-    ]
+    private static func plainText(from nodes: [ForumInlineNode]) -> String {
+        nodes.map { node in
+            switch node {
+            case let .text(text), let .unsupported(text):
+                return text
+            case let .link(label, _):
+                return label
+            case let .emphasis(children), let .strikethrough(children):
+                return plainText(from: children)
+            case let .resource(resource):
+                return resource.accessibilityLabel ?? ""
+            }
+        }
+        .joined()
+    }
+
+    static func imageURLs(from blocks: [ForumContentBlock]) -> [URL] {
+        blocks.compactMap { block in
+            switch block.content {
+            case let .image(url): url
+            default: nil
+            }
+        }
+    }
+
+    static func accessibilityText(from blocks: [ForumContentBlock]) -> String {
+        plainText(from: blocks)
+    }
+
+    static func contentSignature(from blocks: [ForumContentBlock]) -> String {
+        plainText(from: blocks)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+    }
+}
+
+struct ForumContentEmoji: Equatable {
+    let name: String
+    let url: URL
 }
 
 struct ForumQuoteBlock: Equatable {
     let author: String
     let createdAt: String
     let body: String
-}
-
-enum ForumContentParser {
-    private static let tokenPattern = #"(?ms)\[引用 author="(.*?)" time="(.*?)"\](.*?)\[/引用\]|(?:\[图片\]\s*|\[img(?:=[^\]]+)?\]\s*)((?:https?:)?//[^\s\[\]<>"']+|\.?/[^\s\[\]<>"']+)(?:\s*\[/img\])?|\[s:[a-zA-Z0-9_]+:[^\]\r\n]+\]"#
-    private static let expression = try? NSRegularExpression(pattern: tokenPattern)
-    private static let legacyLeadingQuotePattern = #"(?ms)\AReply(?: to Reply)? Post by (.*?) \((.*?)\)\s*(.*)\z"#
-    private static let legacyLeadingQuoteExpression = try? NSRegularExpression(pattern: legacyLeadingQuotePattern)
-    private static let cache = NSCache<NSString, ForumContentBlockArrayBox>()
-
-    static func parse(_ text: String) -> [ForumContentBlock] {
-        let cacheKey = text as NSString
-        if let cachedBlocks = cache.object(forKey: cacheKey)?.blocks {
-            return cachedBlocks
-        }
-
-        if let legacyBlocks = parseLegacyLeadingQuote(in: text) {
-            cache.setObject(ForumContentBlockArrayBox(legacyBlocks), forKey: cacheKey)
-            return legacyBlocks
-        }
-
-        guard let expression else {
-            return text.isEmpty ? [] : [ForumContentBlock(id: 0, content: .text(text))]
-        }
-
-        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = expression.matches(in: text, range: fullRange)
-        guard !matches.isEmpty else {
-            let blocks = text.isEmpty ? [] : [ForumContentBlock(id: 0, content: .text(text))]
-            cache.setObject(ForumContentBlockArrayBox(blocks), forKey: cacheKey)
-            return blocks
-        }
-
-        var blocks: [ForumContentBlock] = []
-        var cursor = text.startIndex
-
-        for match in matches {
-            guard let matchRange = Range(match.range, in: text) else { continue }
-
-            appendText(String(text[cursor..<matchRange.lowerBound]), to: &blocks)
-
-            if let authorRange = Range(match.range(at: 1), in: text),
-               let timeRange = Range(match.range(at: 2), in: text),
-               let bodyRange = Range(match.range(at: 3), in: text) {
-                blocks.append(
-                    ForumContentBlock(
-                        id: blocks.count,
-                        content: .quote(
-                            ForumQuoteBlock(
-                                author: String(text[authorRange]).trimmingCharacters(in: .whitespacesAndNewlines),
-                                createdAt: String(text[timeRange]).trimmingCharacters(in: .whitespacesAndNewlines),
-                                body: String(text[bodyRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                            )
-                        )
-                    )
-                )
-            } else if let urlRange = Range(match.range(at: 4), in: text),
-                      let url = ForumImageURLResolver.resolve(String(text[urlRange])) {
-                blocks.append(ForumContentBlock(id: blocks.count, content: .image(url)))
-            } else if let smile = NGAForumSmile(markup: String(text[matchRange])) {
-                blocks.append(ForumContentBlock(id: blocks.count, content: .smile(smile)))
-            } else {
-                appendText(String(text[matchRange]), to: &blocks)
-            }
-            cursor = matchRange.upperBound
-        }
-
-        appendText(String(text[cursor...]), to: &blocks)
-        cache.setObject(ForumContentBlockArrayBox(blocks), forKey: cacheKey)
-        return blocks
-    }
-
-    private static func appendText(_ text: String, to blocks: inout [ForumContentBlock]) {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        blocks.append(ForumContentBlock(id: blocks.count, content: .text(value)))
-    }
-
-    static func containsQuoteBlock(in text: String) -> Bool {
-        parse(text).contains {
-            if case .quote = $0.content {
-                return true
-            }
-            return false
-        }
-    }
-
-    private static func parseLegacyLeadingQuote(in text: String) -> [ForumContentBlock]? {
-        guard let legacyLeadingQuoteExpression else { return nil }
-
-        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        guard let match = legacyLeadingQuoteExpression.firstMatch(in: text, range: fullRange),
-              let authorRange = Range(match.range(at: 1), in: text),
-              let timeRange = Range(match.range(at: 2), in: text),
-              let bodyRange = Range(match.range(at: 3), in: text)
-        else {
-            return nil
-        }
-
-        let author = String(text[authorRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let createdAt = String(text[timeRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let body = String(text[bodyRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !author.isEmpty, !body.isEmpty else { return nil }
-
-        return [
-            ForumContentBlock(
-                id: 0,
-                content: .quote(
-                    ForumQuoteBlock(
-                        author: author,
-                        createdAt: createdAt,
-                        body: body
-                    )
-                )
-            )
-        ]
-    }
-}
-
-enum ForumImageURLResolver {
-    private static let ngaImageBaseURL = "https://img.nga.178.com"
-    private static let trustedNGAHosts: Set<String> = [
-        "img.nga.178.com",
-        "img4.nga.178.com",
-        "bbs.nga.cn",
-        "nga.178.com"
-    ]
-
-    static func resolve(_ rawValue: String) -> URL? {
-        var value = rawValue
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&#38;", with: "&")
-            .replacingOccurrences(of: "\\/", with: "/")
-
-        if value.hasPrefix("//") {
-            value = "https:" + value
-        } else if value.hasPrefix("./") {
-            value = ngaImageBaseURL + "/attachments/" + String(value.dropFirst(2))
-        } else if value.hasPrefix("/") {
-            value = ngaImageBaseURL + value
-        }
-
-        guard var components = URLComponents(string: value),
-              let host = components.host?.lowercased(),
-              components.scheme == "http" || components.scheme == "https"
-        else {
-            return nil
-        }
-
-        if components.scheme == "http", trustedNGAHosts.contains(host) {
-            components.scheme = "https"
-        }
-        return components.url
-    }
-
-    static func isNGAForumEmoji(_ url: URL) -> Bool {
-        guard let host = url.host?.lowercased(), trustedNGAHosts.contains(host) else {
-            return false
-        }
-        return url.path.hasPrefix("/ngabbs/post/smile/")
-    }
-}
-
-private final class ForumContentBlockArrayBox: NSObject {
-    let blocks: [ForumContentBlock]
-
-    init(_ blocks: [ForumContentBlock]) {
-        self.blocks = blocks
-    }
 }

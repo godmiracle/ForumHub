@@ -265,7 +265,7 @@ struct ForumHubTests {
 
         #expect(thread.body.contains("[图片] https://img.nga.178.com/attachments/main-post.jpg"))
         let expectedURL = testURL("https://img.nga.178.com/attachments/main-post.jpg")
-        #expect(ForumContentParser.parse(thread.body).contains {
+        #expect(thread.contentDocument.blocks.contains {
             $0.content == .image(expectedURL)
         })
     }
@@ -362,10 +362,10 @@ struct ForumHubTests {
     }
 
     @Test func forumImageURLResolverRecognizesNGASmileAssets() {
-        #expect(ForumImageURLResolver.isNGAForumEmoji(
+        #expect(NGAImageURLResolver.isForumEmoji(
             testURL("https://img4.nga.178.com/ngabbs/post/smile/ng_1.png")
         ))
-        #expect(!ForumImageURLResolver.isNGAForumEmoji(
+        #expect(!NGAImageURLResolver.isForumEmoji(
             testURL("https://img.nga.178.com/attachments/mon_202607/example.jpg")
         ))
     }
@@ -386,7 +386,7 @@ struct ForumHubTests {
         [图片] https://img.nga.178.com/attachments/mon_202606/18/example-b.webp
         """
 
-        let blocks = ForumContentParser.parse(content)
+        let blocks = NGABBCodeContentParser.parse(content).blocks
 
         #expect(blocks.count == 4)
         #expect(blocks[0].content == .text("第一段正文"))
@@ -398,7 +398,7 @@ struct ForumHubTests {
     @Test func contentParserSupportsInlineBBCodeAndNGAImageURLVariants() throws {
         let content = "文字 [img]//img.nga.178.com/a.gif[/img] 说明 [图片] /attachments/mon_202607/b.jpg?name=a&amp;size=full"
 
-        let blocks = ForumContentParser.parse(content)
+        let blocks = NGABBCodeContentParser.parse(content).blocks
 
         #expect(blocks.count == 4)
         #expect(blocks[0].content == .text("文字"))
@@ -407,10 +407,10 @@ struct ForumHubTests {
         #expect(blocks[3].content == .image(testURL("https://img.nga.178.com/attachments/mon_202607/b.jpg?name=a&size=full")))
     }
 
-    @Test func structuredForumTextPreservesSizedNGAImageTags() throws {
+    @Test func semanticParserPreservesSizedNGAImageTags() throws {
         let content = "正文[img=800x600]./mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg[/img]结尾"
 
-        let blocks = ForumContentParser.parse(content.structuredForumText)
+        let blocks = NGABBCodeContentParser.parse(content).blocks
 
         #expect(blocks.contains {
             if case let .image(url) = $0.content {
@@ -420,20 +420,20 @@ struct ForumHubTests {
         })
     }
 
-    @Test func structuredForumTextRendersNGAEmojiMarkupWithoutDroppingContent() throws {
+    @Test func semanticParserRendersNGAEmojiMarkupWithoutDroppingContent() throws {
         let content = "好看吗[s:ac:哭笑] 来杯[s:ac:茶] [s:ac:未知表情]"
-        let blocks = ForumContentParser.parse(content.structuredForumText)
+        let blocks = NGABBCodeContentParser.parse(content).blocks
 
         #expect(blocks[0].content == .text("好看吗"))
-        #expect(blocks[1].content == .smile(try #require(NGAForumSmile(markup: "[s:ac:哭笑]"))))
+        #expect(blocks[1].content == .emoji(try #require(NGAForumEmojiResolver.resolve(markup: "[s:ac:哭笑]"))))
         #expect(blocks[2].content == .text("来杯"))
-        #expect(blocks[3].content == .smile(try #require(NGAForumSmile(markup: "[s:ac:茶]"))))
-        #expect(blocks[4].content == .text("[s:ac:未知表情]"))
+        #expect(blocks[3].content == .emoji(try #require(NGAForumEmojiResolver.resolve(markup: "[s:ac:茶]"))))
+        #expect(blocks[4].content == .unsupported("[s:ac:未知表情]"))
     }
 
     @Test func contentParserPreservesNGARelativeMainPostImage() {
         let content = "主贴正文[img]./mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg[/img]结尾"
-        let blocks = ForumContentParser.parse(content.structuredForumText)
+        let blocks = NGABBCodeContentParser.parse(content).blocks
 
         #expect(blocks.contains {
             if case let .image(url) = $0.content {
@@ -454,7 +454,7 @@ struct ForumHubTests {
         let thread = try #require(WebForumParser.parseThreadHTML(html, tid: 47151166))
         #expect(thread.body.contains("来源:数码闲聊站"))
         #expect(thread.body.contains("完整正文"))
-        #expect(ForumContentParser.parse(thread.body).contains {
+        #expect(thread.contentDocument.blocks.contains {
             if case let .image(url) = $0.content {
                 return url.absoluteString == "https://img.nga.178.com/attachments/mon_202607/10/k2Q66-4vjkZeT1kShs-13m.jpg"
             }
@@ -463,7 +463,7 @@ struct ForumHubTests {
         #expect(thread.replies.count == 1)
     }
 
-    @Test func ngaThreadMergerSupplementsAPIContentWithoutCreatingWebReplies() throws {
+    @Test func ngaWebFallbackSelectsWholeDocumentWithoutCreatingWebReplies() throws {
         let bundle = Bundle(for: FixtureLocator.self)
         let apiURL = try #require(
             bundle.url(forResource: "nga-thread-api-incomplete", withExtension: "json", subdirectory: "Fixtures")
@@ -484,19 +484,45 @@ struct ForumHubTests {
             tid: 47151166
         ))
 
-        let merged = NGAThreadDetailMerger.merge(apiThread: apiThread, webThread: webThread)
+        let unusableAPIThread = ForumThread(
+            id: apiThread.id,
+            title: apiThread.title,
+            summary: "",
+            author: apiThread.author,
+            authorAvatarURL: apiThread.authorAvatarURL,
+            createdAt: apiThread.createdAt,
+            lastReplyAt: apiThread.lastReplyAt,
+            replyCount: apiThread.replyCount,
+            viewCount: apiThread.viewCount,
+            body: "",
+            replies: apiThread.replies,
+            source: apiThread.source
+        )
+        let merged = try NGAThreadWebFallbackAssembler.assemble(
+            apiThread: unusableAPIThread,
+            webThread: webThread
+        )
 
-        #expect(merged.body.contains("API 正文第一段"))
         #expect(merged.body.contains("网页补全第二段"))
-        #expect(ForumContentParser.parse(merged.body).compactMap { block -> URL? in
-            if case let .image(url) = block.content { return url }
-            return nil
-        }.count == 2)
-        #expect(merged.replies.map(\.body) == ["API 已有回复\n网页补充回复"])
+        #expect(merged.body == webThread.body)
+        #expect(merged.contentDocument.blocks.map(\.content) == webThread.contentDocument.blocks.map(\.content))
+        #expect(merged.contentDocument.blocks.allSatisfy { block in
+            guard let provenance = block.provenance else { return false }
+            return merged.contentDocument.representations[provenance.representationIndex].origin == .ngaWeb
+        })
+        #expect(merged.replies.map(\.id) == apiThread.replies.map(\.id))
+        #expect(merged.replies.map(\.body) == apiThread.replies.map(\.body))
+        #expect(merged.replies.first?.contentDocument.diagnostics.contains {
+            $0.code == .sourceConflict
+        } == true)
         #expect(merged.contentDocument.markupFormat == .html)
+        #expect(merged.contentDocument.representations.count == 2)
     }
 
-    @Test func ngaThreadMergerDeduplicatesEquivalentAbsoluteAndRelativeImageURLs() throws {
+    @Test func ngaSourcePolicyDoesNotCompareEquivalentImageRepresentationsWhenAPIIsValid() async throws {
+        let apiDocument = NGABBCodeContentParser.parse(
+            "API 正文\n[img]https://img.nga.178.com/attachments/mon_202607/10/shared.jpg[/img]"
+        )
         let apiThread = ForumThread(
             id: 47151166,
             title: "图片去重测试",
@@ -505,7 +531,8 @@ struct ForumHubTests {
             lastReplyAt: "",
             replyCount: 0,
             viewCount: 0,
-            body: "API 正文\n[图片] https://img.nga.178.com/attachments/mon_202607/10/shared.jpg",
+            body: apiDocument.bodyText,
+            contentDocument: apiDocument,
             replies: []
         )
         let webThread = ForumThread(
@@ -520,19 +547,20 @@ struct ForumHubTests {
             replies: []
         )
 
-        let merged = NGAThreadDetailMerger.merge(apiThread: apiThread, webThread: webThread)
-        let imageURLs = ForumContentParser.parse(merged.contentDocument.normalizedText).compactMap { block -> URL? in
-            if case let .image(url) = block.content { return url }
-            return nil
+        var webRequests = 0
+        let resolved = try await NGAThreadContentSourcePolicy.resolve(apiThread: apiThread) {
+            webRequests += 1
+            return webThread
         }
 
-        #expect(imageURLs.map(\.absoluteString) == [
+        #expect(webRequests == 0)
+        #expect(resolved.contentDocument.imageURLs.map(\.absoluteString) == [
             "https://img.nga.178.com/attachments/mon_202607/10/shared.jpg"
         ])
-        #expect(merged.body.contains("网页补全正文"))
+        #expect(!resolved.body.contains("网页补全正文"))
     }
 
-    @Test func ngaThreadResolverPreservesAPIContentWhenWebEnrichmentFails() throws {
+    @Test func ngaThreadSourcePolicyPreservesValidAPIContentWithoutWebRequest() async throws {
         let bundle = Bundle(for: FixtureLocator.self)
         let apiURL = try #require(
             bundle.url(forResource: "nga-thread-api-incomplete", withExtension: "json", subdirectory: "Fixtures")
@@ -545,11 +573,16 @@ struct ForumHubTests {
             tid: 47151166
         ))
 
-        let resolved = NGAThreadDetailMerger.resolve(apiThread: apiThread, webThread: nil)
+        var webRequests = 0
+        let resolved = try await NGAThreadContentSourcePolicy.resolve(apiThread: apiThread) {
+            webRequests += 1
+            return nil
+        }
 
         #expect(resolved == apiThread)
-        #expect(resolved?.contentDocument.rawMarkup == apiThread.contentDocument.rawMarkup)
-        #expect(resolved?.replies == apiThread.replies)
+        #expect(webRequests == 0)
+        #expect(resolved.contentDocument.rawMarkup == apiThread.contentDocument.rawMarkup)
+        #expect(resolved.replies == apiThread.replies)
     }
 
     @Test func webThreadParserRejectsAccessDeniedPage() {
@@ -574,10 +607,7 @@ struct ForumHubTests {
         let thread = try #require(WebForumParser.parseThreadHTML(html, tid: 47162747))
         #expect(thread.body.contains("主贴后续文字"))
         #expect(thread.replies.map(\.body) == ["第一条回复"])
-        #expect(ForumContentParser.parse(thread.body).compactMap { block -> URL? in
-            if case let .image(url) = block.content { return url }
-            return nil
-        }.count == 2)
+        #expect(thread.contentDocument.imageURLs.count == 2)
     }
 
     @Test func webThreadParserKeepsNestedContainersInsideMainPost() throws {
@@ -626,10 +656,7 @@ struct ForumHubTests {
         ))
 
         #expect(thread.body.contains("后续正文"))
-        #expect(ForumContentParser.parse(thread.body).compactMap { block -> URL? in
-            if case let .image(url) = block.content { return url }
-            return nil
-        }.count == 3)
+        #expect(thread.contentDocument.imageURLs.count == 3)
         #expect(!NGAThreadParseQuality.needsWebEnrichment(thread: thread, rawText: json))
     }
 
@@ -676,7 +703,7 @@ struct ForumHubTests {
             author: "回复者",
             createdAt: "",
             body: "旧兼容正文",
-            contentDocument: .ngaBBCode("权威回复正文")
+            contentDocument: NGABBCodeContentParser.parse("权威回复正文")
         )
 
         #expect(reply.body == "权威回复正文")
@@ -692,7 +719,7 @@ struct ForumHubTests {
             replyCount: 1,
             viewCount: 0,
             body: "主楼正文",
-            contentDocument: .ngaBBCode("主楼正文"),
+            contentDocument: NGABBCodeContentParser.parse("主楼正文"),
             replies: [
                 Reply(
                     id: 1,
@@ -714,11 +741,11 @@ struct ForumHubTests {
 
     @Test func forumImageURLResolverUpgradesTrustedNGAHTTPOnly() throws {
         #expect(
-            ForumImageURLResolver.resolve("http://img.nga.178.com/a.jpg")
+            NGAImageURLResolver.resolve("http://img.nga.178.com/a.jpg")
                 == testURL("https://img.nga.178.com/a.jpg")
         )
         #expect(
-            ForumImageURLResolver.resolve("http://example.com/a.jpg")
+            NGAImageURLResolver.resolve("http://example.com/a.jpg")
                 == testURL("http://example.com/a.jpg")
         )
     }
@@ -1122,7 +1149,7 @@ struct ForumHubTests {
         #expect(restored.entries.count == 2)
         #expect(restored.entries.map(\.source) == [.v2ex, .nga])
         #expect(restored.entries.allSatisfy { $0.thread.body.isEmpty })
-        #expect(restored.entries.allSatisfy { $0.thread.contentDocument.normalizedText.isEmpty })
+        #expect(restored.entries.allSatisfy { $0.thread.contentDocument.bodyText.isEmpty })
 
         restored.toggle(ngaThread)
         #expect(!restored.contains(ngaThread))
@@ -1240,10 +1267,7 @@ struct ForumHubTests {
 
         #expect(page.replies.map(\.id) == [201, 202])
         let mediaReply = try #require(page.replies.first)
-        let imageURLs = ForumContentParser.parse(mediaReply.contentDocument.normalizedText).compactMap { block -> URL? in
-            if case let .image(url) = block.content { return url }
-            return nil
-        }
+        let imageURLs = mediaReply.contentDocument.imageURLs
         #expect(imageURLs.map(\.absoluteString) == [
             "https://img.nga.178.com/attachments/page-2.gif",
             "https://img.nga.178.com/attachments/mon_202607/page-2.jpg?name=a&size=full"
@@ -1251,7 +1275,7 @@ struct ForumHubTests {
 
         let quotedReply = try #require(page.replies.last)
         #expect(quotedReply.contentDocument.rawMarkup.contains("./mon_202607/quoted-image.jpg"))
-        #expect(quotedReply.contentDocument.normalizedText.contains("quoted-image.jpg"))
+        #expect(quotedReply.contentDocument.bodyText.contains("quoted-image.jpg"))
     }
 
     @Test func threadDetailParserDoesNotTurnQuoteMetadataIntoAReply() throws {
@@ -1289,17 +1313,17 @@ struct ForumHubTests {
     @Test func paginationMergerDropsRepeatedMainPostAndDuplicateReplies() {
         let currentThread = paginationThread(
             replies: [
-                Reply(id: 101, author: "用户 A", createdAt: "10:00", body: "已有回复"),
-                Reply(id: 102, author: "用户 B", createdAt: "10:01", body: "最后一条旧回复")
+                Reply(id: 101, sourcePostID: 1001, author: "用户 A", createdAt: "10:00", body: "已有回复"),
+                Reply(id: 102, sourcePostID: 1002, author: "用户 B", createdAt: "10:01", body: "最后一条旧回复")
             ],
             replyCount: 4
         )
         let continuationThread = paginationThread(
             replies: [
                 Reply(id: 0, author: "楼主", createdAt: "09:00", body: "首楼内容"),
-                Reply(id: 102, author: "用户 B", createdAt: "10:01", body: "最后一条旧回复"),
-                Reply(id: 202, author: "用户 A", createdAt: "10:00", body: "已有回复"),
-                Reply(id: 203, author: "用户 C", createdAt: "10:02", body: "新的回复")
+                Reply(id: 102, sourcePostID: 1002, author: "用户 B", createdAt: "10:01", body: "最后一条旧回复"),
+                Reply(id: 202, sourcePostID: 1001, author: "用户 A", createdAt: "10:00", body: "已有回复"),
+                Reply(id: 203, sourcePostID: 1003, author: "用户 C", createdAt: "10:02", body: "新的回复")
             ],
             replyCount: 4
         )
@@ -1317,6 +1341,29 @@ struct ForumHubTests {
         #expect(result.thread.lastReplyAt == "10:02")
     }
 
+    @Test func paginationMergerPreservesEqualContentWithDifferentStablePostIdentity() {
+        let currentThread = paginationThread(
+            replies: [
+                Reply(id: 101, sourcePostID: 1001, author: "同一用户", createdAt: "10:00", body: "重复内容")
+            ],
+            replyCount: 2
+        )
+        let continuationThread = paginationThread(
+            replies: [
+                Reply(id: 102, sourcePostID: 1002, author: "同一用户", createdAt: "10:00", body: "重复内容")
+            ],
+            replyCount: 2
+        )
+
+        let result = ThreadDetailPaginationMerger.merge(
+            currentThread: currentThread,
+            continuationThread: continuationThread,
+            replyTotalCount: 2
+        )
+
+        #expect(result.thread.replies.map(\.sourcePostID) == [1001, 1002])
+    }
+
     @Test func paginationMergerUsesContentDocumentToIdentifyRepeatedMainPost() {
         let currentThread = ForumThread(
             id: 100,
@@ -1327,7 +1374,7 @@ struct ForumHubTests {
             replyCount: 1,
             viewCount: 0,
             body: "旧主楼投影",
-            contentDocument: .ngaBBCode("权威主楼正文"),
+            contentDocument: NGABBCodeContentParser.parse("权威主楼正文"),
             replies: []
         )
         let repeatedMainPost = Reply(
@@ -1335,7 +1382,7 @@ struct ForumHubTests {
             author: "楼主",
             createdAt: "",
             body: "不同的旧回复投影",
-            contentDocument: .ngaBBCode("权威主楼正文")
+            contentDocument: NGABBCodeContentParser.parse("权威主楼正文")
         )
         let continuationThread = currentThread.replacingReplies([repeatedMainPost])
 

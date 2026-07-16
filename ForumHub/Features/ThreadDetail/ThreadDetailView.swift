@@ -932,7 +932,7 @@ private extension ThreadDetailView {
                 displayFloorLabel: entry.floorLabel,
                 author: entry.reply.author,
                 createdAt: entry.reply.createdAt,
-                bodyPreview: entry.reply.contentDocument.normalizedText
+                bodyPreview: entry.reply.contentDocument.bodyText
             )
         )
     }

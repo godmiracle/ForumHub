@@ -236,31 +236,24 @@ struct NGALiveThreadRepository: ThreadRepository {
 
     func fetchThread(tid: Int, page: Int) async throws -> ThreadDetailFetchResult {
         let firstAPIResult = try await fetchAPIThread(tid: tid, page: page)
-        // NGA API 的正文可能是可解析但被截断的版本。网页正文是内容权威源，
-        // 因此每次详情加载都要参与合并，而不是先猜 API 是否缺失再决定请求它。
-        do {
+        guard let apiThread = firstAPIResult.thread else {
+            throw NGARequestError.unparsedResponse(firstAPIResult.rawText)
+        }
+
+        var selectedRawText = firstAPIResult.rawText
+        let resolvedThread = try await NGAThreadContentSourcePolicy.resolve(
+            apiThread: apiThread,
+            requestedPage: page
+        ) {
             let webResult = try await fetchWebThread(
                 tid: tid,
                 page: page,
                 apiRawText: firstAPIResult.rawText
             )
-            let resolvedThread = NGAThreadDetailMerger.resolve(
-                apiThread: firstAPIResult.thread,
-                webThread: webResult.thread
-            ) ?? webResult.thread
-            return ThreadDetailFetchResult(thread: resolvedThread, rawText: webResult.rawText)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            // 网页源不可用时才降级使用 API；不以启发式判断跳过网页校验。
-            if let resolvedThread = NGAThreadDetailMerger.resolve(
-                apiThread: firstAPIResult.thread,
-                webThread: nil
-            ) {
-                return ThreadDetailFetchResult(thread: resolvedThread, rawText: firstAPIResult.rawText)
-            }
-            throw error
+            selectedRawText = webResult.rawText
+            return webResult.thread
         }
+        return ThreadDetailFetchResult(thread: resolvedThread, rawText: selectedRawText)
     }
 
     private func fetchAPIThread(tid: Int, page: Int) async throws -> (thread: ForumThread?, rawText: String) {
@@ -817,152 +810,9 @@ struct NGALiveThreadRepository: ThreadRepository {
 }
 
 enum NGAThreadParseQuality {
-    private static let rawImageMarkerPattern = #"(?i)(?:\[图片\]|\[img\]|<img\b)"#
-
     static func needsWebEnrichment(thread: ForumThread, rawText _: String) -> Bool {
-        let normalizedText = thread.contentDocument.normalizedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        // `rawText` 包含当前页全部回帖。若把所有楼层的图片都与主楼比较，
-        // 任意回帖带图都会把完整主楼误判为缺失，进而触发不稳定的网页兜底。
-        // 主楼原始文档才是主楼完整度的唯一比较对象。
-        let rawImageCount = thread.contentDocument.rawMarkup.matches(pattern: rawImageMarkerPattern).count
-        let parsedImageCount = ForumContentParser.parse(thread.contentDocument.normalizedText).reduce(into: 0) { count, block in
-            if case .image = block.content {
-                count += 1
-            }
-        }
-
-        return normalizedText.isEmpty
-            || (thread.replyCount > 0 && thread.replies.isEmpty)
-            || parsedImageCount < rawImageCount
+        NGAThreadContentSourcePolicy.quality(of: thread) == .unusable
     }
-
-}
-
-enum NGAThreadDetailMerger {
-    static func resolve(apiThread: ForumThread?, webThread: ForumThread?) -> ForumThread? {
-        switch (apiThread, webThread) {
-        case let (apiThread?, webThread?):
-            return merge(apiThread: apiThread, webThread: webThread)
-        case let (apiThread?, nil):
-            return apiThread
-        case let (nil, webThread?):
-            return webThread
-        case (nil, nil):
-            return nil
-        }
-    }
-
-    static func merge(apiThread: ForumThread, webThread: ForumThread) -> ForumThread {
-        let resolvedDocument = mergedDocument(
-            apiDocument: apiThread.contentDocument,
-            webDocument: webThread.contentDocument
-        )
-        let webRepliesByFloor = Dictionary(
-            webThread.replies.compactMap { reply in
-                reply.floorNumber.map { ($0, reply) }
-            },
-            uniquingKeysWith: { first, _ in first }
-        )
-        // API 提供稳定的帖子身份、作者和顺序；网页只补全同一楼层的内容文档。
-        let resolvedReplies = apiThread.replies.map { apiReply in
-            guard let floor = apiReply.floorNumber,
-                  let webReply = webRepliesByFloor[floor]
-            else {
-                return apiReply
-            }
-            return apiReply.replacingContent(with: mergedDocument(
-                apiDocument: apiReply.contentDocument,
-                webDocument: webReply.contentDocument
-            ))
-        }
-
-        return ForumThread(
-            id: apiThread.id,
-            title: apiThread.title.isUsefulForumValue ? apiThread.title : webThread.title,
-            summary: apiThread.summary.isUsefulForumValue ? apiThread.summary : webThread.summary,
-            author: apiThread.author.isUsefulForumValue ? apiThread.author : webThread.author,
-            authorAvatarURL: apiThread.authorAvatarURL ?? webThread.authorAvatarURL,
-            createdAt: apiThread.createdAt.isUsefulForumValue ? apiThread.createdAt : webThread.createdAt,
-            lastReplyAt: apiThread.lastReplyAt.isUsefulForumValue ? apiThread.lastReplyAt : webThread.lastReplyAt,
-            replyCount: max(apiThread.replyCount, webThread.replyCount, resolvedReplies.count),
-            viewCount: max(apiThread.viewCount, webThread.viewCount),
-            body: resolvedDocument.normalizedText,
-            contentDocument: resolvedDocument,
-            replies: resolvedReplies,
-            source: apiThread.source,
-            channelID: apiThread.channelID,
-            channelTitle: apiThread.channelTitle
-        )
-    }
-
-    private static func mergedDocument(
-        apiDocument: ForumPostDocument,
-        webDocument: ForumPostDocument
-    ) -> ForumPostDocument {
-        let apiValue = apiDocument.normalizedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let webValue = webDocument.normalizedText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !apiValue.isEmpty else { return webDocument }
-        guard !webValue.isEmpty else { return apiDocument }
-
-        let normalizedAPI = normalized(apiValue)
-        let normalizedWeb = normalized(webValue)
-        if normalizedAPI.contains(normalizedWeb) {
-            return apiDocument
-        }
-        if normalizedWeb.contains(normalizedAPI) {
-            return webDocument
-        }
-
-        var knownUnits = Set(contentUnits(in: apiValue).map(contentUnitKey))
-        var missingUnits: [String] = []
-        for unit in contentUnits(in: webValue) {
-            let normalizedUnit = normalized(unit)
-            let key = contentUnitKey(unit)
-            guard !key.isEmpty,
-                  (key.hasPrefix("image:") || !normalizedAPI.contains(normalizedUnit)),
-                  knownUnits.insert(key).inserted
-            else {
-                continue
-            }
-            missingUnits.append(unit)
-        }
-
-        guard !missingUnits.isEmpty else { return webDocument }
-        return ForumPostDocument(
-            rawMarkup: webDocument.rawMarkup,
-            normalizedText: ([apiValue] + missingUnits).joined(separator: "\n"),
-            markupFormat: webDocument.markupFormat,
-            sourceURL: webDocument.sourceURL
-        )
-    }
-
-    private static func contentUnits(in body: String) -> [String] {
-        body
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-    }
-
-    /// API 与网页可能分别使用绝对地址和 NGA 相对附件地址描述同一张图片。
-    /// 合并时按解析后的 URL 判断跨来源身份，文本仍保持原有的规范化比较语义。
-    private static func contentUnitKey(_ value: String) -> String {
-        let blocks = ForumContentParser.parse(value)
-        if blocks.count == 1,
-           case let .image(url) = blocks[0].content {
-            return "image:\(url.absoluteString)"
-        }
-
-        return "text:\(normalized(value))"
-    }
-
-    private nonisolated static func normalized(_ value: String) -> String {
-        value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\\s+", with: "", options: .regularExpression)
-            .lowercased()
-    }
-
 }
 
 private enum NGAReplyPostAction: String {

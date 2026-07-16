@@ -42,6 +42,7 @@ struct ThreadDetailParser {
             replyCount: replies.count,
             viewCount: int(for: ["views", "view_count", "hits"], in: dictionaries.first ?? [:]) ?? 0,
             body: firstPost.body,
+            contentDocument: firstPost.contentDocument,
             replies: replies
         )
     }
@@ -71,30 +72,44 @@ struct ThreadDetailParser {
             return nil
         }
 
+        let sourceMetadata = ForumThreadSourceMetadata(
+            currentPage: int(for: ["currentPage", "current_page", "page"], in: root),
+            totalPage: int(for: ["totalPage", "total_page", "pages"], in: root),
+            attachmentPrefix: string(for: ["attachPrefix", "attach_prefix"], in: root)
+        )
+
         if page > 1 {
-            return continuationPage(tid: tid, posts: posts)
+            return continuationPage(tid: tid, posts: posts, sourceMetadata: sourceMetadata)
         }
 
         let firstPost = posts[0]
         let replies = Array(posts.dropFirst())
         let firstDictionary = result.first ?? [:]
-        let title = string(for: ["subject", "title", "post_subject", "topic_title"], in: firstDictionary)?.cleanedForumText ?? "帖子 \(tid)"
+        let title = string(for: ["tsubject", "subject", "title", "topic_title"], in: root)?.cleanedForumText
+            ?? string(for: ["subject", "title", "post_subject", "topic_title"], in: firstDictionary)?.cleanedForumText
+            ?? "帖子 \(tid)"
+        let rootAuthor = string(for: ["tauthor", "author_name"], in: root)?.cleanedForumText
+            ?? authorName(in: root, userNamesByID: userNamesByID)
+        let visibleRows = int(for: ["vrows"], in: root)
 
         return ForumThread(
             id: tid,
             title: title,
             summary: firstPost.body,
-            author: firstPost.author,
+            author: rootAuthor?.isUsefulForumValue == true ? rootAuthor! : firstPost.author,
             authorAvatarURL: firstPost.avatarURL,
             lastReplyAt: firstPost.createdAt,
             replyCount: max(
                 replies.count,
+                visibleRows.map { max($0 - 1, 0) } ?? 0,
                 int(for: ["replies", "reply_count", "replys"], in: firstDictionary) ?? 0,
                 max((int(for: ["postnum"], in: firstDictionary) ?? 1) - 1, 0)
             ),
             viewCount: int(for: ["views", "view_count", "hits"], in: firstDictionary) ?? 0,
             body: firstPost.body,
-            replies: replies
+            contentDocument: firstPost.contentDocument,
+            replies: replies,
+            sourceMetadata: sourceMetadata
         )
     }
 
@@ -186,7 +201,11 @@ struct ThreadDetailParser {
         tid * 10_000 + page * 100 + index
     }
 
-    private static func continuationPage(tid: Int, posts: [Reply]) -> ForumThread {
+    private static func continuationPage(
+        tid: Int,
+        posts: [Reply],
+        sourceMetadata: ForumThreadSourceMetadata? = nil
+    ) -> ForumThread {
         ForumThread(
             id: tid,
             title: "帖子 \(tid)",
@@ -196,7 +215,8 @@ struct ThreadDetailParser {
             replyCount: posts.count,
             viewCount: 0,
             body: "",
-            replies: posts
+            replies: posts,
+            sourceMetadata: sourceMetadata
         )
     }
 
@@ -225,12 +245,10 @@ struct ThreadDetailParser {
         fallbackID: Int,
         userNamesByID: [Int: String]
     ) -> Reply? {
-        guard let rawContent = contentText(in: dictionary),
-              let body = Optional(rawContent.structuredForumText),
-            !body.isEmpty
-        else {
+        guard let rawContent = contentText(in: dictionary) else {
             return nil
         }
+        let document = NGABBCodeContentParser.parse(rawContent)
 
         let validPostID = validPostID(in: dictionary)
         let resolvedAuthor = authorName(in: dictionary, userNamesByID: userNamesByID)
@@ -240,8 +258,8 @@ struct ThreadDetailParser {
             sourcePostID: validPostID,
             author: resolvedAuthor ?? "未知作者",
             createdAt: string(for: ["postdate", "timestamp", "created_at", "lastpost", "time"], in: dictionary) ?? "未知时间",
-            body: body,
-            contentDocument: .ngaBBCode(rawContent),
+            body: document.bodyText,
+            contentDocument: document,
             avatarURL: avatarURL(in: dictionary),
             floorNumber: int(for: ["lou", "floor", "position"], in: dictionary)
         )
@@ -379,8 +397,10 @@ struct ThreadDetailParser {
     }
 
     private static func contentText(in dictionary: [String: Any]) -> String? {
-        if let direct = string(for: ["content", "postcontent", "body", "comment", "post_content"], in: dictionary) {
-            return direct
+        for key in ["content", "postcontent", "body", "comment", "post_content"] {
+            if let direct = dictionary[key] as? String {
+                return direct
+            }
         }
 
         for key in ["content", "postcontent", "body", "comment", "post_content"] {

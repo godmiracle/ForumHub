@@ -20,10 +20,13 @@ enum ThreadDetailPaginationMerger {
         let continuationReplies = continuationThread.replies.filter {
             !isDuplicateOfMainPost($0, in: currentThread)
         }
-        let existingIDs = Set(currentThread.replies.map(\.id))
-        let existingSignatureKeys = Set(currentThread.replies.map(\.signatureKey))
+        var seenIdentityKeys = Set(currentThread.replies.map {
+            $0.stableIdentityKey(source: currentThread.source)
+        })
         let appendedReplies = continuationReplies.filter { reply in
-            !existingIDs.contains(reply.id) && !existingSignatureKeys.contains(reply.signatureKey)
+            seenIdentityKeys.insert(
+                reply.stableIdentityKey(source: currentThread.source)
+            ).inserted
         }
         let combinedReplies = currentThread.replies + appendedReplies
         let resolvedReplyTotal = max(
@@ -62,8 +65,8 @@ enum ThreadDetailPaginationMerger {
             return false
         }
 
-        let normalizedReplyBody = normalizedContent(reply.contentDocument.normalizedText)
-        let normalizedMainBody = normalizedContent(thread.contentDocument.normalizedText)
+        let normalizedReplyBody = ForumContentProjector.contentSignature(from: reply.contentDocument.blocks)
+        let normalizedMainBody = ForumContentProjector.contentSignature(from: thread.contentDocument.blocks)
         guard !normalizedReplyBody.isEmpty, !normalizedMainBody.isEmpty else {
             return false
         }
@@ -71,9 +74,4 @@ enum ThreadDetailPaginationMerger {
         return normalizedReplyBody == normalizedMainBody
     }
 
-    private static func normalizedContent(_ content: String) -> String {
-        content
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-    }
 }

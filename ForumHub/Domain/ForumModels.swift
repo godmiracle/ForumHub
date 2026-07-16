@@ -236,6 +236,12 @@ struct ForumSummary: Equatable {
     )
 }
 
+struct ForumThreadSourceMetadata: Equatable {
+    let currentPage: Int?
+    let totalPage: Int?
+    let attachmentPrefix: String?
+}
+
 struct ForumThread: Identifiable, Equatable {
     let id: Int
     let title: String
@@ -251,6 +257,7 @@ struct ForumThread: Identifiable, Equatable {
     let source: ForumSource
     let channelID: Int?
     let channelTitle: String?
+    let sourceMetadata: ForumThreadSourceMetadata?
 
     init(
         id: Int,
@@ -267,7 +274,8 @@ struct ForumThread: Identifiable, Equatable {
         replies: [Reply],
         source: ForumSource = .nga,
         channelID: Int? = nil,
-        channelTitle: String? = nil
+        channelTitle: String? = nil,
+        sourceMetadata: ForumThreadSourceMetadata? = nil
     ) {
         self.id = id
         self.title = title
@@ -283,10 +291,11 @@ struct ForumThread: Identifiable, Equatable {
         self.source = source
         self.channelID = channelID
         self.channelTitle = channelTitle
+        self.sourceMetadata = sourceMetadata
     }
 
     /// 兼容旧调用点的只读正文投影；权威内容始终来自 `contentDocument`。
-    var body: String { contentDocument.normalizedText }
+    var body: String { contentDocument.bodyText }
 
     var authorReplies: [Reply] {
         guard author.isUsefulForumValue else { return [] }
@@ -309,10 +318,9 @@ struct ForumThread: Identifiable, Equatable {
     }
 
     func appendingReplies(_ additionalReplies: [Reply]) -> ForumThread {
-        let existingIDs = Set(replies.map(\.id))
-        let existingSignatureKeys = Set(replies.map(\.signatureKey))
+        var seenIdentityKeys = Set(replies.map { $0.stableIdentityKey(source: source) })
         let uniqueReplies = additionalReplies.filter { reply in
-            !existingIDs.contains(reply.id) && !existingSignatureKeys.contains(reply.signatureKey)
+            seenIdentityKeys.insert(reply.stableIdentityKey(source: source)).inserted
         }
         let combinedReplies = replies + uniqueReplies
 
@@ -331,7 +339,8 @@ struct ForumThread: Identifiable, Equatable {
             replies: combinedReplies,
             source: source,
             channelID: channelID,
-            channelTitle: channelTitle
+            channelTitle: channelTitle,
+            sourceMetadata: sourceMetadata
         )
     }
 
@@ -351,7 +360,8 @@ struct ForumThread: Identifiable, Equatable {
             replies: replies,
             source: source,
             channelID: channel.id,
-            channelTitle: channel.title
+            channelTitle: channel.title,
+            sourceMetadata: sourceMetadata
         )
     }
 
@@ -375,7 +385,8 @@ struct ForumThread: Identifiable, Equatable {
             replies: newReplies,
             source: source,
             channelID: channelID,
-            channelTitle: channelTitle
+            channelTitle: channelTitle,
+            sourceMetadata: sourceMetadata
         )
     }
 
@@ -396,7 +407,8 @@ struct ForumThread: Identifiable, Equatable {
             replies: replies,
             source: source,
             channelID: channelID ?? fallback.channelID,
-            channelTitle: channelTitle ?? fallback.channelTitle
+            channelTitle: channelTitle ?? fallback.channelTitle,
+            sourceMetadata: sourceMetadata ?? fallback.sourceMetadata
         )
     }
 
@@ -534,19 +546,16 @@ struct Reply: Identifiable, Equatable {
     }
 
     /// 兼容旧调用点的只读正文投影；权威内容始终来自 `contentDocument`。
-    var body: String { contentDocument.normalizedText }
+    var body: String { contentDocument.bodyText }
 
-    var signatureKey: String {
-        let normalizedAuthor = author
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let normalizedCreatedAt = createdAt
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let normalizedBody = body
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        return "\(normalizedAuthor)|\(normalizedCreatedAt)|\(normalizedBody)"
+    func stableIdentityKey(source: ForumSource) -> String {
+        if let sourcePostID {
+            return "\(source.rawValue)|post|\(sourcePostID)"
+        }
+        if let floorNumber {
+            return "\(source.rawValue)|floor|\(floorNumber)"
+        }
+        return "\(source.rawValue)|id|\(id)"
     }
 
     func replacingContent(with document: ForumPostDocument) -> Reply {
@@ -555,7 +564,7 @@ struct Reply: Identifiable, Equatable {
             sourcePostID: sourcePostID,
             author: author,
             createdAt: createdAt,
-            body: document.normalizedText,
+            body: document.bodyText,
             contentDocument: document,
             avatarURL: avatarURL,
             floorNumber: floorNumber

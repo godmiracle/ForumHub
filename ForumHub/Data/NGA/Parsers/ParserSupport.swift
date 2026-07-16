@@ -88,68 +88,6 @@ extension String {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var structuredForumText: String {
-        preservingQuoteMarkers
-            .decodedHTMLEntities
-            .replacingOccurrences(of: "<br/>", with: "\n")
-            .replacingOccurrences(of: "<br>", with: "\n")
-            .replacingOccurrences(of: "<br />", with: "\n")
-            .replacingOccurrences(of: "&nbsp;", with: " ")
-            .replacingOccurrences(
-                of: #"<img[^>]+(?:src|data-src|data-original)=[\"']([^\"']+)[\"'][^>]*>"#,
-                with: "\n[图片] $1\n",
-                options: [.regularExpression, .caseInsensitive]
-            )
-            .replacingOccurrences(of: #"\[img(?:=[^\]]+)?\](.*?)\[/img\]"#, with: "\n[图片] $1\n", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"\[/?(?!引用\b|s:)[a-zA-Z][^\]]*\]"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var preservingQuoteMarkers: String {
-        let normalized = decodedUnicodeEscapes
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-
-        let patterns = [
-            #"\[quote\]\[pid=\d+(?:,\d+,\d+)?\]Reply\[/pid\]\s*(?:<b>)?Post by \[uid=\d+\](.*?)\[/uid\]\s*\((.*?)\):(?:</b>)?(?:<br\s*/?>|\n)*(.*?)(?:\[/quote\])"#,
-            #"\[quote\]\[pid=\d+(?:,\d+,\d+)?\]Reply\[/pid\]\s*(?:<b>)?Post by (.*?)\s*\((.*?)\):(?:</b>)?(?:<br\s*/?>|\n)*(.*?)(?:\[/quote\])"#
-        ]
-
-        var value = normalized
-        for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else {
-                continue
-            }
-
-            let nsRange = NSRange(value.startIndex..<value.endIndex, in: value)
-            let matches = regex.matches(in: value, range: nsRange).reversed()
-            for match in matches {
-                guard match.numberOfRanges >= 4,
-                      let fullRange = Range(match.range(at: 0), in: value),
-                      let authorRange = Range(match.range(at: 1), in: value),
-                      let timeRange = Range(match.range(at: 2), in: value),
-                      let bodyRange = Range(match.range(at: 3), in: value)
-                else {
-                    continue
-                }
-
-                let author = String(value[authorRange]).cleanedForumText
-                let createdAt = String(value[timeRange]).cleanedForumText
-                let body = String(value[bodyRange]).cleanedForumText
-                let replacement = """
-                [引用 author="\(author)" time="\(createdAt)"]
-                \(body)
-                [/引用]
-                """
-                value.replaceSubrange(fullRange, with: replacement)
-            }
-        }
-
-        return value
-    }
-
     var decodedUnicodeEscapes: String {
         let quoted = "\"\(replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
             .replacingOccurrences(of: "\\\\u", with: "\\u")

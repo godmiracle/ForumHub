@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-07-16 NGA 详情语义内容与 API-first 架构
+
+- 用带来源 representations、版本、质量、diagnostics、provenance 和 occurrence 身份的 `ForumPostDocument.blocks` 替代 `normalizedText` 正文权威；共享渲染、长图、预览、图片枚举和分页签名直接消费语义节点。
+- NGA API/Web Parser 分别将 BBCode 与精确 `postcontent<floor>` HTML 降低为相同语义节点，未知标记安全保留；NGA 表情与附件 URL 规则移回 NGA 适配层。
+- 详情改为 API-first：valid/degraded API 零 Web 请求；仅 unusable 正文按同楼层整文档回退 Web，并保留 API 身份、元数据、成员与顺序。
+- 删除 `NGAThreadDetailMerger` 的逐行拼接、contains、空白/大小写归一化、全局去重和末尾追加逻辑；API transport 完全失败返回 typed error，并保留浏览网页原帖入口。
+- 新增脱敏 `47185513` 形状、API 空正文、API 失败、Web 可回退、Web 权限拒绝和双源 unusable Fixture；修复 BBCode tokenizer 失效正则、continuation 页空主楼误判，以及迟到的跳页/fallback 请求覆盖新状态或遗留 loading 状态的问题。真机完整 `ForumHubTests` 121 项通过；真实 `47185513` 的图片、表情、引用和两页连续阅读，以及确定性的 GIF、Web fallback、Web access denial 和取消路径均已验证。
+- 修复 NGA `[quote][tid]Topic[/tid]` 引用变体被当作原始字符显示的问题；Parser 现在按标记边界读取引用目标、作者、时间、换行与引用后正文，并保留脱敏真机形状 Fixture 防止回归。
+- 修复 NGA 无外层 `[quote]` 的 `<b>Reply to [pid]...` 回复目标头泄漏问题；回复目标作者/时间现在形成独立引用卡片，当前回复正文和表情继续保持为后续有序语义节点。
+- 修复 NGA API 正文内 `<del class='gray'>` 行内 HTML 泄漏问题；Parser 将删除线降低为来源中立的 inline semantic node，在原生阅读与长图中保留删除线，纯文本投影保留可读文字。
+- 修复 unusable API 楼层在来源策略前被 Parser 丢弃的问题；主楼和回复现在保留 API 身份进入同楼层 Web fallback。组合来源时 Web block provenance 会指向偏移后的 Web representation；已获取 Web 时的有效同楼语义差异继续保留 API blocks，并记录不含正文的结构化 conflict diagnostic。
+
 ## 2026-07-15 NGA 主楼图片去重修复
 
 - NGA API 与网页正文合并时按规范化后的图片 URL 识别跨来源重复项，避免相对地址和绝对地址指向同一附件时在 0 楼重复显示。

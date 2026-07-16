@@ -102,14 +102,14 @@ enum ThreadSnapshotRenderer {
     private static func collectImageURLs(thread: ForumThread, replies: [Reply]) -> [URL] {
         let documents = [thread.contentDocument] + replies.map(\.contentDocument)
         var seen = Set<URL>()
-        return documents.flatMap { ForumContentParser.parse($0.normalizedText) }.compactMap { block in
+        return documents.flatMap(\.blocks).compactMap { block in
             let url: URL?
             switch block.content {
             case let .image(imageURL):
                 url = imageURL
-            case let .smile(smile):
-                url = smile.url
-            case .text, .quote:
+            case let .emoji(emoji):
+                url = emoji.url
+            case .text, .inline, .link, .quote, .unsupported:
                 url = nil
             }
             guard let url, seen.insert(url).inserted else {
@@ -251,7 +251,7 @@ private struct SnapshotRichContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(ForumContentParser.parse(document.normalizedText)) { block in
+            ForEach(document.blocks) { block in
                 switch block.content {
                 case let .text(text):
                     Text(text)
@@ -259,6 +259,16 @@ private struct SnapshotRichContent: View {
                         .foregroundStyle(PaperTheme.secondaryInk)
                         .lineSpacing(5)
                         .fixedSize(horizontal: false, vertical: true)
+                case let .inline(nodes):
+                    ForumInlineText(nodes: nodes)
+                        .font(.system(size: fontSize, design: .serif))
+                        .foregroundStyle(PaperTheme.secondaryInk)
+                        .lineSpacing(5)
+                        .fixedSize(horizontal: false, vertical: true)
+                case let .link(label, destination):
+                    Text("\(label) (\(destination.absoluteString))")
+                        .font(.system(size: fontSize, design: .serif))
+                        .foregroundStyle(PaperTheme.accent)
                 case let .image(url):
                     if let image = loadedImages[url] {
                         Image(uiImage: image)
@@ -275,19 +285,23 @@ private struct SnapshotRichContent: View {
                             .background(PaperTheme.paperDeep.opacity(0.3))
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                case let .smile(smile):
-                    if let image = loadedImages[smile.url] {
+                case let .emoji(emoji):
+                    if let image = loadedImages[emoji.url] {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFit()
                             .frame(width: 40, height: 40, alignment: .leading)
                     } else {
-                        Text("[\(smile.name)]")
+                        Text("[\(emoji.name)]")
                             .font(.system(size: fontSize, design: .serif))
                             .foregroundStyle(PaperTheme.mutedText)
                     }
                 case let .quote(quote):
                     ForumQuoteBlockCard(quote: quote, fontSize: fontSize)
+                case let .unsupported(fallback):
+                    Text(fallback)
+                        .font(.system(size: fontSize, design: .serif))
+                        .foregroundStyle(PaperTheme.secondaryInk)
                 }
             }
         }

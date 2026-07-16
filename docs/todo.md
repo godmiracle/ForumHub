@@ -18,6 +18,18 @@
 
 ## 阶段 0：补齐剩余护栏（进行中）
 
+- [x] **SD-0.4 NGA 详情语义内容与 API-first 来源策略**
+  - 具体问题：`normalizedText + 按行拆分 + 启发式去重` 会误删重复内容、破坏顺序，并迫使新正文异常不断增加全局规则。
+  - 涉及文件或模块：`ForumHub/Domain/ForumContent.swift`、`ForumHub/Data/NGA`、`ForumHub/Features/ThreadDetail`、`ForumHubTests/Fixtures`
+  - 优先级：P0
+  - 状态：已完成；2/18/44 楼显示回归已完成真机验证。生产 Parser 已保留 unusable API 主楼/回复以进入 Web fallback；Web blocks provenance 已按 representation offset 重映射；已获取 Web 时的有效同楼差异保留 API 内容并记录隐私安全的 `sourceConflict`。聚焦生产链路测试 10/10、完整 `ForumHubTests` 127/127、真机 Debug 构建、严格 Rasen 校验与 diff 检查均已通过，`verify-change` 复验为 CLEAN。
+  - 验收标准：
+    - valid/degraded API 不请求 Web，只有 unusable API 进入 Web fallback；
+    - 重复段落、重复图片、未知标记和中间内容保持 occurrence 与顺序；
+    - Web 只替换 API 已确认同楼层的整份语义文档，不加入 Web-only 楼层；
+    - 共享消费者不再解析 `normalizedText`，NGA-only 规则不进入 Domain/View；
+    - 聚焦测试、完整 `ForumHubTests` 与 Debug 真机构建通过，并完成人工关键路径检查。
+
 - [x] **SD-0.1 固定所有默认 UI Test 的 Mock 场景**
   - 具体问题：部分 UI Test 场景治理尚未完全收口，仍可能受真实登录恢复、网络或服务端数据影响。
   - 涉及文件或模块：`ForumHub/Features/ForumFeed/UITestScenario.swift`、`ForumHub/ContentView.swift`、`ForumHubUITests`、`docs/testing.md`
