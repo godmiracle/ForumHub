@@ -1581,6 +1581,8 @@ struct ForumHubTests {
         #expect(topic.id == 1_221_540)
         #expect(topic.author == "v2ex-user")
         #expect(topic.authorAvatarURL?.absoluteString == "https://cdn.v2ex.com/avatar/example.png")
+        #expect(topic.channelID == 17)
+        #expect(topic.channelTitle == "分享创造")
         #expect(topic.replyCount == 12)
         #expect(topic.createdAtDate != nil)
         #expect(topic.lastReplyAtDate != nil)
@@ -2007,6 +2009,7 @@ struct ForumHubTests {
         <html><head><link rel="next" title="Next Page" href="/recent?p=3" /></head><body>
         <div class="cell item"><img class="avatar" alt="alice" />
         <a href="/t/1221473#reply10" class="topic-link">Swift &amp; iOS</a>
+        <a href="/go/qna">问与答</a>
         <a class="count_livid">10</a></div>
         <div class="cell item"><img class="avatar" alt="bob" />
         <a href="/t/1221489#reply1" class="topic-link">第二个主题</a></div>
@@ -2019,7 +2022,44 @@ struct ForumHubTests {
         #expect(page.topics.map { $0.member?.username } == ["alice", "bob"])
         #expect(page.topics.first?.title == "Swift & iOS")
         #expect(page.topics.first?.replies == 10)
+        #expect(page.topics.first?.node?.name == "qna")
+        #expect(page.topics.first?.node?.title == "问与答")
         #expect(page.hasNextPage)
+    }
+
+    @Test func v2exNodePageParserAcceptsRealQnaAndAll4allShapes() throws {
+        let qna = V2EXRecentPageParser.parse(data: try fixtureData("v2ex-node-qna-shape", fileExtension: "html"))
+        let all4all = V2EXRecentPageParser.parse(data: try fixtureData("v2ex-node-all4all-shape", fileExtension: "html"))
+
+        #expect(qna.topics.map(\.id) == [810_001])
+        #expect(qna.topics.first?.title == "如何安全地测试节点页？")
+        #expect(qna.topics.first?.member?.username == "qna_author")
+        #expect(qna.topics.first?.replies == 12)
+        #expect(qna.hasNextPage)
+
+        #expect(all4all.topics.map(\.id) == [820_002])
+        #expect(all4all.topics.first?.title == "出一个脱敏测试物品 & 配件")
+        #expect(all4all.topics.first?.member?.username == "trader")
+        #expect(all4all.topics.first?.replies == 3)
+        #expect(all4all.hasNextPage)
+    }
+
+    @Test func v2exNodePageParserIgnoresTopicLinksOutsideItems() {
+        let html = Data(#"<html><body><a href="/t/10686">节点说明主题</a><div id="TopicsNode"><div class="cell from_1 t_123456"></div></div><a href="/t/999999">列表后的导航主题</a></body></html>"#.utf8)
+
+        let page = V2EXRecentPageParser.parse(data: html)
+
+        #expect(page.topics.isEmpty)
+        #expect(!page.hasNextPage)
+    }
+
+    private func fixtureData(_ name: String, fileExtension: String) throws -> Data {
+        let bundle = Bundle(for: FixtureLocator.self)
+        let url = try #require(
+            bundle.url(forResource: name, withExtension: fileExtension, subdirectory: "Fixtures")
+                ?? bundle.url(forResource: name, withExtension: fileExtension)
+        )
+        return try Data(contentsOf: url)
     }
 
     @Test func v2exFavoriteActionParserAcceptsOnlyMatchingSameOriginAction() throws {

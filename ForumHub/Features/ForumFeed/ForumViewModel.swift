@@ -70,7 +70,11 @@ final class ForumViewModel {
         repositories[source] ?? repository
     }
 
-    init() {
+    convenience init() {
+        self.init(sourceDefaults: .standard)
+    }
+
+    convenience init(sourceDefaults: UserDefaults) {
         let ngaRepository = NGALiveThreadRepository()
         let v2exRepository = V2EXThreadRepository()
         let discourseRepository = DiscourseThreadRepository()
@@ -79,14 +83,11 @@ final class ForumViewModel {
             .v2ex: v2exRepository,
             .linuxDo: discourseRepository
         ]
-        repositories = availableRepositories
-        let initialSource = UserDefaults.standard.string(forKey: Self.sourceStorageKey)
+        let initialSource = sourceDefaults.string(forKey: Self.sourceStorageKey)
             .flatMap(ForumSource.init(rawValue:))
             .flatMap { availableRepositories[$0] == nil ? nil : $0 }
             ?? .nga
-        source = initialSource
-        selectedForum = availableRepositories[initialSource]?.defaultChannel ?? .defaultForum
-        channels = [selectedForum]
+        self.init(repositories: availableRepositories, initialSource: initialSource)
     }
 
     convenience init(repository: any ThreadRepository) {
@@ -260,8 +261,8 @@ final class ForumViewModel {
             if request.channels.count <= 1 {
                 channels = payload.channels
             }
-            pinnedThreads = payload.pinned.map { $0.withChannel(request.selectedForum) }
-            threads = payload.threads.map { $0.withChannel(request.selectedForum) }
+            pinnedThreads = threadsApplyingFallbackChannel(payload.pinned, fallback: request.selectedForum)
+            threads = threadsApplyingFallbackChannel(payload.threads, fallback: request.selectedForum)
         case let .hot(result):
             canLoadMore = result.hasMore
             guard let payload = result.payload else {
@@ -333,7 +334,7 @@ final class ForumViewModel {
                     if channels.count <= 1 {
                         channels = payload.channels
                     }
-                    appendUniqueThreads(payload.threads.map { $0.withChannel(selectedForum) })
+                    appendUniqueThreads(threadsApplyingFallbackChannel(payload.threads, fallback: selectedForum))
                 }
             }
         } catch {
@@ -342,6 +343,18 @@ final class ForumViewModel {
             errorMessage = resolved?.userMessage ?? error.localizedDescription
             applyAuthenticationFailureIfNeeded(resolved)
             requiresLinuxDoBrowserVerification = error is LinuxDoRequestError
+        }
+    }
+
+    private func threadsApplyingFallbackChannel(
+        _ threads: [ForumThread],
+        fallback channel: ForumChannel
+    ) -> [ForumThread] {
+        threads.map { thread in
+            guard thread.channelID == nil || !(thread.channelTitle?.isUsefulForumValue ?? false) else {
+                return thread
+            }
+            return thread.withChannel(channel)
         }
     }
 

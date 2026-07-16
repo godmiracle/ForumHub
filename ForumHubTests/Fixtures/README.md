@@ -21,6 +21,8 @@
 | `nga-thread-web-content-unusable.html` | NGA Web | 人工组合失败边界 | 两来源正文均 unusable 时返回 typed error |
 | `v2ex-topics.json` | V2EX API | 脱敏响应形状 | V2EX 主题、正文图片和来源映射 |
 | `v2ex-threaded-replies-1227563-shape.json` | V2EX API | 依据主题 `1227563` 回复引用形状脱敏裁剪 | 显式楼层引用、最近同名作者、跨页分支、冲突楼层、多用户歧义和未解析引用 |
+| `v2ex-node-qna-shape.html` | V2EX Web | 依据 `/go/qna` 普通节点页真实 DOM 形状脱敏裁剪 | `TopicsNode` 内 `cell from_<uid> t_<topicid>` 容器、无 `topic-link` class、属性顺序变化、节点说明主题干扰链接、作者、回复数和 onclick 下一页标记 |
+| `v2ex-node-all4all-shape.html` | V2EX Web | 依据 `/go/all4all` 普通节点页真实 DOM 形状脱敏裁剪 | `TopicsNode` 与 topic class token 顺序变化、单引号 `href`、额外属性、HTML entity、作者、回复数和 onclick 下一页标记 |
 | `cross-source-feed-times.json` | NGA/V2EX/Discourse 时间边界 | 人工组合边界 | Unix 秒/毫秒、ISO 8601 和旧快照日期统一解析为 `MM-dd HH:mm` |
 
 ## NGA 内容证据覆盖

@@ -93,6 +93,7 @@ struct ForumFeedContent: View {
     let onSortChange: (FeedSortMode) -> Void
     let onFilterApply: (FeedFilterState) async -> Void
     let onFilterReset: () async -> Void
+    let onRefresh: () async -> Void
     let onLoadNextPage: () async -> Void
     var onBrowserVerificationRequested: () -> Void = {}
     var onOpenThread: (ForumThread) -> Void = { _ in }
@@ -134,6 +135,9 @@ struct ForumFeedContent: View {
                         }
                     }
                 }
+                .refreshable { await onRefresh() }
+                .scrollBounceBehavior(.always, axes: .vertical)
+                .accessibilityIdentifier("forum-feed-\(tab.rawValue)-scroll")
                 .coordinateSpace(name: "forum-feed-scroll")
                 .scrollDismissesKeyboard(.interactively)
                 .simultaneousGesture(channelPagingGesture)

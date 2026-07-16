@@ -4,6 +4,21 @@ import Testing
 
 @MainActor
 struct ForumFeedPresentationTests {
+    @Test func restoredV2EXSourceInitializesItsDefaultForumBeforeReload() throws {
+        let suiteName = "ForumFeedPresentationTests-source-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(ForumSource.v2ex.rawValue, forKey: "active-forum-source-v1")
+
+        let viewModel = ForumViewModel(sourceDefaults: defaults)
+
+        #expect(viewModel.source == .v2ex)
+        #expect(viewModel.repository.defaultChannel == .v2exHot)
+        #expect(viewModel.channels.first == .v2exHot)
+        #expect(viewModel.forum.id == ForumChannel.v2exHot.id)
+        #expect(viewModel.forum.source == .v2ex)
+    }
+
     @Test func parsesUnixSecondsAndMillisecondsAsSameDate() throws {
         let seconds = try #require(ForumTime.parse("1784212545"))
         let milliseconds = try #require(ForumTime.parse("1784212545000"))
@@ -136,6 +151,25 @@ struct ForumFeedPresentationTests {
         #expect(viewModel.selectedChildChannelIDs == [2, 3])
     }
 
+    @Test func virtualV2EXHotPreservesRealNodeOnFirstAndContinuationPages() async {
+        let repository = V2EXVirtualHotFeedRepository()
+        let viewModel = ForumViewModel(repository: repository)
+        let hotTabViewModel = ForumViewModel(repository: repository)
+
+        await viewModel.reload()
+        await hotTabViewModel.switchFeed(to: .hot)
+
+        #expect(viewModel.threads.map(\.channelTitle) == ["问与答"])
+        #expect(viewModel.threads.map(\.id) == hotTabViewModel.threads.map(\.id))
+        #expect(viewModel.threads.map(\.channelTitle) == hotTabViewModel.threads.map(\.channelTitle))
+        #expect(viewModel.canLoadMore)
+
+        await viewModel.loadNextPage()
+
+        #expect(viewModel.threads.map(\.channelTitle) == ["问与答", "二手交易"])
+        #expect(!viewModel.canLoadMore)
+    }
+
     @Test func feedSortUsesStructuredDatesAndKeepsHonestFallback() throws {
         let repository = CountingFeedRepository()
         let viewModel = ForumViewModel(repository: repository)
@@ -248,6 +282,66 @@ private final class CountingFeedRepository: ThreadRepository {
             hasMore: false
         )
     }
+}
+
+private struct V2EXVirtualHotFeedRepository: ThreadRepository {
+    let source = ForumSource.v2ex
+    let capabilities = ForumCapabilities(
+        supportsSearch: false,
+        supportsFavorites: false,
+        supportsReply: false,
+        supportsReplyTargeting: false,
+        supportsAuthentication: false,
+        supportsFeedPagination: true
+    )
+    let defaultChannel = ForumChannel.v2exHot
+
+    func fetchChannels() async throws -> [ForumChannel] { [defaultChannel] }
+
+    func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult {
+        let realChannel = page == 1
+            ? ForumChannel(id: 12, title: "问与答", source: .v2ex, nativeKey: "qna")
+            : ForumChannel(id: 65, title: "二手交易", source: .v2ex, nativeKey: "all4all")
+        let thread = ForumThread(
+            id: page,
+            title: "聚合主题 \(page)",
+            summary: "",
+            author: "tester",
+            lastReplyAt: "",
+            replyCount: 0,
+            viewCount: 0,
+            body: "",
+            replies: [],
+            source: .v2ex
+        ).withChannel(realChannel)
+        return ThreadFetchResult(
+            payload: ForumPayload(
+                forum: ForumSummary(
+                    id: channel.id,
+                    title: channel.title,
+                    subtitle: "虚拟聚合 Feed",
+                    todayPosts: 0,
+                    onlineUsers: 1,
+                    source: .v2ex
+                ),
+                channels: [channel],
+                pinned: [],
+                threads: [thread]
+            ),
+            rawText: "",
+            hasMore: page == 1
+        )
+    }
+
+    func fetchHotThreads(page: Int) async throws -> ThreadFetchResult {
+        try await fetchForum(channel: defaultChannel, page: page)
+    }
+    func fetchFavoriteThreads(page: Int) async throws -> ThreadFetchResult { fatalError() }
+    func searchThreads(query: String, page: Int) async throws -> ThreadFetchResult { fatalError() }
+    func fetchThread(tid: Int, page: Int) async throws -> ThreadDetailFetchResult { fatalError() }
+    func addFavoriteThread(tid: Int) async throws {}
+    func removeFavoriteThread(tid: Int) async throws {}
+    func replyThread(tid: Int, target: ThreadReplyTarget, content: String, attachments: [ReplyAttachmentUpload]) async throws {}
 }
 
 private struct LegacySavedForumThread: Codable {

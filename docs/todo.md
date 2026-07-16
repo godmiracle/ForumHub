@@ -383,6 +383,19 @@
     - 首页层级、折叠、刷新、发帖 capability 和登录后续接符合 ADR-017；
     - 聚焦测试、完整 `ForumHubTests`、Debug 真机构建与人工可访问性验收通过。
 
+- [x] **SD-7.7 修复 V2EX 栏目空列表、最热续载与 Feed 下拉刷新**
+  - 具体问题：Feed 的 `.refreshable` 未挂到内部实际 `ScrollView`；V2EX “最热”被固定为不可续载；普通节点 parser 依赖固定 `topic-link` class 和属性顺序，导致“问与答”“二手交易”等有效页面映射为空列表。
+  - 涉及文件或模块：`ForumHub/ContentView.swift`、`ForumHub/Features/ForumFeed`、`ForumHub/Data/V2EX`、V2EX Fixtures、`ForumHubTests`、`ForumHubUITests`
+  - 优先级：P1
+  - 状态：已完成；parser 已按 2026-07-17 下载的真实 `qna`/`all4all` 页面修正；虚拟“最热”首屏保留官方每日 Top 10，后续按 PC 页“更多新主题”的 `/recent` 目标续载。左上角“最热”与底栏“热门”保持相同帖子顺序和真实节点标签，不再将节点覆盖为“最热”。真机完整 `ForumHubTests` 154/154、Home/Hot 下拉、V2EX 恢复高亮/下拉、最热滚动续载及真实节点标签 UI 回归、Debug 构建与最终包安装均已通过；真实在线数据的滚动续载与板块名称也已完成人工验收。组合 UI 回归曾因 V2EX Mock 错返 NGA 频道失败，修正 Mock 来源隔离后重跑通过。
+  - 验收标准：
+    - V2EX “问与答”和“二手交易”可匿名显示真实主题并保留分页；
+    - Home/Hot 实际滚动区域下拉可完成当前上下文刷新；
+    - V2EX 左上角“最热”滚动到底部显示加载状态，并从 `/recent` 继续追加去重后的新主题；
+    - 刷新按钮、纵向滚动、主题点击和横向频道切换不回归；
+    - V2EX parser/请求隔离、Feed generation、完整真机测试与 Debug 构建通过；
+    - 在新安装的真机包完成人工验收后再勾选。
+
 ---
 
 ## 已完成基线（不再重复迁移）

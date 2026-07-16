@@ -122,6 +122,66 @@ final class ForumHubUITests: XCTestCase {
     }
 
     @MainActor
+    func testHomeAndHotFeedsCompletePullToRefresh() throws {
+        let app = launch(scenario: "UITEST_DEFAULT_FEED")
+
+        let homeScroll = app.scrollViews["forum-feed-home-scroll"]
+        XCTAssertTrue(homeScroll.waitForExistence(timeout: 8))
+        pullToRefresh(homeScroll)
+        XCTAssertTrue(app.buttons["thread-row-990101"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["forum-refresh-button"].isHittable)
+
+        tapBottomTab(named: "热门", in: app)
+        let hotScroll = app.scrollViews["forum-feed-hot-scroll"]
+        XCTAssertTrue(hotScroll.waitForExistence(timeout: 8))
+        pullToRefresh(hotScroll)
+        XCTAssertTrue(app.buttons["thread-row-990102"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["forum-refresh-button"].isHittable)
+    }
+
+    @MainActor
+    func testRestoredV2EXHotShortFeedSelectsAndPullsToRefresh() throws {
+        let app = launch(scenario: "UITEST_V2EX_RESTORED_HOT")
+
+        let hotChannel = app.buttons["forum-channel--20001"]
+        XCTAssertTrue(hotChannel.waitForExistence(timeout: 8))
+        XCTAssertEqual(hotChannel.value as? String, "已选择")
+        XCTAssertFalse(app.buttons["thread-row-990101"].exists)
+
+        let scroll = app.scrollViews["forum-feed-home-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        pullToRefresh(scroll)
+
+        XCTAssertTrue(
+            app.buttons["thread-row-990101"].waitForExistence(timeout: 8),
+            "V2EX 最热短列表的下拉手势必须触发现有 reload。"
+        )
+    }
+
+    @MainActor
+    func testV2EXHotLoadsMoreTopicsAtBottom() throws {
+        let app = launch(scenario: "UITEST_V2EX_RESTORED_HOT")
+        let scroll = app.scrollViews["forum-feed-home-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 8))
+        let initial = app.buttons["thread-row-991109"]
+        XCTAssertTrue(initial.waitForExistence(timeout: 5))
+        XCTAssertTrue(initial.label.contains("问与答"))
+        XCTAssertFalse(initial.label.contains("最热"))
+
+        let continuation = app.buttons["thread-row-990202"]
+        for _ in 0..<6 where !continuation.exists {
+            scroll.swipeUp()
+        }
+
+        XCTAssertTrue(
+            continuation.waitForExistence(timeout: 8),
+            "V2EX 最热滚动到列表末尾后应加载 recent 续页的新帖子。"
+        )
+        XCTAssertTrue(continuation.label.contains("二手交易"))
+        XCTAssertFalse(continuation.label.contains("最热"))
+    }
+
+    @MainActor
     func testHomeActionsRemainReachableAtAccessibilityTextSize() throws {
         let app = launch(
             scenario: "UITEST_DEFAULT_FEED",
@@ -258,6 +318,12 @@ final class ForumHubUITests: XCTestCase {
         let button = app.buttons[title]
         XCTAssertTrue(button.waitForExistence(timeout: 5), "底栏应该展示\(title)按钮。")
         button.tap()
+    }
+
+    private func pullToRefresh(_ scrollView: XCUIElement) {
+        let start = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        let end = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+        start.press(forDuration: 0.1, thenDragTo: end)
     }
 
     private func launch(scenario: String, contentSizeCategory: String? = nil) -> XCUIApplication {

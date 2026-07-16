@@ -1,0 +1,42 @@
+{
+  "pipeline": "small-feature",
+  "classification": "small-feature",
+  "tier": "A",
+  "gatePolicy": {
+    "effective": "on",
+    "source": "default"
+  },
+  "degradations": [
+    "Resolved workDir was not writable in the current sandbox; run-state uses the change root fallback.",
+    "The first implementer died on an HTTP 429 without a recoverable transcript; successor cold-reconstructed from artifacts and git diff."
+  ],
+  "stages": {
+    "propose": {
+      "status": "done",
+      "worker": {
+        "role": "planner",
+        "agentId": "/root/v2ex_fix_planner"
+      }
+    },
+    "apply": {
+      "status": "done",
+      "worker": {
+        "role": "implementer",
+        "agentId": "/root/v2ex_fix_implementer_2"
+      },
+      "testEvidence": {
+        "focusedParserSuite": "93/93 passed",
+        "fullForumHubTests": "151/151 passed",
+        "pullToRefreshUITest": "1/1 passed",
+        "deviceDebugBuild": "passed",
+        "deviceInstallAndLaunch": "passed"
+      }
+    },
+    "verify": { "status": "pending" },
+    "review-loop": { "status": "pending" },
+    "ship": { "status": "pending" },
+    "archive": { "status": "pending" }
+  },
+  "rounds": 0,
+  "openFindings": []
+}

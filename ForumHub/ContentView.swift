@@ -279,6 +279,7 @@ struct ContentView: View {
                     persistFeedPreferences(filter: reset)
                     await viewModel.setSelectedChildChannels([])
                 },
+                onRefresh: { await viewModel.reload() },
                 onLoadNextPage: { await viewModel.loadNextPage() },
                 onBrowserVerificationRequested: {
                     showsLinuxDoBrowserVerification = true
@@ -301,7 +302,6 @@ struct ContentView: View {
                     withAnimation(.snappy(duration: 0.22)) { isFeedHeaderCollapsed = collapsed }
                 }
             )
-            .refreshable { await viewModel.reload() }
             .background(PaperTheme.paper)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }

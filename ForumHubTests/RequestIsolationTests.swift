@@ -48,6 +48,41 @@ struct RequestIsolationTests {
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
     }
 
+    @Test func v2exNodeRequestUsesNativeKeyAndPageWithoutCredentials() throws {
+        let request = try V2EXRequestBuilder.publicNodePageRequest(
+            baseURL: try #require(URL(string: "https://www.v2ex.com/")),
+            nodeName: "all4all",
+            page: 3
+        )
+
+        #expect(request.url?.absoluteString == "https://www.v2ex.com/go/all4all?p=3")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+        #expect(!request.httpShouldHandleCookies)
+    }
+
+    @Test func v2exNodeRequestRespectsInjectedWebBaseURL() throws {
+        let request = try V2EXRequestBuilder.publicNodePageRequest(
+            baseURL: try #require(URL(string: "https://fixture.invalid/root/")),
+            nodeName: "qna",
+            page: 2
+        )
+
+        #expect(request.url?.absoluteString == "https://fixture.invalid/root/go/qna?p=2")
+    }
+
+    @Test func v2exHotContinuationUsesAnonymousRecentPage() throws {
+        let request = try V2EXRequestBuilder.publicRecentPageRequest(
+            baseURL: try #require(URL(string: "https://www.v2ex.com/")),
+            page: 2
+        )
+
+        #expect(request.url?.absoluteString == "https://www.v2ex.com/recent?p=2")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+        #expect(!request.httpShouldHandleCookies)
+    }
+
     @Test func linuxDoUsesBrowserFallbackOnlyForForbiddenResponses() {
         #expect(LinuxDoRequestPolicy.shouldUseBrowserFallback(statusCode: 403))
         #expect(!LinuxDoRequestPolicy.shouldUseBrowserFallback(statusCode: 401))

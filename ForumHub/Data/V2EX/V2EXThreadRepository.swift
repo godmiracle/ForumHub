@@ -29,6 +29,38 @@ enum V2EXRequestBuilder {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }
+
+    static func publicNodePageRequest(
+        baseURL: URL,
+        nodeName: String,
+        page: Int
+    ) throws -> URLRequest {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("go").appendingPathComponent(nodeName),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "p", value: String(page))]
+        guard let url = components.url else { throw ForumProviderError.invalidResponse }
+        return publicRequest(
+            url: url,
+            accept: "text/html,application/xhtml+xml",
+            handlesCookies: false
+        )
+    }
+
+    static func publicRecentPageRequest(baseURL: URL, page: Int) throws -> URLRequest {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("recent"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(name: "p", value: String(page))]
+        guard let url = components.url else { throw ForumProviderError.invalidResponse }
+        return publicRequest(
+            url: url,
+            accept: "text/html,application/xhtml+xml",
+            handlesCookies: false
+        )
+    }
 }
 
 struct V2EXThreadRepository: ThreadRepository {
@@ -102,15 +134,18 @@ struct V2EXThreadRepository: ThreadRepository {
     }
 
     func fetchHotThreads(page: Int) async throws -> ThreadFetchResult {
-        guard page == 1 else {
+        guard page <= 1 else {
+            let recentPageNumber = page - 1
+            let data = try await getRecentTopics(page: recentPageNumber)
+            let recentPage = V2EXRecentPageParser.parse(data: data)
             return ThreadFetchResult(
                 payload: V2EXMapper.payload(
                     title: "V2EX 热门",
                     channel: defaultChannel,
-                    topics: []
+                    topics: recentPage.topics
                 ),
-                rawText: "[]",
-                hasMore: false
+                rawText: String(decoding: data, as: UTF8.self),
+                hasMore: recentPage.hasNextPage
             )
         }
 
@@ -133,7 +168,7 @@ struct V2EXThreadRepository: ThreadRepository {
         return ThreadFetchResult(
             payload: payload,
             rawText: String(decoding: data, as: UTF8.self),
-            hasMore: false
+            hasMore: true
         )
     }
 
@@ -249,14 +284,7 @@ struct V2EXThreadRepository: ThreadRepository {
     }
 
     private func getRecentTopics(page: Int) async throws -> Data {
-        var components = URLComponents(
-            url: webBaseURL.appendingPathComponent("recent"),
-            resolvingAgainstBaseURL: false
-        )!
-        components.queryItems = [URLQueryItem(name: "p", value: String(page))]
-        guard let url = components.url else { throw ForumProviderError.invalidResponse }
-
-        let request = V2EXRequestBuilder.publicRequest(url: url, accept: "text/html,application/xhtml+xml")
+        let request = try V2EXRequestBuilder.publicRecentPageRequest(baseURL: webBaseURL, page: page)
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
             throw ForumProviderError.invalidResponse
@@ -268,14 +296,11 @@ struct V2EXThreadRepository: ThreadRepository {
     }
 
     private func getWebNodeTopics(_ nodeName: String, page: Int) async throws -> Data {
-        var components = URLComponents(
-            url: webBaseURL.appendingPathComponent("go").appendingPathComponent(nodeName),
-            resolvingAgainstBaseURL: false
-        )!
-        components.queryItems = [URLQueryItem(name: "p", value: String(page))]
-        guard let url = components.url else { throw ForumProviderError.invalidResponse }
-
-        let request = V2EXRequestBuilder.publicRequest(url: url, accept: "text/html,application/xhtml+xml")
+        let request = try V2EXRequestBuilder.publicNodePageRequest(
+            baseURL: webBaseURL,
+            nodeName: nodeName,
+            page: page
+        )
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
             throw ForumProviderError.invalidResponse
@@ -434,7 +459,7 @@ enum V2EXMapper {
             renderedContent: topic.contentRendered
         )
         let body = contentDocument.bodyText
-        return ForumThread(
+        let thread = ForumThread(
             id: topic.id,
             title: topic.title ?? "V2EX 主题 \(topic.id)",
             summary: String(body.prefix(180)),
@@ -451,6 +476,8 @@ enum V2EXMapper {
             replies: [],
             source: .v2ex
         )
+        guard let node = topic.node else { return thread }
+        return thread.withChannel(channel(node))
     }
 
     static func threadDetail(topic: V2EXTopicDTO, replies: [V2EXReplyDTO]) -> ForumThread {
@@ -491,7 +518,9 @@ enum V2EXMapper {
             body: summary.body,
             contentDocument: summary.contentDocument,
             replies: mappedReplies,
-            source: .v2ex
+            source: .v2ex,
+            channelID: summary.channelID,
+            channelTitle: summary.channelTitle
         )
     }
 
@@ -784,9 +813,32 @@ struct V2EXTopicDTO: Decodable {
     let created: Int?
     let lastTouched: Int?
     let member: V2EXMemberDTO?
+    let node: V2EXNodeDTO?
+
+    init(
+        id: Int,
+        title: String?,
+        content: String?,
+        contentRendered: String?,
+        replies: Int?,
+        created: Int?,
+        lastTouched: Int?,
+        member: V2EXMemberDTO?,
+        node: V2EXNodeDTO? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.content = content
+        self.contentRendered = contentRendered
+        self.replies = replies
+        self.created = created
+        self.lastTouched = lastTouched
+        self.member = member
+        self.node = node
+    }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, content, replies, created, member
+        case id, title, content, replies, created, member, node
         case contentRendered = "content_rendered"
         case lastTouched = "last_touched"
     }
@@ -898,23 +950,87 @@ enum V2EXFavoritePageParser {
 enum V2EXRecentPageParser {
     static func parse(data: Data) -> V2EXRecentPage {
         let html = String(decoding: data, as: UTF8.self)
-        let sections = html.components(separatedBy: #"<div class="cell item""#).dropFirst()
-        let topics = sections.compactMap { section in
+        let topics = topicSections(in: html).compactMap { section in
             parseTopic(section)
         }
         let hasNextPage = html.range(
-            of: #"<link\s+rel="next"\s+title="Next Page""#,
+            of: #"\btitle\s*=\s*["']Next Page["']"#,
             options: [.regularExpression, .caseInsensitive]
         ) != nil
         return V2EXRecentPage(topics: topics, hasNextPage: hasNextPage)
     }
 
+    private static func topicSections(in html: String) -> [String] {
+        let topicsNode = html.range(
+            of: #"<div\b[^>]*\bid\s*=\s*["']TopicsNode["'][^>]*>"#,
+            options: [.regularExpression, .caseInsensitive]
+        )
+        let topicsHTML = topicsNode.map { String(html[$0.upperBound...]) } ?? html
+        let requiresTopicIDClass = topicsNode != nil
+        let source = topicsHTML as NSString
+        guard let divPattern = try? NSRegularExpression(
+            pattern: #"<div\b([^>]*)>"#,
+            options: [.caseInsensitive]
+        ) else { return [] }
+
+        let itemStarts = divPattern.matches(
+            in: topicsHTML,
+            range: NSRange(location: 0, length: source.length)
+        ).compactMap { match -> Int? in
+            guard match.numberOfRanges > 1 else { return nil }
+            let attributes = source.substring(with: match.range(at: 1))
+            guard let classValue = attributes.matches(
+                pattern: #"\bclass\s*=\s*["']([^"']+)["']"#,
+                options: .caseInsensitive
+            ).first?[1] else { return nil }
+            let classTokens = classValue.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard classTokens.contains(where: { $0.caseInsensitiveCompare("cell") == .orderedSame }) else {
+                return nil
+            }
+            if requiresTopicIDClass {
+                guard classTokens.contains(where: {
+                    $0.range(of: #"^t_\d+$"#, options: .regularExpression) != nil
+                }) else { return nil }
+            } else {
+                guard classTokens.contains(where: { $0.caseInsensitiveCompare("item") == .orderedSame }) else {
+                    return nil
+                }
+            }
+            return match.range.location
+        }
+
+        return itemStarts.enumerated().map { index, start in
+            let end = index + 1 < itemStarts.count ? itemStarts[index + 1] : source.length
+            return source.substring(with: NSRange(location: start, length: end - start))
+        }
+    }
+
     private static func parseTopic(_ value: String) -> V2EXTopicDTO? {
-        guard let link = value.matches(
-            pattern: #"<a\s+href="/t/(\d+)[^"]*"\s+class="topic-link"[^>]*>(.*?)</a>"#,
+        let containerTopicID = value.matches(
+            pattern: #"^<div\b([^>]*)>"#,
             options: [.caseInsensitive, .dotMatchesLineSeparators]
-        ).first,
-              let id = Int(link[1])
+        ).first?[1].matches(
+            pattern: #"\bt_(\d+)\b"#,
+            options: .caseInsensitive
+        ).first.flatMap { Int($0[1]) }
+        let anchors = value.matches(
+            pattern: #"<a\b([^>]*)>(.*?)</a>"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        )
+        guard let topicAnchor = anchors.compactMap({ anchor -> (Int, String)? in
+            guard let href = anchor[1].matches(
+                pattern: #"\bhref\s*=\s*[\"']([^\"']+)[\"']"#,
+                options: .caseInsensitive
+            ).first?[1],
+                  let match = href.matches(
+                    pattern: #"^/t/(\d+)(?:[/?#]|$)"#,
+                    options: .caseInsensitive
+                  ).first,
+                  let id = Int(match[1]),
+                  containerTopicID == nil || containerTopicID == id
+            else { return nil }
+            return (id, anchor[2])
+        }).first
         else { return nil }
 
         let avatarTag = value.matches(
@@ -935,16 +1051,36 @@ enum V2EXRecentPageParser {
             pattern: #"class="count_(?:livid|orange)"[^>]*>(\d+)</a>"#,
             options: .caseInsensitive
         ).first.flatMap { Int($0[1]) } ?? 0
+        let node = anchors.compactMap { anchor -> V2EXNodeDTO? in
+            guard let href = anchor[1].matches(
+                pattern: #"\bhref\s*=\s*[\"']([^\"']+)[\"']"#,
+                options: .caseInsensitive
+            ).first?[1],
+                  let match = href.matches(
+                    pattern: #"^/go/([^/?#]+)(?:[/?#]|$)"#,
+                    options: .caseInsensitive
+                  ).first
+            else { return nil }
+            let name = match[1].removingPercentEncoding ?? match[1]
+            let title = anchor[2].cleanedForumText
+            return V2EXNodeDTO(
+                id: nil,
+                name: name,
+                title: title.isEmpty ? name : title,
+                topics: nil
+            )
+        }.first
 
         return V2EXTopicDTO(
-            id: id,
-            title: link[2].cleanedForumText,
+            id: topicAnchor.0,
+            title: topicAnchor.1.cleanedForumText,
             content: nil,
             contentRendered: nil,
             replies: replyCount,
             created: nil,
             lastTouched: nil,
-            member: V2EXMemberDTO(id: nil, username: author, avatarNormal: avatar)
+            member: V2EXMemberDTO(id: nil, username: author, avatarNormal: avatar),
+            node: node
         )
     }
 }
