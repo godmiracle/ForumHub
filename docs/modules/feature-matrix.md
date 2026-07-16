@@ -16,6 +16,7 @@ This document tracks which user-facing capabilities are available for each integ
 | Floor labels | Yes | Yes | Yes |
 | Only-author mode | Yes | Yes | Yes |
 | Reverse reply order | Yes | Yes | Yes |
+| Threaded reply presentation | No | Yes | No |
 | Image preview | Yes | Yes | Yes |
 | GIF playback | Yes | Depends on remote asset | Depends on remote asset |
 | Save image to Photos | Yes | Yes | Yes |
@@ -37,6 +38,7 @@ This document tracks which user-facing capabilities are available for each integ
 - `Local favorites fallback` means the app can still persist favorite threads locally even when the source has no remote favorite API.
 - `Detail pagination` means loading later reply pages from the source, not just scrolling already loaded replies.
 - `Only-author mode` and `Reverse reply order` are currently presentation-level features in the shared detail view.
+- `Threaded reply presentation` for V2EX is inferred from API reply text, is not a server-authoritative parent relation, and always provides a flat fallback.
 - `Search` for V2EX is limited compared with NGA and LINUX DO and should be treated as lower-confidence UX.
 
 ## Maintenance Rules

@@ -51,6 +51,7 @@ UI 测试位于 `ForumHubUITests`，安装测试 App 并使用固定场景。它
 4. NGA 专属图片 Header 绝不泄漏给非 NGA 域名；
 5. 过期会话展示为未登录，恢复有效 Cookie 后重新展示为已连接；
 6. LINUX DO `current_user` 响应可解析，缺失账号时明确识别为未登录。
+7. V2EX 回复关系覆盖显式楼层、最近前序作者、冲突/歧义降级、真实形状 forest、树/平铺、倒序根分组、只看楼主平铺语义，以及 `content_rendered` 图片到语义图片块的映射。
 
 ## 执行方式
 

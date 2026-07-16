@@ -1613,6 +1613,376 @@ struct ForumHubTests {
         #expect(thread.replies.first?.avatarURL?.absoluteString == "https://www.v2ex.com/avatar/bob.png")
     }
 
+    @Test func v2exThreadDetailMapsRenderedImagesToSemanticContentBlocks() throws {
+        let topic = V2EXTopicDTO(
+            id: 42,
+            title: "测试主题",
+            content: "首楼原文",
+            contentRendered: #"<p>首楼正文</p><img src="//i.imgur.com/topic.png">"#,
+            replies: 1,
+            created: nil,
+            lastTouched: nil,
+            member: V2EXMemberDTO(id: 1, username: "alice", avatarNormal: nil)
+        )
+        let replies = [
+            V2EXReplyDTO(
+                id: 7,
+                content: "回复原文",
+                contentRendered: #"<p>图片之前</p><img src="https://i.imgur.com/reply.png"><p>图片之后</p>"#,
+                created: nil,
+                member: V2EXMemberDTO(id: 2, username: "bob", avatarNormal: nil)
+            )
+        ]
+
+        let thread = V2EXMapper.threadDetail(topic: topic, replies: replies)
+        let reply = try #require(thread.replies.first)
+
+        #expect(thread.contentDocument.markupFormat == .html)
+        #expect(thread.contentDocument.imageURLs.map(\.absoluteString) == ["https://i.imgur.com/topic.png"])
+        #expect(reply.contentDocument.markupFormat == .html)
+        #expect(reply.contentDocument.blocks.map(\.kind) == [.paragraph, .image, .paragraph])
+        #expect(reply.contentDocument.imageURLs.map(\.absoluteString) == ["https://i.imgur.com/reply.png"])
+        #expect(reply.body.contains("图片之前"))
+        #expect(reply.body.contains("[图片] https://i.imgur.com/reply.png"))
+        #expect(reply.body.contains("图片之后"))
+    }
+
+    @Test func v2exThreadDetailResolvesExplicitFloorAndAuthorReference() throws {
+        let topic = V2EXTopicDTO(
+            id: 42,
+            title: "测试主题",
+            content: "主楼",
+            contentRendered: nil,
+            replies: 2,
+            created: nil,
+            lastTouched: nil,
+            member: V2EXMemberDTO(id: 1, username: "owner", avatarNormal: nil)
+        )
+        let replies = [
+            V2EXReplyDTO(
+                id: 101,
+                content: "根回复",
+                contentRendered: nil,
+                created: nil,
+                member: V2EXMemberDTO(id: 2, username: "alice", avatarNormal: nil)
+            ),
+            V2EXReplyDTO(
+                id: 102,
+                content: "@alice #1 回复内容",
+                contentRendered: "<p><a href=\"/member/alice\">@alice</a> #1 <strong>回复内容</strong></p>",
+                created: nil,
+                member: V2EXMemberDTO(id: 3, username: "bob", avatarNormal: nil)
+            )
+        ]
+
+        let thread = V2EXMapper.threadDetail(topic: topic, replies: replies)
+        let child = try #require(thread.replies.last)
+
+        #expect(thread.replies.map(\.floorNumber) == [1, 2])
+        #expect(child.conversation?.parentReplyID == 101)
+        #expect(child.conversation?.resolution == .explicitFloorAndAuthor)
+        #expect(child.conversation?.referencedUsername == "alice")
+        #expect(child.conversation?.referencedFloor == 1)
+        #expect(child.conversation?.verifiedLeadingPrefix == "@alice #1")
+        #expect(child.body.contains("回复内容"))
+    }
+
+    @Test func v2exThreadDetailInfersNearestPreviousAuthor() throws {
+        let topic = V2EXTopicDTO(
+            id: 43,
+            title: "测试主题",
+            content: "主楼",
+            contentRendered: nil,
+            replies: 5,
+            created: nil,
+            lastTouched: nil,
+            member: V2EXMemberDTO(id: 1, username: "owner", avatarNormal: nil)
+        )
+        let replies = [
+            (201, "alice", "第一条"),
+            (202, "bob", "普通回复"),
+            (203, "alice", "第二条"),
+            (204, "carol", "@alice 最近回复"),
+            (205, "alice", "@alice 自己补充")
+        ].map { id, author, content in
+            V2EXReplyDTO(
+                id: id,
+                content: content,
+                contentRendered: nil,
+                created: nil,
+                member: V2EXMemberDTO(id: id, username: author, avatarNormal: nil)
+            )
+        }
+
+        let mapped = V2EXMapper.threadDetail(topic: topic, replies: replies).replies
+
+        #expect(mapped[3].conversation?.parentReplyID == 203)
+        #expect(mapped[3].conversation?.resolution == .nearestPreviousAuthor)
+        #expect(mapped[4].conversation?.parentReplyID == 203)
+        #expect(mapped[4].conversation?.resolution == .nearestPreviousAuthor)
+    }
+
+    @Test func v2exThreadDetailHandlesConflictingAmbiguousAndMissingReferences() throws {
+        let topic = V2EXTopicDTO(
+            id: 44,
+            title: "测试主题",
+            content: "主楼",
+            contentRendered: nil,
+            replies: 8,
+            created: nil,
+            lastTouched: nil,
+            member: V2EXMemberDTO(id: 1, username: "owner", avatarNormal: nil)
+        )
+        let inputs = [
+            (301, "alice", "根回复"),
+            (302, "bob", "另一回复"),
+            (303, "carol", "@alice #2 冲突楼层"),
+            (304, "dave", "@alice @bob 多用户歧义"),
+            (305, "erin", "@alice @bob #2 唯一显式目标"),
+            (306, "frank", "@missing 无匹配"),
+            (307, "grace", "@alice #99 未来或缺失楼层"),
+            (308, "alice", "@alice 自己回复之前的消息")
+        ]
+        let replies = inputs.map { id, author, content in
+            V2EXReplyDTO(
+                id: id,
+                content: content,
+                contentRendered: nil,
+                created: nil,
+                member: V2EXMemberDTO(id: id, username: author, avatarNormal: nil)
+            )
+        }
+
+        let mapped = V2EXMapper.threadDetail(topic: topic, replies: replies).replies
+
+        #expect(mapped[2].conversation?.parentReplyID == 301)
+        #expect(mapped[2].conversation?.resolution == .floorAuthorMismatchFallback)
+        #expect(mapped[2].conversation?.verifiedLeadingPrefix == nil)
+        #expect(mapped[3].conversation == nil)
+        #expect(mapped[4].conversation?.parentReplyID == 302)
+        #expect(mapped[4].conversation?.resolution == .explicitFloorAndAuthor)
+        #expect(mapped[5].conversation == nil)
+        #expect(mapped[6].conversation == nil)
+        #expect(mapped[7].conversation?.parentReplyID == 301)
+    }
+
+    @Test func v2exReplyForestPreservesRepresentativeBranchesAndIdentity() throws {
+        func reply(_ id: Int, parent: Int? = nil) -> Reply {
+            Reply(
+                id: id,
+                sourcePostID: id,
+                author: "user\(id)",
+                createdAt: "",
+                body: "reply\(id)",
+                floorNumber: id,
+                conversation: parent.map {
+                    ReplyConversation(
+                        parentReplyID: $0,
+                        referencedUsername: "user\($0)",
+                        referencedFloor: $0,
+                        resolution: .explicitFloorAndAuthor,
+                        verifiedLeadingPrefix: "@user\($0) #\($0)"
+                    )
+                }
+            )
+        }
+
+        let replies = [
+            reply(7), reply(24, parent: 7), reply(32, parent: 24),
+            reply(35, parent: 32), reply(38, parent: 35),
+            reply(42, parent: 7), reply(112, parent: 42), reply(115, parent: 42),
+            reply(200, parent: 999)
+        ]
+
+        let roots = ThreadDetailReplyForestBuilder.build(from: replies)
+        let flattened = ThreadDetailReplyForestBuilder.flatten(roots)
+
+        #expect(roots.map(\.reply.id) == [7, 200])
+        #expect(roots[0].children.map(\.reply.id) == [24, 42])
+        #expect(roots[0].children[0].children[0].reply.id == 32)
+        #expect(roots[0].children[1].children.map(\.reply.id) == [112, 115])
+        #expect(flattened.map(\.reply.id) == [7, 24, 32, 35, 38, 42, 112, 115, 200])
+        #expect(Set(flattened.map(\.reply.id)).count == replies.count)
+        #expect(flattened.first(where: { $0.reply.id == 38 })?.depth == 4)
+        #expect(flattened.first(where: { $0.reply.id == 38 })?.visualDepth == 3)
+    }
+
+    @Test func threadDetailPresentationCombinesV2EXTreeFlatFilterAndReverseModes() {
+        let rootOne = Reply(id: 1, author: "owner", createdAt: "", body: "root", floorNumber: 1)
+        let childOne = Reply(
+            id: 2,
+            author: "other",
+            createdAt: "",
+            body: "@owner #1 child",
+            floorNumber: 2,
+            conversation: ReplyConversation(
+                parentReplyID: 1,
+                referencedUsername: "owner",
+                referencedFloor: 1,
+                resolution: .explicitFloorAndAuthor,
+                verifiedLeadingPrefix: "@owner #1"
+            )
+        )
+        let rootTwo = Reply(id: 3, author: "owner", createdAt: "", body: "root two", floorNumber: 3)
+        let thread = ForumThread(
+            id: 99,
+            title: "V2EX tree",
+            summary: "",
+            author: "owner",
+            lastReplyAt: "",
+            replyCount: 3,
+            viewCount: 0,
+            body: "main",
+            replies: [rootOne, childOne, rootTwo],
+            source: .v2ex
+        )
+
+        let tree = ThreadDetailPresentationBuilder.displayedReplies(
+            thread: thread,
+            showsOnlyThreadAuthor: false,
+            showsRepliesInReverseOrder: false,
+            source: .v2ex,
+            usesThreadedV2EXPresentation: true,
+            isBlocked: { _, _ in false }
+        )
+        let reverseTree = ThreadDetailPresentationBuilder.displayedReplies(
+            thread: thread,
+            showsOnlyThreadAuthor: false,
+            showsRepliesInReverseOrder: true,
+            source: .v2ex,
+            usesThreadedV2EXPresentation: true,
+            isBlocked: { _, _ in false }
+        )
+        let onlyAuthor = ThreadDetailPresentationBuilder.displayedReplies(
+            thread: thread,
+            showsOnlyThreadAuthor: true,
+            showsRepliesInReverseOrder: false,
+            source: .v2ex,
+            usesThreadedV2EXPresentation: true,
+            isBlocked: { _, _ in false }
+        )
+        let entries = ThreadDetailPresentationBuilder.displayedReplyEntries(
+            displayedReplies: tree,
+            allReplies: thread.replies,
+            pageStartReplyIndices: [1: 0],
+            supportsDirectPagination: false,
+            pageSize: 20,
+            prefetchReplyDistance: 3,
+            usesThreadedPresentation: true
+        )
+
+        #expect(tree.map(\.id) == [1, 2, 3])
+        #expect(reverseTree.map(\.id) == [3, 1, 2])
+        #expect(onlyAuthor.map(\.id) == [1, 3])
+        #expect(entries.map(\.visualDepth) == [0, 1, 0])
+        #expect(entries[1].displayedContentDocument.bodyText == "child")
+        #expect(entries[1].reply.body == "@owner #1 child")
+
+        let ngaReplies = ThreadDetailPresentationBuilder.displayedReplies(
+            thread: thread,
+            showsOnlyThreadAuthor: false,
+            showsRepliesInReverseOrder: false,
+            source: .nga,
+            usesThreadedV2EXPresentation: true,
+            isBlocked: { _, _ in false }
+        )
+        #expect(ngaReplies.map(\.id) == [1, 2, 3])
+    }
+
+    @Test func v2exThreadedReplyFixtureBuildsDocumentedConversation() throws {
+        struct Fixture: Decodable {
+            struct Item: Decodable {
+                let floor: Int
+                let id: Int
+                let author: String
+                let content: String
+            }
+            let replies: [Item]
+        }
+
+        let bundle = Bundle(for: FixtureLocator.self)
+        let fixtureURL = try #require(
+            bundle.url(
+                forResource: "v2ex-threaded-replies-1227563-shape",
+                withExtension: "json",
+                subdirectory: "Fixtures"
+            ) ?? bundle.url(
+                forResource: "v2ex-threaded-replies-1227563-shape",
+                withExtension: "json"
+            )
+        )
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: fixtureURL))
+        let candidates = fixture.replies.map { item in
+            V2EXMappedReplyCandidate(
+                reply: Reply(
+                    id: item.id,
+                    sourcePostID: item.id,
+                    author: item.author,
+                    createdAt: "",
+                    body: item.content,
+                    floorNumber: item.floor
+                ),
+                reference: V2EXReplyReferenceExtractor.extract(from: item.content)
+            )
+        }
+        let resolved = V2EXReplyRelationshipResolver.resolve(candidates)
+        let byFloor = Dictionary(uniqueKeysWithValues: resolved.compactMap { reply in
+            reply.floorNumber.map { ($0, reply) }
+        })
+        let flattened = ThreadDetailReplyForestBuilder.flatten(
+            ThreadDetailReplyForestBuilder.build(from: resolved)
+        )
+
+        #expect(byFloor[24]?.conversation?.parentReplyID == byFloor[7]?.id)
+        #expect(byFloor[32]?.conversation?.parentReplyID == byFloor[24]?.id)
+        #expect(byFloor[35]?.conversation?.parentReplyID == byFloor[32]?.id)
+        #expect(byFloor[38]?.conversation?.parentReplyID == byFloor[35]?.id)
+        #expect(byFloor[42]?.conversation?.parentReplyID == byFloor[7]?.id)
+        #expect(byFloor[112]?.conversation?.parentReplyID == byFloor[42]?.id)
+        #expect(byFloor[115]?.conversation?.parentReplyID == byFloor[42]?.id)
+        #expect(byFloor[116]?.conversation?.resolution == .floorAuthorMismatchFallback)
+        #expect(byFloor[117]?.conversation == nil)
+        #expect(byFloor[118]?.conversation == nil)
+        #expect(Set(flattened.map(\.reply.id)).count == resolved.count)
+    }
+
+    @Test func v2exRenderedContentFallbackAndContentReplacementPreserveConversation() throws {
+        let topic = V2EXTopicDTO(
+            id: 45,
+            title: "测试主题",
+            content: "主楼",
+            contentRendered: nil,
+            replies: 2,
+            created: nil,
+            lastTouched: nil,
+            member: V2EXMemberDTO(id: 1, username: "owner", avatarNormal: nil)
+        )
+        let replies = [
+            V2EXReplyDTO(
+                id: 401,
+                content: "根回复",
+                contentRendered: nil,
+                created: nil,
+                member: V2EXMemberDTO(id: 2, username: "alice", avatarNormal: nil)
+            ),
+            V2EXReplyDTO(
+                id: 402,
+                content: nil,
+                contentRendered: "<p>@alice #1 <strong>HTML 回退</strong></p>",
+                created: nil,
+                member: V2EXMemberDTO(id: 3, username: "bob", avatarNormal: nil)
+            )
+        ]
+
+        let child = try #require(V2EXMapper.threadDetail(topic: topic, replies: replies).replies.last)
+        let replaced = child.replacingContent(with: .plainText("替换后的正文"))
+
+        #expect(child.conversation?.parentReplyID == 401)
+        #expect(child.body.contains("HTML 回退"))
+        #expect(replaced.conversation == child.conversation)
+        #expect(replaced.body == "替换后的正文")
+    }
+
     @Test func v2exAuthParsesMemberEnvelopeAndDirectMember() throws {
         let envelope = Data(#"{"success":true,"result":{"id":42,"username":"codex-user"}}"#.utf8)
         let direct = Data(#"{"id":43,"username":"direct-user"}"#.utf8)

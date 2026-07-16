@@ -28,6 +28,9 @@ It includes:
 ## Notes
 
 - Presentation state is layered on top of provider data rather than rewriting repository ordering.
+- V2EX reply hierarchy is a derived forest over the canonical linear API replies. The View consumes optional relation metadata, never reparses V2EX `@username` or `#floor` text, and can fall back to the unchanged flat list.
+- V2EX tree mode caps visual indentation at three levels, reverses root groups without reversing parent-child direction, and yields to exact flat only-author filtering.
+- A verified leading V2EX reference may be omitted only from the visible tree projection; accessibility, sharing, snapshots and the authoritative content document retain the full text.
 - Rich reading, long-image snapshots, image enumeration, reply previews, accessibility text and pagination signatures consume `ForumPostDocument.blocks` or explicit projectors; they never reparse flattened text.
 - `ThreadDetailPaginationState` owns remote data progress (`currentPage`, `hasMoreReplies`, page start indices); `ThreadDetailScrollState` owns visible-page tracking, page-picker selection, deferred scroll targets, and the automatic-scroll trigger lock. ViewModel writes pagination progress, while the View writes scroll-derived presentation state.
 - 信息流传入的主题只可作为详情页的元数据占位；0 楼正文和回帖必须等待 `fetchThread` 成功后才可展示，避免摘要被误认为完整正文。

@@ -170,15 +170,26 @@ struct ThreadDetailReplyRow: View {
                         }
 
                         ForumRichContentView(
-                            document: entry.reply.contentDocument,
+                            document: entry.displayedContentDocument,
                             fontSize: 17,
                             activeGIFPlaybackImageIDs: activeInlineGIFPlaybackIDs,
                             scrollTrackingSpaceName: scrollTrackingSpaceName
                         )
+                        .accessibilityLabel(entry.reply.body)
                     }
                 }
                 .padding(.vertical, 4)
             }
+            .padding(.leading, CGFloat(entry.visualDepth) * 12)
+            .overlay(alignment: .leading) {
+                if entry.showsThreadBranch {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(PaperTheme.accent.opacity(0.28))
+                        .frame(width: 2)
+                        .padding(.vertical, 8)
+                }
+            }
+            .accessibilityIdentifier("thread-detail-reply-\(entry.reply.id)-depth-\(entry.visualDepth)")
             .onAppear(perform: onAppear)
         }
     }
@@ -232,6 +243,8 @@ struct ThreadDetailActionBar: View {
     let isPreparingSnapshot: Bool
     let isLoading: Bool
     let showsRepliesInReverseOrder: Bool
+    let supportsThreadedReplies: Bool
+    let showsThreadedReplies: Bool
     let loadedSnapshotTitle: String
     let canShareThread: Bool
     let canBrowseOriginalThread: Bool
@@ -241,6 +254,7 @@ struct ThreadDetailActionBar: View {
     let onToggleAuthorFilter: () -> Void
     let onRefresh: () -> Void
     let onToggleReplyOrder: () -> Void
+    let onToggleThreadedReplies: () -> Void
     let onShareThreadLink: () -> Void
     let onSnapshotMainPost: () -> Void
     let onSnapshotLoadedContent: () -> Void
@@ -323,6 +337,16 @@ struct ThreadDetailActionBar: View {
                                     showsRepliesInReverseOrder ? "恢复正序" : "倒叙排列",
                                     systemImage: showsRepliesInReverseOrder ? "arrow.down.to.line" : "arrow.up.arrow.down"
                                 )
+                            }
+
+                            if supportsThreadedReplies {
+                                Button(action: onToggleThreadedReplies) {
+                                    Label(
+                                        showsThreadedReplies ? "平铺回帖" : "楼中楼显示",
+                                        systemImage: showsThreadedReplies ? "list.bullet" : "arrow.turn.down.right"
+                                    )
+                                }
+                                .accessibilityIdentifier("thread-detail-reply-tree-toggle")
                             }
 
                             #if DEBUG
@@ -664,8 +688,12 @@ struct ThreadDetailDisplayedReplyEntry: Identifiable {
     let showsPageAnchor: Bool
     let floorLabel: String
     let loadsNextPageWhenAppearing: Bool
+    let hierarchyDepth: Int
+    let visualDepth: Int
+    let displayedContentDocument: ForumPostDocument
 
     var id: Int { reply.id }
+    var showsThreadBranch: Bool { hierarchyDepth > 0 }
 }
 
 private enum PagePickerActionButtonStyle {

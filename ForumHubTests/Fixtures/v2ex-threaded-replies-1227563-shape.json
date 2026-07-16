@@ -1,0 +1,17 @@
+{
+  "source": "V2EX API replies/show.json 脱敏真实形状",
+  "topic_id": 1227563,
+  "replies": [
+    { "floor": 7, "id": 7007, "author": "alpha", "content": "根回复" },
+    { "floor": 24, "id": 7024, "author": "bravo", "content": "@alpha #7 第一层回复" },
+    { "floor": 32, "id": 7032, "author": "alpha", "content": "@bravo 第二层回复" },
+    { "floor": 35, "id": 7035, "author": "charlie", "content": "@alpha #32 第三层回复" },
+    { "floor": 38, "id": 7038, "author": "alpha", "content": "@charlie 第四层回复" },
+    { "floor": 42, "id": 7042, "author": "delta", "content": "@alpha #7 另一条分支" },
+    { "floor": 112, "id": 7112, "author": "echo", "content": "@delta #42 分支回复一" },
+    { "floor": 115, "id": 7115, "author": "alpha", "content": "@delta 分支回复二" },
+    { "floor": 116, "id": 7116, "author": "foxtrot", "content": "@alpha #42 楼层作者冲突" },
+    { "floor": 117, "id": 7117, "author": "golf", "content": "@alpha @delta 多用户歧义" },
+    { "floor": 118, "id": 7118, "author": "hotel", "content": "@missing 无匹配用户" }
+  ]
+}

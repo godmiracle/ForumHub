@@ -429,7 +429,11 @@ enum V2EXMapper {
     }
 
     static func thread(_ topic: V2EXTopicDTO) -> ForumThread {
-        let body = normalizedContent(topic.contentRendered ?? topic.content ?? "")
+        let contentDocument = contentDocument(
+            rawContent: topic.content,
+            renderedContent: topic.contentRendered
+        )
+        let body = contentDocument.bodyText
         return ForumThread(
             id: topic.id,
             title: topic.title ?? "V2EX 主题 \(topic.id)",
@@ -441,6 +445,7 @@ enum V2EXMapper {
             replyCount: topic.replies ?? 0,
             viewCount: 0,
             body: body,
+            contentDocument: contentDocument,
             replies: [],
             source: .v2ex
         )
@@ -448,16 +453,27 @@ enum V2EXMapper {
 
     static func threadDetail(topic: V2EXTopicDTO, replies: [V2EXReplyDTO]) -> ForumThread {
         let summary = thread(topic)
-        let mappedReplies = replies.map { reply in
-            Reply(
-                id: reply.id,
-                sourcePostID: reply.id,
-                author: reply.member?.username ?? "未知作者",
-                createdAt: formattedTime(reply.created),
-                body: normalizedContent(reply.contentRendered ?? reply.content ?? ""),
-                avatarURL: avatarURL(from: reply.member?.avatarNormal)
+        let mappedCandidates = replies.enumerated().map { index, reply in
+            let referenceSource = reply.content ?? reply.contentRendered ?? ""
+            let contentDocument = contentDocument(
+                rawContent: reply.content,
+                renderedContent: reply.contentRendered
+            )
+            return V2EXMappedReplyCandidate(
+                reply: Reply(
+                    id: reply.id,
+                    sourcePostID: reply.id,
+                    author: reply.member?.username ?? "未知作者",
+                    createdAt: formattedTime(reply.created),
+                    body: contentDocument.bodyText,
+                    contentDocument: contentDocument,
+                    avatarURL: avatarURL(from: reply.member?.avatarNormal),
+                    floorNumber: index + 1
+                ),
+                reference: V2EXReplyReferenceExtractor.extract(from: referenceSource)
             )
         }
+        let mappedReplies = V2EXReplyRelationshipResolver.resolve(mappedCandidates)
         return ForumThread(
             id: summary.id,
             title: summary.title,
@@ -469,6 +485,7 @@ enum V2EXMapper {
             replyCount: max(summary.replyCount, mappedReplies.count),
             viewCount: 0,
             body: summary.body,
+            contentDocument: summary.contentDocument,
             replies: mappedReplies,
             source: .v2ex
         )
@@ -478,15 +495,15 @@ enum V2EXMapper {
         try JSONDecoder().decode([V2EXTopicDTO].self, from: data).map { thread($0) }
     }
 
-    private static func normalizedContent(_ value: String) -> String {
-        value
-            .replacingOccurrences(
-                of: #"<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>"#,
-                with: "\n[图片] $1\n",
-                options: [.regularExpression, .caseInsensitive]
-            )
-            .replacingOccurrences(of: "</p>", with: "\n\n", options: .caseInsensitive)
-            .cleanedForumText
+    private static func contentDocument(
+        rawContent: String?,
+        renderedContent: String?
+    ) -> ForumPostDocument {
+        if let renderedContent,
+           !renderedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return V2EXHTMLContentParser.parse(renderedContent)
+        }
+        return .plainText(rawContent ?? "")
     }
 
     private static func formattedTime(_ timestamp: Int?) -> String {
@@ -512,6 +529,223 @@ enum V2EXMapper {
             return URL(string: "https://www.v2ex.com\(value)")
         }
         return URL(string: value)
+    }
+}
+
+enum V2EXHTMLContentParser {
+    private static let baseURL = URL(string: "https://www.v2ex.com/")!
+
+    static func parse(_ html: String) -> ForumPostDocument {
+        guard let imageExpression = try? NSRegularExpression(
+            pattern: #"(?is)<img\b[^>]*\b(?:src|data-src|data-original)\s*=\s*['\"]([^'\"]+)['\"][^>]*>"#
+        ) else {
+            return .plainText(html.cleanedForumText)
+        }
+
+        let fullRange = NSRange(html.startIndex..<html.endIndex, in: html)
+        let matches = imageExpression.matches(in: html, range: fullRange)
+        var blocks: [ForumContentBlock] = []
+        var diagnostics: [ForumContentDiagnostic] = []
+        var cursor = html.startIndex
+
+        func appendText(_ fragment: Substring) {
+            let text = normalizedText(String(fragment))
+            guard !text.isEmpty else { return }
+            blocks.append(ForumContentBlock(id: blocks.count, content: .text(text)))
+        }
+
+        for match in matches {
+            guard let matchRange = Range(match.range, in: html),
+                  let sourceRange = Range(match.range(at: 1), in: html)
+            else { continue }
+
+            appendText(html[cursor..<matchRange.lowerBound])
+            let rawSource = String(html[sourceRange]).decodedHTMLEntities
+            if let url = resolvedImageURL(rawSource) {
+                blocks.append(ForumContentBlock(id: blocks.count, content: .image(url)))
+            } else {
+                blocks.append(ForumContentBlock(id: blocks.count, content: .unsupported("[图片] \(rawSource)")))
+                diagnostics.append(
+                    ForumContentDiagnostic(
+                        code: .malformedMarkup,
+                        severity: .warning,
+                        safeMessage: "V2EX rendered content contained an invalid image URL."
+                    )
+                )
+            }
+            cursor = matchRange.upperBound
+        }
+
+        appendText(html[cursor..<html.endIndex])
+        let representation = ForumContentRepresentation(
+            origin: .remote(.v2ex),
+            rawMarkup: html,
+            markupFormat: .html,
+            sourceURL: baseURL,
+            parserVersion: 1
+        )
+        let fallbackText = ForumContentProjector.plainText(from: blocks)
+        return ForumPostDocument(
+            rawMarkup: html,
+            fallbackText: fallbackText,
+            markupFormat: .html,
+            sourceURL: baseURL,
+            representations: [representation],
+            blocks: blocks,
+            diagnostics: diagnostics,
+            quality: blocks.isEmpty ? .unusable : .valid
+        )
+    }
+
+    private static func normalizedText(_ html: String) -> String {
+        html
+            .replacingOccurrences(
+                of: #"(?i)<br\s*/?>"#,
+                with: "\n",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)</?(?:p|div|li|blockquote|pre|h[1-6])(?:\s+[^>]*)?>"#,
+                with: "\n",
+                options: .regularExpression
+            )
+            .cleanedForumText
+    }
+
+    private static func resolvedImageURL(_ rawValue: String) -> URL? {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if value.hasPrefix("//") {
+            return URL(string: "https:\(value)")
+        }
+        guard let url = URL(string: value, relativeTo: baseURL)?.absoluteURL,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return nil }
+        return url
+    }
+}
+
+struct V2EXReplyReference: Equatable {
+    let mentionedUsernames: [String]
+    let referencedFloors: [Int]
+    let leadingPrefix: String?
+}
+
+struct V2EXMappedReplyCandidate {
+    let reply: Reply
+    let reference: V2EXReplyReference
+}
+
+enum V2EXReplyReferenceExtractor {
+    static func extract(from rawContent: String) -> V2EXReplyReference {
+        let usernames = uniqueUsernames(
+            matches(in: rawContent, pattern: #"@([A-Za-z0-9]+)"#).map(\.value)
+        )
+        let floors = matches(in: rawContent, pattern: #"#(\d+)"#).compactMap { Int($0.value) }
+        let leadingPrefix = leadingPrefix(in: rawContent)
+        return V2EXReplyReference(
+            mentionedUsernames: usernames,
+            referencedFloors: floors,
+            leadingPrefix: leadingPrefix
+        )
+    }
+
+    private static func uniqueUsernames(_ usernames: [String]) -> [String] {
+        var seen: Set<String> = []
+        return usernames.filter { seen.insert($0.lowercased()).inserted }
+    }
+
+    private static func matches(in value: String, pattern: String) -> [(value: String, range: Range<String.Index>)] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(value.startIndex..., in: value)
+        return regex.matches(in: value, range: range).compactMap { match in
+            guard match.numberOfRanges > 1,
+                  let captureRange = Range(match.range(at: 1), in: value)
+            else { return nil }
+            return (String(value[captureRange]), captureRange)
+        }
+    }
+
+    private static func leadingPrefix(in value: String) -> String? {
+        let pattern = #"^\s*@[A-Za-z0-9]+(?:\s+#\d+)?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+              let range = Range(match.range, in: value)
+        else { return nil }
+        return String(value[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+enum V2EXReplyRelationshipResolver {
+    static func resolve(_ candidates: [V2EXMappedReplyCandidate]) -> [Reply] {
+        var priorReplyByFloor: [Int: Reply] = [:]
+        var nearestPriorReplyByAuthor: [String: Reply] = [:]
+        var resolved: [Reply] = []
+
+        for candidate in candidates {
+            let reply = candidate.reply
+            var conversation: ReplyConversation?
+            let usernames = candidate.reference.mentionedUsernames
+            let explicitMatches = candidate.reference.referencedFloors.compactMap { floor -> (Reply, String, Int)? in
+                guard let parent = priorReplyByFloor[floor],
+                      let username = usernames.first(where: {
+                          parent.author.caseInsensitiveCompare($0) == .orderedSame
+                      })
+                else { return nil }
+                return (parent, username, floor)
+            }
+            let uniqueExplicitMatches = Dictionary(
+                explicitMatches.map { ($0.0.id, $0) },
+                uniquingKeysWith: { first, _ in first }
+            ).values
+
+            if uniqueExplicitMatches.count == 1,
+               let (parent, username, floor) = uniqueExplicitMatches.first {
+                conversation = ReplyConversation(
+                    parentReplyID: parent.id,
+                    referencedUsername: username,
+                    referencedFloor: floor,
+                    resolution: .explicitFloorAndAuthor,
+                    verifiedLeadingPrefix: usernames.count == 1
+                        ? candidate.reference.leadingPrefix
+                        : nil
+                )
+            } else if usernames.count == 1,
+                      candidate.reference.referencedFloors.isEmpty,
+                      let username = usernames.first,
+                      let parent = nearestPriorReplyByAuthor[username.lowercased()] {
+                conversation = ReplyConversation(
+                    parentReplyID: parent.id,
+                    referencedUsername: username,
+                    referencedFloor: nil,
+                    resolution: .nearestPreviousAuthor,
+                    verifiedLeadingPrefix: candidate.reference.leadingPrefix
+                )
+            } else if usernames.count == 1,
+                      let username = usernames.first,
+                      let floor = candidate.reference.referencedFloors.first,
+                      floor < (reply.floorNumber ?? Int.max),
+                      priorReplyByFloor[floor] != nil,
+                      let parent = nearestPriorReplyByAuthor[username.lowercased()] {
+                conversation = ReplyConversation(
+                    parentReplyID: parent.id,
+                    referencedUsername: username,
+                    referencedFloor: floor,
+                    resolution: .floorAuthorMismatchFallback,
+                    verifiedLeadingPrefix: nil
+                )
+            }
+
+            let resolvedReply = reply.replacingConversation(with: conversation)
+            resolved.append(resolvedReply)
+            if let floor = reply.floorNumber {
+                priorReplyByFloor[floor] = resolvedReply
+            }
+            nearestPriorReplyByAuthor[reply.author.lowercased()] = resolvedReply
+        }
+
+        return resolved
     }
 }
 

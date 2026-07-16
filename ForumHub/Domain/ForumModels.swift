@@ -517,6 +517,20 @@ struct ForumThread: Identifiable, Equatable {
     }
 }
 
+enum ReplyConversationResolution: Equatable {
+    case explicitFloorAndAuthor
+    case nearestPreviousAuthor
+    case floorAuthorMismatchFallback
+}
+
+struct ReplyConversation: Equatable {
+    let parentReplyID: Int
+    let referencedUsername: String
+    let referencedFloor: Int?
+    let resolution: ReplyConversationResolution
+    let verifiedLeadingPrefix: String?
+}
+
 struct Reply: Identifiable, Equatable {
     let id: Int
     let sourcePostID: Int?
@@ -525,6 +539,7 @@ struct Reply: Identifiable, Equatable {
     let contentDocument: ForumPostDocument
     let avatarURL: URL?
     let floorNumber: Int?
+    let conversation: ReplyConversation?
 
     init(
         id: Int,
@@ -534,7 +549,8 @@ struct Reply: Identifiable, Equatable {
         body: String,
         contentDocument: ForumPostDocument? = nil,
         avatarURL: URL? = nil,
-        floorNumber: Int? = nil
+        floorNumber: Int? = nil,
+        conversation: ReplyConversation? = nil
     ) {
         self.id = id
         self.sourcePostID = sourcePostID
@@ -543,6 +559,7 @@ struct Reply: Identifiable, Equatable {
         self.contentDocument = contentDocument ?? .plainText(body)
         self.avatarURL = avatarURL
         self.floorNumber = floorNumber
+        self.conversation = conversation
     }
 
     /// 兼容旧调用点的只读正文投影；权威内容始终来自 `contentDocument`。
@@ -567,7 +584,22 @@ struct Reply: Identifiable, Equatable {
             body: document.bodyText,
             contentDocument: document,
             avatarURL: avatarURL,
-            floorNumber: floorNumber
+            floorNumber: floorNumber,
+            conversation: conversation
+        )
+    }
+
+    func replacingConversation(with conversation: ReplyConversation?) -> Reply {
+        Reply(
+            id: id,
+            sourcePostID: sourcePostID,
+            author: author,
+            createdAt: createdAt,
+            body: body,
+            contentDocument: contentDocument,
+            avatarURL: avatarURL,
+            floorNumber: floorNumber,
+            conversation: conversation
         )
     }
 }

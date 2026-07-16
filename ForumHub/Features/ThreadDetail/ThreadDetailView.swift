@@ -19,6 +19,7 @@ struct ThreadDetailView: View {
     private let inlineGIFPlaybackCoordinator = InlineGIFPlaybackCoordinator()
     @State private var showsOnlyThreadAuthor = false
     @State private var showsRepliesInReverseOrder = false
+    @State private var showsV2EXReplyTree = true
     @State private var isPreparingSnapshot = false
     @State private var snapshotImages: [UIImage] = []
     @State private var showsSnapshotPreview = false
@@ -288,6 +289,8 @@ struct ThreadDetailView: View {
                         isPreparingSnapshot: isPreparingSnapshot,
                         isLoading: isLoading,
                         showsRepliesInReverseOrder: showsRepliesInReverseOrder,
+                        supportsThreadedReplies: supportsV2EXThreadedReplies,
+                        showsThreadedReplies: showsV2EXReplyTree,
                         loadedSnapshotTitle: showsOnlyThreadAuthor ? "生成已加载楼主内容" : "生成已加载整贴",
                         canShareThread: originalThreadURL != nil,
                         canBrowseOriginalThread: originalThreadURL != nil,
@@ -306,6 +309,11 @@ struct ThreadDetailView: View {
                         onToggleReplyOrder: {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 showsRepliesInReverseOrder.toggle()
+                            }
+                        },
+                        onToggleThreadedReplies: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showsV2EXReplyTree.toggle()
                             }
                         },
                         onShareThreadLink: shareThreadLink,
@@ -367,6 +375,9 @@ struct ThreadDetailView: View {
                     refreshDisplayedReplyCache()
                 }
                 .onChange(of: showsRepliesInReverseOrder) { _, _ in
+                    refreshDisplayedReplyCache()
+                }
+                .onChange(of: showsV2EXReplyTree) { _, _ in
                     refreshDisplayedReplyCache()
                 }
                 .onChange(of: blockedUsers.blockedUsers) { _, _ in
@@ -597,6 +608,7 @@ struct ThreadDetailView: View {
             showsOnlyThreadAuthor: showsOnlyThreadAuthor,
             showsRepliesInReverseOrder: showsRepliesInReverseOrder,
             source: repository.source,
+            usesThreadedV2EXPresentation: usesThreadedV2EXPresentation,
             isBlocked: { source, username in
                 blockedUsers.isBlocked(source: source, username: username)
             }
@@ -607,8 +619,17 @@ struct ThreadDetailView: View {
             pageStartReplyIndices: loadedPageStartReplyIndices,
             supportsDirectPagination: supportsDirectPagination,
             pageSize: detailPageSize,
-            prefetchReplyDistance: directPaginationPrefetchReplyDistance
+            prefetchReplyDistance: directPaginationPrefetchReplyDistance,
+            usesThreadedPresentation: usesThreadedV2EXPresentation
         )
+    }
+
+    private var supportsV2EXThreadedReplies: Bool {
+        repository.source == .v2ex
+    }
+
+    private var usesThreadedV2EXPresentation: Bool {
+        supportsV2EXThreadedReplies && showsV2EXReplyTree && !showsOnlyThreadAuthor
     }
 
     private var supportsDirectPagination: Bool {

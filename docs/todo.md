@@ -294,6 +294,18 @@
     - 真机构建与自动化测试通过；
     - 第二台设备验证屏蔽名单及至少一种账号凭证可恢复。
 
+- [x] **SD-7.5 V2EX API 回复关系与移动端楼中楼展示**
+  - 具体问题：V2EX API 只返回线性回复，当前详情无法表达正文中 `@username` 与 `#floor` 隐含的长对话分支。
+  - 涉及文件或模块：`ForumHub/Data/V2EX`、`Reply` 可选关系元数据、`ThreadDetailPresentationBuilder`、帖子详情 UI、V2EX Fixtures
+  - 优先级：P1
+  - 状态：已完成。8 项聚焦测试、完整 `ForumHubTests` 135/135、Debug 真机构建和安装均已通过；主题 `1227563` 已在真机验证 `7→24→32→35→38`、`7→42`、`42→112/115` 分支、三层缩进上限、前缀省略、完整正文与媒体、平铺切换、只看楼主和倒序。
+  - 验收标准：
+    - 关系发现只使用 API 原始正文，不请求主题 Web HTML；
+    - 显式楼层与作者一致、最近前序作者、冲突、歧义和未解析路径均有 Fixture 测试；
+    - forest 中每条回复只出现一次，根和同级保持来源顺序，视觉缩进最多三层；
+    - 平铺回退、只看楼主、倒序、完整正文和非 V2EX 展示不回归；
+    - 聚焦测试、完整测试、真机构建及真实主题人工验收全部通过。
+
 - [x] **R-511 等待 KVS 首次同步完成后再允许屏蔽名单回写**
   - 具体问题：`BlockedUsersStore` 初始化时读取 KVS 后立即把整份本地合并结果写回；`synchronize()` 不保证首次云端下载已经完成，旧设备的非空本地快照可能覆盖尚未到达的云端记录。
   - 涉及文件或模块：`ForumHub/Features/BlockedUsers/BlockedUsersStore.swift`、`ForumHub/Sync/ICloudBlockedUsersSync.swift`、`ForumHub/ContentView.swift`、同步测试

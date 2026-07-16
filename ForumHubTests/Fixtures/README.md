@@ -20,6 +20,7 @@
 | `nga-thread-web-access-denied.html` | NGA Web | 人工组合失败边界 | Web 访问拒绝不得伪装为正文 |
 | `nga-thread-web-content-unusable.html` | NGA Web | 人工组合失败边界 | 两来源正文均 unusable 时返回 typed error |
 | `v2ex-topics.json` | V2EX API | 脱敏响应形状 | V2EX 主题、正文图片和来源映射 |
+| `v2ex-threaded-replies-1227563-shape.json` | V2EX API | 依据主题 `1227563` 回复引用形状脱敏裁剪 | 显式楼层引用、最近同名作者、跨页分支、冲突楼层、多用户歧义和未解析引用 |
 
 ## NGA 内容证据覆盖
 
