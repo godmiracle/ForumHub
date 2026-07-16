@@ -39,7 +39,7 @@ enum FeedPaginationPolicy {
     }
 }
 
-enum FeedSortMode: String, CaseIterable, Identifiable {
+enum FeedSortMode: String, CaseIterable, Identifiable, Codable {
     case lastReply
     case latestPost
 
@@ -52,6 +52,23 @@ enum FeedSortMode: String, CaseIterable, Identifiable {
         case .latestPost:
             return "最新发帖"
         }
+    }
+}
+
+struct FeedThreadTimePresentation: Equatable {
+    let label: String
+    let date: Date
+
+    static func resolve(thread: ForumThread, sortMode: FeedSortMode) -> Self? {
+        switch sortMode {
+        case .lastReply:
+            if let date = thread.lastReplyAtDate { return Self(label: "回复", date: date) }
+            if let date = thread.createdAtDate { return Self(label: "发布", date: date) }
+        case .latestPost:
+            if let date = thread.createdAtDate { return Self(label: "发布", date: date) }
+            if let date = thread.lastReplyAtDate { return Self(label: "回复", date: date) }
+        }
+        return nil
     }
 }
 
@@ -71,48 +88,68 @@ struct ForumFeedContent: View {
     let scrollRequest: TabScrollRequest?
     let showsRetapRefreshIndicator: Bool
     let sortMode: FeedSortMode
-    let showsPinnedThreads: Bool
-    let canTogglePinnedThreads: Bool
+    let filterState: FeedFilterState
+    let childChannels: [ForumChannel]
     let onSortChange: (FeedSortMode) -> Void
-    let onPinnedVisibilityChange: (Bool) -> Void
+    let onFilterApply: (FeedFilterState) async -> Void
+    let onFilterReset: () async -> Void
     let onLoadNextPage: () async -> Void
     var onBrowserVerificationRequested: () -> Void = {}
     var onOpenThread: (ForumThread) -> Void = { _ in }
     var onSwipeChannel: (ChannelPagingDirection) -> Void = { _ in }
+    var onHeaderCollapseChange: (Bool) -> Void = { _ in }
     @State private var suppressesThreadNavigation = false
     @State private var tracksHorizontalSwipe = false
     @State private var suppressionGeneration = 0
+    @State private var previousScrollOffset: CGFloat?
     private var topAnchorID: String { "feed-\(tab.rawValue)-top-anchor" }
 
     var body: some View {
         ZStack(alignment: .top) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    Color.clear
-                        .frame(height: 1)
-                        .id(topAnchorID)
-
-                    LazyVStack(spacing: 0) {
-                        FeedSortBar(
-                            sortMode: sortMode,
-                            showsPinnedThreads: showsPinnedThreads,
-                            canTogglePinnedThreads: canTogglePinnedThreads,
-                            onSortChange: onSortChange,
-                            onPinnedVisibilityChange: onPinnedVisibilityChange
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: FeedScrollOffsetPreferenceKey.self,
+                            value: geometry.frame(in: .named("forum-feed-scroll")).minY
                         )
-                        errorContent
-                        pinnedContent
-                        regularContent
+                    }
+                    .frame(height: 1)
+                    .id(topAnchorID)
 
-                        Color.clear.frame(height: 112)
+                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        Section {
+                            errorContent
+                            pinnedContent
+                            regularContent
+                            Color.clear.frame(height: 112)
+                        } header: {
+                            FeedSortBar(
+                                sortMode: sortMode,
+                                filterState: filterState,
+                                childChannels: childChannels,
+                                onSortChange: onSortChange,
+                                onFilterApply: onFilterApply
+                            )
+                        }
                     }
                 }
+                .coordinateSpace(name: "forum-feed-scroll")
                 .scrollDismissesKeyboard(.interactively)
                 .simultaneousGesture(channelPagingGesture)
                 .onChange(of: scrollRequest) { _, request in
                     guard request?.targets(tab) == true else { return }
                     withAnimation(.snappy(duration: 0.28)) {
                         proxy.scrollTo(topAnchorID, anchor: .top)
+                    }
+                }
+                .onPreferenceChange(FeedScrollOffsetPreferenceKey.self) { offset in
+                    let upwardDelta = previousScrollOffset.map { offset - $0 } ?? 0
+                    previousScrollOffset = offset
+                    if offset > -8 || upwardDelta > 18 {
+                        onHeaderCollapseChange(false)
+                    } else if offset < -72 {
+                        onHeaderCollapseChange(true)
                     }
                 }
             }
@@ -139,6 +176,11 @@ struct ForumFeedContent: View {
                 beginHorizontalSwipe()
             }
             .onEnded { value in
+                if abs(value.translation.height) > abs(value.translation.width),
+                   abs(value.translation.height) > 40 {
+                    onHeaderCollapseChange(value.translation.height < 0)
+                    return
+                }
                 endHorizontalSwipe(with: value.translation)
             }
     }
@@ -192,6 +234,7 @@ struct ForumFeedContent: View {
                 repository: repository,
                 blockedUsers: blockedUsers,
                 favoriteThreads: favoriteThreads,
+                sortMode: sortMode,
                 navigationDisabled: suppressesThreadNavigation,
                 onOpen: { onOpenThread(thread) }
             )
@@ -213,6 +256,7 @@ struct ForumFeedContent: View {
                     repository: repository,
                     blockedUsers: blockedUsers,
                     favoriteThreads: favoriteThreads,
+                    sortMode: sortMode,
                     navigationDisabled: suppressesThreadNavigation,
                     onOpen: { onOpenThread(thread) }
                 )
@@ -241,6 +285,11 @@ struct ForumFeedContent: View {
         } else if !hasLoadedInitialFeed || isLoading {
             FeedLoadingView()
                 .padding(.top, 80)
+        } else if filterState.isActive {
+            FilteredEmptyFeedView(activeCount: filterState.activeCount) {
+                Task { await onFilterReset() }
+            }
+            .padding(.top, 64)
         } else {
             EmptyFeedView()
                 .padding(.top, 80)
@@ -249,6 +298,13 @@ struct ForumFeedContent: View {
 
     private var visibleThreads: [ForumThread] {
         blockedUsers.filtering(threads)
+    }
+}
+
+private struct FeedScrollOffsetPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -274,6 +330,7 @@ struct BlockableThreadLink: View {
     let repository: any ThreadRepository
     @Bindable var blockedUsers: BlockedUsersStore
     @Bindable var favoriteThreads: FavoriteThreadsStore
+    var sortMode: FeedSortMode = .lastReply
     var navigationDisabled = false
     var onOpen: () -> Void = {}
     @State private var favoriteErrorMessage: String?
@@ -290,7 +347,8 @@ struct BlockableThreadLink: View {
             ThreadRow(
                 thread: thread,
                 badgeText: badgeText,
-                isFavorited: favoriteThreads.contains(thread)
+                isFavorited: favoriteThreads.contains(thread),
+                sortMode: sortMode
             )
         }
         .accessibilityIdentifier("thread-row-\(thread.id)")
@@ -376,7 +434,7 @@ private struct FeedLoadingView: View {
                 .tint(PaperTheme.accent)
 
             Text("正在加载内容")
-                .font(.system(size: 16, weight: .medium, design: .serif))
+                .font(.system(.body, design: .serif, weight: .medium))
                 .foregroundStyle(PaperTheme.mutedText)
         }
         .frame(maxWidth: .infinity)
@@ -390,31 +448,28 @@ struct ThreadRow: View {
     let thread: ForumThread
     var badgeText: String?
     var isFavorited = false
+    var sortMode: FeedSortMode = .lastReply
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             AvatarView(name: thread.author, imageURL: thread.authorAvatarURL)
 
             VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(thread.author.isEmpty ? "未知作者" : thread.author)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(PaperTheme.mutedText)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 8)
-
-                    if !thread.lastReplyAt.isEmpty {
-                        Text(thread.lastReplyAt)
-                            .font(.caption)
-                            .foregroundStyle(PaperTheme.mutedText.opacity(0.82))
-                            .lineLimit(1)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        authorText
+                        Spacer(minLength: 8)
+                        timeText
+                        replyCountText
                     }
 
-                    Text("\(thread.replyCount)回")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(PaperTheme.secondaryInk)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        authorText
+                        HStack(spacing: 8) {
+                            timeText
+                            replyCountText
+                        }
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
@@ -446,13 +501,13 @@ struct ThreadRow: View {
                     }
 
                     Text(thread.title)
-                        .font(.system(size: 18, weight: .semibold, design: .serif))
+                        .font(.system(.title3, design: .serif, weight: .semibold))
                         .foregroundStyle(PaperTheme.ink)
                         .multilineTextAlignment(.leading)
 
                     if !thread.summary.isEmpty, thread.summary != thread.title {
                         Text(thread.summary)
-                            .font(.system(size: 16, design: .serif))
+                            .font(.system(.body, design: .serif))
                             .foregroundStyle(PaperTheme.secondaryInk)
                             .lineLimit(3)
                             .lineSpacing(2)
@@ -477,6 +532,33 @@ struct ThreadRow: View {
                 .padding(.leading, 74)
         }
     }
+
+    private var timePresentation: (label: String, date: Date)? {
+        FeedThreadTimePresentation.resolve(thread: thread, sortMode: sortMode).map { ($0.label, $0.date) }
+    }
+
+    private var authorText: some View {
+        Text(thread.author.isEmpty ? "未知作者" : thread.author)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(PaperTheme.mutedText)
+    }
+
+    @ViewBuilder
+    private var timeText: some View {
+        if let timePresentation {
+            Text("\(timePresentation.label) \(ForumTime.feedText(timePresentation.date))")
+                .font(.caption)
+                .foregroundStyle(PaperTheme.mutedText.opacity(0.82))
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private var replyCountText: some View {
+        Text("\(thread.replyCount)回")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(PaperTheme.secondaryInk)
+            .fixedSize(horizontal: true, vertical: false)
+    }
 }
 
 struct ForumTopBar: View {
@@ -486,27 +568,26 @@ struct ForumTopBar: View {
     @FocusState private var isSearchFocused: Bool
     let selectedSource: ForumSource
     let availableSources: [ForumSource]
-    let forum: ForumSummary
     let channels: [ForumChannel]
-    let childChannels: [ForumChannel]
-    let selectedChildChannelIDs: Set<Int>
     let isLoading: Bool
     let isAuthenticated: Bool
     let isV2EXAuthenticated: Bool
     let linuxDoUsername: String?
     let capabilities: ForumCapabilities
+    let sessionState: SourceSessionState
+    let isCollapsed: Bool
     let onSourceSelect: (ForumSource) -> Void
     let onCommunitySelect: () -> Void
     let onRefresh: () -> Void
     let onSearch: (String) -> Void
     let onChannelSelect: (ForumChannel) -> Void
-    let onChildChannelToggle: (ForumChannel) -> Void
-    let onResetChildChannels: () -> Void
     let onCompose: () -> Void
+    let onLogin: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+            if !isCollapsed {
+                HStack(spacing: 8) {
                 Menu {
                     Section("论坛来源") {
                         ForEach(availableSources) { source in
@@ -517,8 +598,10 @@ struct ForumTopBar: View {
                                     HStack {
                                         Text(source.title)
                                         Spacer()
-                                        Text(sourceStatus(source))
-                                            .foregroundStyle(PaperTheme.mutedText)
+                                        if let status = sourceStatus(source) {
+                                            Text(status)
+                                                .foregroundStyle(PaperTheme.mutedText)
+                                        }
                                     }
                                 } icon: {
                                     Image(systemName: selectedSource == source ? "checkmark.circle.fill" : "circle")
@@ -540,13 +623,14 @@ struct ForumTopBar: View {
                             .fill(sourceTint(selectedSource))
                             .frame(width: 7, height: 7)
                         Text(selectedSource.title)
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .font(.subheadline.bold())
                         Image(systemName: "chevron.down")
                             .font(.caption2.weight(.bold))
                     }
                     .foregroundStyle(PaperTheme.ink)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
+                    .frame(minHeight: 44)
                     .background(PaperTheme.card, in: Capsule())
                     .overlay {
                         Capsule().stroke(sourceTint(selectedSource).opacity(0.48), lineWidth: 1)
@@ -554,10 +638,13 @@ struct ForumTopBar: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("current-community-button")
-                Spacer()
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            HStack(spacing: 10) {
+            if !isCollapsed {
+                HStack(spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(PaperTheme.mutedText)
@@ -592,7 +679,7 @@ struct ForumTopBar: View {
                         }
                     }
                 }
-                .font(.system(size: 17))
+                .font(.body)
                 .padding(.horizontal, 12)
                 .frame(height: 46)
                 .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -622,18 +709,24 @@ struct ForumTopBar: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isLoading)
+                .accessibilityIdentifier("forum-refresh-button")
                 .accessibilityLabel(isLoading ? "正在刷新版面" : "刷新版面")
 
-                Button(action: onCompose) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .frame(width: 44, height: 44)
-                        .background(PaperTheme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .shadow(color: PaperTheme.accent.opacity(0.18), radius: 8, y: 3)
+                    if capabilities.supportsCreateThread {
+                        Button(action: onCompose) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(Color.white)
+                                .frame(width: 44, height: 44)
+                                .background(PaperTheme.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .shadow(color: PaperTheme.accent.opacity(0.18), radius: 8, y: 3)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("forum-compose-button")
+                        .accessibilityLabel("发帖")
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("发帖")
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             if !channels.isEmpty {
@@ -646,9 +739,9 @@ struct ForumTopBar: View {
                                 VStack(spacing: 4) {
                                     Text(channel.title)
                                         .font(.system(
-                                            size: 17,
-                                            weight: selectedChannelID == channel.id ? .bold : .medium,
-                                            design: .serif
+                                            .body,
+                                            design: .serif,
+                                            weight: selectedChannelID == channel.id ? .bold : .medium
                                         ))
                                         .foregroundStyle(selectedChannelID == channel.id ? PaperTheme.accent : PaperTheme.mutedText)
 
@@ -656,79 +749,33 @@ struct ForumTopBar: View {
                                         .fill(selectedChannelID == channel.id ? PaperTheme.accent : .clear)
                                         .frame(width: 26, height: 3)
                                 }
+                                .frame(minHeight: 44)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("forum-channel-\(channel.id)")
+                            .accessibilityValue(selectedChannelID == channel.id ? "已选择" : "未选择")
+                            .accessibilityAddTraits(selectedChannelID == channel.id ? .isSelected : [])
                         }
                     }
                     .padding(.horizontal, 14)
                 }
             }
 
-            HStack {
-                HStack(spacing: 8) {
-                    Text(forum.title)
+            if sessionState == .signedOut || sessionState == .expired {
+                HStack(spacing: 10) {
+                    Text(sessionState == .expired ? "登录状态已失效" : "登录后可发帖和使用账号功能")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(PaperTheme.mutedText)
-                        .accessibilityIdentifier("active-forum-title")
-
-                    if !childChannels.isEmpty {
-                        Menu {
-                            Button {
-                                onResetChildChannels()
-                            } label: {
-                                Label("只看主版", systemImage: selectedChildChannelIDs.isEmpty ? "checkmark.circle.fill" : "circle")
-                            }
-
-                            ForEach(childChannels) { channel in
-                                Button {
-                                    onChildChannelToggle(channel)
-                                } label: {
-                                    Label(
-                                        channel.title,
-                                        systemImage: selectedChildChannelIDs.contains(channel.id)
-                                            ? "checkmark.circle.fill"
-                                            : "circle"
-                                    )
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "line.3.horizontal.decrease.circle")
-                                    .font(.caption.weight(.bold))
-                                Text(childFilterSummary)
-                                    .font(.caption.weight(.semibold))
-                            }
-                            .foregroundStyle(selectedChildChannelIDs.isEmpty ? PaperTheme.mutedText : PaperTheme.accent)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(PaperTheme.card.opacity(0.88), in: Capsule())
-                            .overlay {
-                                Capsule()
-                                    .stroke(
-                                        selectedChildChannelIDs.isEmpty
-                                            ? PaperTheme.hairline
-                                            : PaperTheme.accent.opacity(0.28),
-                                        lineWidth: 0.9
-                                    )
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    Spacer(minLength: 8)
+                    Button(sessionState == .expired ? "重新登录" : "登录", action: onLogin)
+                        .font(.caption.bold())
+                        .frame(minHeight: 44)
+                        .buttonStyle(.borderedProminent)
+                        .tint(PaperTheme.accent)
+                        .accessibilityIdentifier("forum-session-action-button")
                 }
-                Spacer()
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(isAuthenticated ? PaperTheme.accent : PaperTheme.mutedText.opacity(0.55))
-                        .frame(width: 5, height: 5)
-                    Text(statusText)
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(PaperTheme.mutedText)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(PaperTheme.card.opacity(0.72), in: Capsule())
+                .padding(.horizontal, 4)
             }
-            .padding(.horizontal, 4)
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -751,6 +798,7 @@ struct ForumTopBar: View {
         .onChange(of: activeTab) { _, _ in
             isSearchFocused = false
         }
+        .animation(.snappy(duration: 0.22), value: isCollapsed)
     }
 
     private func submitSearch() {
@@ -766,26 +814,14 @@ struct ForumTopBar: View {
             : "\(selectedSource.title) 暂不支持全站搜索"
     }
 
-    private var statusText: String {
-        if isLoading { return "同步中" }
-        switch selectedSource {
-        case .nga:
-            return isAuthenticated ? "已登录" : "游客"
-        case .v2ex:
-            return isV2EXAuthenticated ? "已连接" : "公开访问"
-        case .linuxDo:
-            return linuxDoUsername == nil ? "公开访问" : "已连接"
-        }
-    }
-
-    private func sourceStatus(_ source: ForumSource) -> String {
+    private func sourceStatus(_ source: ForumSource) -> String? {
         switch source {
         case .nga:
-            return isAuthenticated ? "已登录" : "游客"
+            return isAuthenticated ? nil : "需要登录"
         case .v2ex:
-            return isV2EXAuthenticated ? "已连接" : "公开浏览"
+            return isV2EXAuthenticated ? nil : "可公开浏览"
         case .linuxDo:
-            return linuxDoUsername == nil ? "网页登录" : "已连接"
+            return linuxDoUsername == nil ? "可公开浏览" : nil
         }
     }
 
@@ -800,17 +836,16 @@ struct ForumTopBar: View {
         }
     }
 
-    private var childFilterSummary: String {
-        selectedChildChannelIDs.isEmpty ? "子版筛选" : "已选 \(selectedChildChannelIDs.count)"
-    }
 }
 
 private struct FeedSortBar: View {
     let sortMode: FeedSortMode
-    let showsPinnedThreads: Bool
-    let canTogglePinnedThreads: Bool
+    let filterState: FeedFilterState
+    let childChannels: [ForumChannel]
     let onSortChange: (FeedSortMode) -> Void
-    let onPinnedVisibilityChange: (Bool) -> Void
+    let onFilterApply: (FeedFilterState) async -> Void
+    @State private var showsFilter = false
+    @State private var draft = FeedFilterState()
 
     var body: some View {
         HStack(spacing: 10) {
@@ -820,29 +855,43 @@ private struct FeedSortBar: View {
             Spacer(minLength: 8)
 
             Button {
-                onPinnedVisibilityChange(!showsPinnedThreads)
+                draft = filterState
+                showsFilter = true
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: showsPinnedThreads ? "pin.fill" : "pin.slash")
+                    Image(systemName: "line.3.horizontal.decrease.circle")
                         .font(.system(size: 12, weight: .bold))
-                    Text(showsPinnedThreads ? "显示置顶" : "隐藏置顶")
-                        .font(.system(size: 14, weight: .semibold))
+                    Text(filterState.activeCount == 0 ? "筛选" : "筛选 \(filterState.activeCount)")
+                        .font(.subheadline.weight(.semibold))
                 }
-                .foregroundStyle(canTogglePinnedThreads ? PaperTheme.secondaryInk : PaperTheme.mutedText.opacity(0.7))
+                .foregroundStyle(filterState.isActive ? PaperTheme.accent : PaperTheme.secondaryInk)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
+                .frame(minHeight: 44)
                 .background(PaperTheme.card, in: Capsule())
                 .overlay {
                     Capsule()
-                        .stroke(canTogglePinnedThreads ? PaperTheme.hairline : PaperTheme.hairline.opacity(0.45), lineWidth: 0.9)
+                        .stroke(filterState.isActive ? PaperTheme.accent.opacity(0.35) : PaperTheme.hairline, lineWidth: 0.9)
                 }
             }
             .buttonStyle(.plain)
-            .disabled(!canTogglePinnedThreads)
+            .accessibilityIdentifier("feed-filter-button")
+            .accessibilityLabel(filterState.activeCount == 0 ? "筛选帖子" : "筛选帖子，已启用 \(filterState.activeCount) 项")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(PaperTheme.paper.opacity(0.78))
+        .sheet(isPresented: $showsFilter) {
+            FeedFilterSheet(
+                draft: $draft,
+                childChannels: childChannels,
+                onApply: { appliedFilter in
+                    await onFilterApply(appliedFilter)
+                    showsFilter = false
+                },
+                onCancel: { showsFilter = false }
+            )
+        }
     }
 
     private func sortButton(for mode: FeedSortMode) -> some View {
@@ -852,10 +901,11 @@ private struct FeedSortBar: View {
             onSortChange(mode)
         } label: {
             Text(mode.title)
-                .font(.system(size: 14, weight: isSelected ? .bold : .semibold))
+                .font(.subheadline.weight(isSelected ? .bold : .semibold))
                 .foregroundStyle(isSelected ? PaperTheme.accent : PaperTheme.secondaryInk)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
+                .frame(minHeight: 44)
                 .background(
                     isSelected ? PaperTheme.accent.opacity(0.14) : PaperTheme.card,
                     in: Capsule()
@@ -866,6 +916,73 @@ private struct FeedSortBar: View {
                 }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("feed-sort-\(mode.rawValue)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct FeedFilterSheet: View {
+    @Binding var draft: FeedFilterState
+    let childChannels: [ForumChannel]
+    let onApply: (FeedFilterState) async -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if !childChannels.isEmpty {
+                    Section("子版") {
+                        Button("只看主版") {
+                            draft.selectedChildChannelIDs = []
+                        }
+                        .foregroundStyle(draft.selectedChildChannelIDs.isEmpty ? PaperTheme.accent : PaperTheme.ink)
+
+                        ForEach(childChannels) { channel in
+                            Toggle(channel.title, isOn: childBinding(for: channel.id))
+                        }
+                    }
+                }
+
+                Section("主题") {
+                    Toggle("显示置顶", isOn: $draft.showsPinnedThreads)
+                        .accessibilityIdentifier("feed-filter-pinned-toggle")
+                }
+
+                Section {
+                    Button("重置筛选", role: .destructive) {
+                        draft = FeedFilterState()
+                    }
+                    .accessibilityIdentifier("feed-filter-reset-button")
+                }
+            }
+            .navigationTitle("筛选")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("应用") {
+                        let appliedFilter = draft
+                        Task { await onApply(appliedFilter) }
+                    }
+                    .accessibilityIdentifier("feed-filter-apply-button")
+                }
+            }
+        }
+    }
+
+    private func childBinding(for id: Int) -> Binding<Bool> {
+        Binding(
+            get: { draft.selectedChildChannelIDs.contains(id) },
+            set: { isSelected in
+                if isSelected {
+                    draft.selectedChildChannelIDs.insert(id)
+                } else {
+                    draft.selectedChildChannelIDs.remove(id)
+                }
+            }
+        )
     }
 }
 
@@ -899,6 +1016,7 @@ struct AvatarView: View {
             Circle()
                 .stroke(PaperTheme.hairline, lineWidth: 1)
         }
+        .accessibilityHidden(true)
         .task(id: imageURL) {
             guard let imageURL else {
                 image = nil
@@ -1164,6 +1282,30 @@ struct ErrorBanner: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
             .background(PaperTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct FilteredEmptyFeedView: View {
+    let activeCount: Int
+    let onReset: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 30))
+            Text("当前筛选没有匹配帖子")
+                .font(.headline)
+            Text("已启用 \(activeCount) 项筛选，可以重置后查看全部内容。")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+            Button("重置筛选", action: onReset)
+                .buttonStyle(.borderedProminent)
+                .tint(PaperTheme.accent)
+                .accessibilityIdentifier("feed-filter-empty-reset-button")
+        }
+        .foregroundStyle(PaperTheme.mutedText)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
     }
 }
 

@@ -9,6 +9,8 @@ struct SavedForumThread: Codable, Equatable, Identifiable {
     let author: String
     let createdAt: String
     let lastReplyAt: String
+    let createdAtDate: Date?
+    let lastReplyAtDate: Date?
     let replyCount: Int
     let viewCount: Int
     let channelID: Int?
@@ -23,8 +25,10 @@ struct SavedForumThread: Codable, Equatable, Identifiable {
         title = thread.title
         summary = thread.summary
         author = thread.author
-        createdAt = thread.createdAt
-        lastReplyAt = thread.lastReplyAt
+        createdAtDate = thread.createdAtDate
+        lastReplyAtDate = thread.lastReplyAtDate
+        createdAt = thread.createdAtDate.map(ForumTime.storageText) ?? thread.createdAt
+        lastReplyAt = thread.lastReplyAtDate.map(ForumTime.storageText) ?? thread.lastReplyAt
         replyCount = thread.replyCount
         viewCount = thread.viewCount
         channelID = thread.channelID
@@ -40,6 +44,8 @@ struct SavedForumThread: Codable, Equatable, Identifiable {
             author: author,
             createdAt: createdAt,
             lastReplyAt: lastReplyAt,
+            createdAtDate: createdAtDate ?? ForumTime.parse(createdAt),
+            lastReplyAtDate: lastReplyAtDate ?? ForumTime.parse(lastReplyAt),
             replyCount: replyCount,
             viewCount: viewCount,
             body: "",

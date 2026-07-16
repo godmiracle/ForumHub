@@ -11,6 +11,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var viewModel: ForumViewModel
     @State private var showsLogin = false
+    @State private var didCompleteLogin = false
     @State private var showsLinuxDoBrowserVerification = false
     @State private var submittedSearchText = ""
     @State private var showsSearchResults = false
@@ -27,10 +28,16 @@ struct ContentView: View {
     @State private var feedRetapRefreshTab: FeedTab?
     @State private var feedRetapRefreshGeneration = 0
     @State private var showsPinnedThreads = true
+    @State private var feedPreferences = FeedPreferencesStore()
+    @State private var isFeedHeaderCollapsed = false
+    @State private var pendingComposeAction: PendingComposeAction?
+    @State private var composeDestination: ComposeDestination?
     @State private var lastSessionRestoreAt: Date?
 
     init() {
         if let scenario = UITestScenario.current {
+            UserDefaults.standard.removeObject(forKey: "forum-feed-preferences-v2")
+            _feedPreferences = State(initialValue: FeedPreferencesStore())
             _viewModel = State(initialValue: scenario.makeViewModel())
         } else {
             _viewModel = State(initialValue: ForumViewModel())
@@ -56,14 +63,24 @@ struct ContentView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(selectedTab == .user ? .visible : .hidden, for: .navigationBar)
-        .sheet(isPresented: $showsLogin) {
+        .sheet(isPresented: $showsLogin, onDismiss: {
+            if !didCompleteLogin {
+                pendingComposeAction = nil
+            }
+            didCompleteLogin = false
+        }) {
             NGALoginSheet {
+                didCompleteLogin = true
                 showsLogin = false
                 Task {
                     await viewModel.restoreSession()
                     await viewModel.reload()
+                    resumePendingComposeIfPossible()
                 }
             }
+        }
+        .sheet(item: $composeDestination) { destination in
+            ForumComposeWebSheet(destination: destination)
         }
         .sheet(isPresented: $showsLinuxDoBrowserVerification, onDismiss: {
             Task { await viewModel.reload() }
@@ -83,8 +100,9 @@ struct ContentView: View {
             )
             lastSessionRestoreAt = .now
             subscriptions.prepareDefaults(for: viewModel.channels)
-            await viewModel.reload()
             selectedChannelID = viewModel.forum.id
+            restoreFeedPreferences()
+            await viewModel.reload()
         }
         .onReceive(
             NotificationCenter.default.publisher(
@@ -104,6 +122,7 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
+            guard UITestScenario.current == nil else { return }
             blockedUsers.refreshFromICloud(reconcilesConflicts: true)
             guard lastSessionRestoreAt.map({ Date.now.timeIntervalSince($0) >= 30 }) ?? true else {
                 return
@@ -203,8 +222,7 @@ struct ContentView: View {
             scrollRequest: tabScrollRequest,
             onChannelSelect: { channel in
                 selectedTab = .home
-                selectedChannelID = channel.id
-                await viewModel.switchForum(to: channel)
+                await switchToChannel(channel)
             }
         )
         .background(PaperTheme.paper)
@@ -242,13 +260,24 @@ struct ContentView: View {
                 scrollRequest: tabScrollRequest,
                 showsRetapRefreshIndicator: feedRetapRefreshTab == tab,
                 sortMode: viewModel.feedSortMode,
-                showsPinnedThreads: showsPinnedThreads,
-                canTogglePinnedThreads: !viewModel.pinnedThreads.isEmpty && tab != .hot,
+                filterState: currentFilterState,
+                childChannels: tab == .home ? availableChildChannels : [],
                 onSortChange: { mode in
                     withAnimation(.snappy(duration: 0.22)) { viewModel.feedSortMode = mode }
+                    persistFeedPreferences()
                 },
-                onPinnedVisibilityChange: { isVisible in
-                    withAnimation(.snappy(duration: 0.22)) { showsPinnedThreads = isVisible }
+                onFilterApply: { filter in
+                    withAnimation(.snappy(duration: 0.22)) {
+                        showsPinnedThreads = filter.showsPinnedThreads
+                    }
+                    persistFeedPreferences(filter: filter)
+                    await viewModel.setSelectedChildChannels(filter.selectedChildChannelIDs)
+                },
+                onFilterReset: {
+                    let reset = FeedFilterState()
+                    withAnimation(.snappy(duration: 0.22)) { showsPinnedThreads = true }
+                    persistFeedPreferences(filter: reset)
+                    await viewModel.setSelectedChildChannels([])
                 },
                 onLoadNextPage: { await viewModel.loadNextPage() },
                 onBrowserVerificationRequested: {
@@ -265,7 +294,11 @@ struct ContentView: View {
                           )
                     else { return }
                     withAnimation(.snappy(duration: 0.28)) { selectedChannelID = destination.id }
-                    Task { await viewModel.switchForum(to: destination) }
+                    Task { await switchToChannel(destination) }
+                },
+                onHeaderCollapseChange: { collapsed in
+                    guard tab == selectedTab, isFeedHeaderCollapsed != collapsed else { return }
+                    withAnimation(.snappy(duration: 0.22)) { isFeedHeaderCollapsed = collapsed }
                 }
             )
             .refreshable { await viewModel.reload() }
@@ -279,21 +312,25 @@ struct ContentView: View {
                 activeTab: selectedTab,
                 selectedSource: viewModel.source,
                 availableSources: viewModel.availableSources,
-                forum: viewModel.forum,
                 channels: selectedTab == .hot ? [] : visibleChannels,
-                childChannels: selectedTab == .home ? availableChildChannels : [],
-                selectedChildChannelIDs: viewModel.selectedChildChannelIDs,
                 isLoading: viewModel.isLoading,
                 isAuthenticated: viewModel.isAuthenticated,
                 isV2EXAuthenticated: v2exAuthStore.isAuthenticated,
                 linuxDoUsername: linuxDoAuthStore.username,
                 capabilities: viewModel.capabilities,
+                sessionState: activeSessionState,
+                isCollapsed: isFeedHeaderCollapsed,
                 onSourceSelect: { source in
                     Task {
                         guard source != viewModel.source else { return }
-                        await viewModel.switchSource(to: source)
+                        pendingComposeAction = nil
+                        composeDestination = nil
+                        isFeedHeaderCollapsed = false
+                        await viewModel.switchSource(to: source, reloadsFeed: false)
                         subscriptions.prepareDefaults(for: viewModel.channels)
                         selectedChannelID = viewModel.forum.id
+                        restoreFeedPreferences()
+                        await viewModel.reload()
                     }
                 },
                 onCommunitySelect: {
@@ -313,27 +350,11 @@ struct ContentView: View {
                 onChannelSelect: { channel in
                     Task {
                         selectedTab = .home
-                        selectedChannelID = channel.id
-                        await viewModel.switchForum(to: channel)
+                        await switchToChannel(channel)
                     }
                 },
-                onChildChannelToggle: { channel in
-                    Task {
-                        var ids = viewModel.selectedChildChannelIDs
-                        if ids.contains(channel.id) {
-                            ids.remove(channel.id)
-                        } else {
-                            ids.insert(channel.id)
-                        }
-                        await viewModel.setSelectedChildChannels(ids)
-                    }
-                },
-                onResetChildChannels: {
-                    Task {
-                        await viewModel.setSelectedChildChannels([])
-                    }
-                },
-                onCompose: {}
+                onCompose: handleComposeTap,
+                onLogin: handleHomeLogin
             )
     }
 
@@ -354,6 +375,99 @@ struct ContentView: View {
     private var availableChildChannels: [ForumChannel] {
         guard selectedTab == .home, selectedChannelID == viewModel.repository.defaultChannel.id else { return [] }
         return viewModel.availableChildChannels
+    }
+
+    private var currentFilterState: FeedFilterState {
+        FeedFilterState(
+            selectedChildChannelIDs: viewModel.selectedChildChannelIDs,
+            showsPinnedThreads: showsPinnedThreads
+        )
+    }
+
+    private var activeSessionState: SourceSessionState {
+        switch viewModel.source {
+        case .nga:
+            return viewModel.sessionState
+        case .v2ex:
+            return (v2exAuthStore.isAuthenticated || v2exAuthStore.hasWebSession) ? .authenticated : .signedOut
+        case .linuxDo:
+            return linuxDoAuthStore.isAuthenticated ? .authenticated : .signedOut
+        }
+    }
+
+    private func restoreFeedPreferences() {
+        let validChildIDs = Set(viewModel.availableChildChannels.map(\.id))
+        let preference = feedPreferences.preference(
+            source: viewModel.source,
+            channelID: selectedChannelID,
+            validChildChannelIDs: validChildIDs
+        )
+        showsPinnedThreads = preference.filter.showsPinnedThreads
+        viewModel.restoreFeedPreferences(
+            sortMode: preference.sortMode,
+            selectedChildChannelIDs: preference.filter.selectedChildChannelIDs
+        )
+    }
+
+    private func persistFeedPreferences(filter: FeedFilterState? = nil) {
+        feedPreferences.save(
+            source: viewModel.source,
+            channelID: selectedChannelID,
+            sortMode: viewModel.feedSortMode,
+            filter: filter ?? currentFilterState
+        )
+    }
+
+    private func switchToChannel(_ channel: ForumChannel) async {
+        selectedChannelID = channel.id
+        await viewModel.switchForum(to: channel, reloadsFeed: false)
+        restoreFeedPreferences()
+        await viewModel.reload()
+    }
+
+    private func handleHomeLogin() {
+        switch viewModel.source {
+        case .nga:
+            showsLogin = true
+        case .v2ex, .linuxDo:
+            selectedTab = .user
+        }
+    }
+
+    private func handleComposeTap() {
+        guard viewModel.capabilities.supportsCreateThread else { return }
+        let action = PendingComposeAction(source: viewModel.source, channelID: selectedChannelID)
+        guard activeSessionState == .authenticated else {
+            pendingComposeAction = action
+            handleHomeLogin()
+            return
+        }
+        openCompose(action)
+    }
+
+    private func resumePendingComposeIfPossible() {
+        guard let action = pendingComposeAction,
+              action.canResume(
+                source: viewModel.source,
+                channelID: selectedChannelID,
+                sessionState: activeSessionState,
+                capabilities: viewModel.capabilities
+              )
+        else {
+            pendingComposeAction = nil
+            return
+        }
+        pendingComposeAction = nil
+        openCompose(action)
+    }
+
+    private func openCompose(_ action: PendingComposeAction) {
+        guard let url = action.destinationURL else { return }
+        composeDestination = ComposeDestination(
+            source: action.source,
+            channelTitle: visibleChannels.first(where: { $0.id == action.channelID })?.title ?? viewModel.forum.title,
+            url: url
+        )
     }
 
     private func handleTabSelection(_ tab: FeedTab, isReselection: Bool) async {
@@ -397,6 +511,94 @@ struct ContentView: View {
         tabScrollRequest = TabScrollRequest(id: tabScrollRequestGeneration, target: tab)
     }
 
+}
+
+struct PendingComposeAction: Equatable {
+    let source: ForumSource
+    let channelID: Int
+
+    var destinationURL: URL? {
+        guard source == .nga else { return nil }
+        var components = URLComponents(string: "https://bbs.nga.cn/post.php")
+        components?.queryItems = [
+            URLQueryItem(name: "action", value: "new"),
+            URLQueryItem(name: "fid", value: String(channelID))
+        ]
+        return components?.url
+    }
+
+    func canResume(
+        source currentSource: ForumSource,
+        channelID currentChannelID: Int,
+        sessionState: SourceSessionState,
+        capabilities: ForumCapabilities
+    ) -> Bool {
+        source == currentSource
+            && channelID == currentChannelID
+            && sessionState == .authenticated
+            && capabilities.supportsCreateThread
+            && destinationURL != nil
+    }
+}
+
+private struct ComposeDestination: Identifiable {
+    let id = UUID()
+    let source: ForumSource
+    let channelTitle: String
+    let url: URL
+}
+
+private struct ForumComposeWebSheet: View {
+    let destination: ComposeDestination
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ForumComposeWebView(url: destination.url, source: destination.source)
+                .navigationTitle("在\(destination.channelTitle)发帖")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("关闭") { dismiss() }
+                    }
+                }
+        }
+    }
+}
+
+private struct ForumComposeWebView: UIViewRepresentable {
+    let url: URL
+    let source: ForumSource
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        Task {
+            if source == .nga {
+                _ = await NGAAuthStore.shared.currentLoginState()
+            }
+            for cookie in HTTPCookieStorage.shared.cookies(for: url) ?? [] {
+                await context.coordinator.set(cookie: cookie, in: configuration.websiteDataStore.httpCookieStore)
+            }
+            guard !Task.isCancelled else { return }
+            await MainActor.run { _ = webView.load(URLRequest(url: url)) }
+        }
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        func set(cookie: HTTPCookie, in store: WKHTTPCookieStore) async {
+            await withCheckedContinuation { continuation in
+                store.setCookie(cookie) { continuation.resume() }
+            }
+        }
+    }
 }
 
 private struct ForumTabBarAppearanceInstaller: UIViewControllerRepresentable {

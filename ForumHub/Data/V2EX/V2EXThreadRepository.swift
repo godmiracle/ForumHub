@@ -442,6 +442,8 @@ enum V2EXMapper {
             authorAvatarURL: avatarURL(from: topic.member?.avatarNormal),
             createdAt: formattedTime(topic.created),
             lastReplyAt: formattedTime(topic.lastTouched ?? topic.created),
+            createdAtDate: date(topic.created),
+            lastReplyAtDate: date(topic.lastTouched ?? topic.created),
             replyCount: topic.replies ?? 0,
             viewCount: 0,
             body: body,
@@ -482,6 +484,8 @@ enum V2EXMapper {
             authorAvatarURL: summary.authorAvatarURL,
             createdAt: summary.createdAt,
             lastReplyAt: summary.lastReplyAt,
+            createdAtDate: summary.createdAtDate,
+            lastReplyAtDate: summary.lastReplyAtDate,
             replyCount: max(summary.replyCount, mappedReplies.count),
             viewCount: 0,
             body: summary.body,
@@ -512,6 +516,10 @@ enum V2EXMapper {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "MM-dd HH:mm"
         return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+    }
+
+    private static func date(_ timestamp: Int?) -> Date? {
+        timestamp.map { Date(timeIntervalSince1970: TimeInterval($0)) }
     }
 
     private static func stableID(_ value: String) -> Int {

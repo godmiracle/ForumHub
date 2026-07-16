@@ -23,6 +23,7 @@ Current sources:
 - **Thread Reply Target**: The destination for a reply submission inside Thread Detail. It can be the thread itself or a specific reply floor when the source supports targeted replies.
 - **Login Session**: Source-specific credentials. NGA and LINUX DO use WebKit cookies plus shared HTTP cookie storage. V2EX keeps its API v2 Personal Access Token separate from a WebKit cookie session used for source-native favorites and original-page browsing.
 - **Auth Session Descriptor**: A shared account-screen summary for one Forum Source. It describes how a source session should be presented in upper-layer UI without exposing raw cookie or token details.
+- **Source Session State**: A presentation-safe `checking`, `signedOut`, `authenticated`, or `expired` state. Only explicit authentication-expired evidence may select `expired`.
 - **Forum Provider**: The module behind the `ThreadRepository` seam. NGA, V2EX, and Discourse-based adapters map native data into shared domain models.
 - **Favorite Thread**: A source-native bookmark entry. NGA and V2EX treat the source account as authoritative and keep only a lightweight local UI cache; sources without remote bookmark capability do not expose a favorite action.
 - **Blocked User**: A per-source suppression rule synchronized through iCloud KVS. It hides content by username without mutating remote forum data.
@@ -43,6 +44,8 @@ Current sources:
 - The first launch subscribes to 网事杂谈 (`-7`), 大时代 (`706`), and 晴风村 (`-7955747`); at least one Forum Subscription remains active.
 - Public forum usernames in the blocked-user list sync through iCloud KVS; credentials sync separately through iCloud Keychain and never enter the KVS payload.
 - NGA thread detail pagination should preserve source fetch order, accumulate continuation pages into one reading flow, and must not reintroduce the main post as a reply row.
+- Feed time ordering and display use structured dates created at adapter boundaries; legacy time strings are compatibility-only and unparseable values never discard a topic.
+- Feed sort and pinned preferences are source-scoped, while child-channel selections are source-and-parent-channel scoped and sanitized against currently available channels.
 
 ## Current Focus Areas
 

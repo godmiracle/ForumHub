@@ -1,5 +1,14 @@
 import Foundation
 
+enum SourceSessionState: String, Equatable, Codable {
+    case checking
+    case signedOut
+    case authenticated
+    case expired
+
+    var isAuthenticated: Bool { self == .authenticated }
+}
+
 struct AuthSessionDescriptor: Identifiable, Equatable {
     enum Action: Equatable {
         case none
@@ -12,6 +21,7 @@ struct AuthSessionDescriptor: Identifiable, Equatable {
     let statusText: String
     let detailText: String?
     let connectionKindText: String
+    let sessionState: SourceSessionState
     let isAuthenticated: Bool
     let action: Action
     let actionTitle: String?
@@ -62,15 +72,17 @@ struct AuthSessionRegistry {
 
 extension NGALoginState: AuthSessionDescriptorProviding {
     var authSessionDescriptor: AuthSessionDescriptor {
+        let state = sourceSessionState
         return AuthSessionDescriptor(
             source: .nga,
             title: ForumSource.nga.title,
             statusText: isLoggedIn ? "已连接" : "游客浏览",
             detailText: isLoggedIn ? identitySummary : "登录后可使用完整 NGA 会话",
             connectionKindText: "网页登录",
-            isAuthenticated: isLoggedIn,
-            action: isLoggedIn ? .none : .login,
-            actionTitle: isLoggedIn ? nil : "连接"
+            sessionState: state,
+            isAuthenticated: state.isAuthenticated,
+            action: state.isAuthenticated ? .none : .login,
+            actionTitle: state == .expired ? "重新连接" : (state.isAuthenticated ? nil : "连接")
         )
     }
 }
@@ -95,6 +107,7 @@ extension V2EXAuthStore: AuthSessionDescriptorProviding {
                 ? "@\(username ?? "V2EX")"
                 : (hasWebSession ? "网页收藏会话有效" : "连接后可使用账号相关能力"),
             connectionKindText: connectionKind,
+            sessionState: isConnected ? .authenticated : .signedOut,
             isAuthenticated: isConnected,
             action: .manage,
             actionTitle: isConnected ? "管理" : "连接"
@@ -110,6 +123,7 @@ extension LinuxDoAuthStore: AuthSessionDescriptorProviding {
             statusText: isAuthenticated ? "已连接" : "未连接",
             detailText: isAuthenticated ? account?.subtitle : "连接后可读取当前账号状态",
             connectionKindText: "网页登录",
+            sessionState: isAuthenticated ? .authenticated : .signedOut,
             isAuthenticated: isAuthenticated,
             action: .manage,
             actionTitle: isAuthenticated ? "管理" : "连接"

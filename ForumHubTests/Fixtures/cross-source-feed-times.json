@@ -1,0 +1,18 @@
+[
+  {
+    "rawValue": "1784211300",
+    "expectedText": "07-16 22:15"
+  },
+  {
+    "rawValue": "1784211300000",
+    "expectedText": "07-16 22:15"
+  },
+  {
+    "rawValue": "2026-07-16T13:35:00Z",
+    "expectedText": "07-16 21:35"
+  },
+  {
+    "rawValue": "2026-07-16 21:35",
+    "expectedText": "07-16 21:35"
+  }
+]

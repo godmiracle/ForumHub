@@ -427,6 +427,33 @@ API `content_rendered` 由 V2EX 适配层映射为有序文本和图片语义块
 - 新关系字段参与 `Reply` 内容相等，但所有既有构造器通过默认 `nil` 保持兼容
 - 若未来 V2EX 提供稳定 parent ID，应以服务端关系取代推断 resolver，而不是叠加第二套合并规则
 
+## ADR-017 Home Feed Uses Structured Time, Scoped Filters, And Typed Session Presentation
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+首页曾直接展示来源时间字符串，以布尔登录状态和分散按钮表达会话、子版与置顶。Unix 技术值会泄漏到 UI，普通网络失败难以与凭证失效区分，筛选扩展会持续增加顶部控件和独立请求。
+
+### Decision
+
+各 Adapter 在来源边界把创建时间和最后回复时间映射为可空结构化 `Date`，共享 Feed 只使用结构化值排序与格式化；旧字符串仅作为持久化迁移输入。会话描述增加 `checking / signedOut / authenticated / expired`，只有明确鉴权失效证据进入 `expired`。筛选以草稿 Sheet 一次性应用；排序与置顶按来源保存，子版选择按来源和父版保存并在恢复时清理失效 ID。
+
+新主题入口通过 `ForumCapabilities.supportsCreateThread` 暴露。当前只启用已验证的 NGA 同会话 Web 入口；其他来源在目的地未验证前隐藏。登录前发帖以来源和频道绑定的 pending action 表达，成功后重新验证上下文才续接。
+
+### Consequences
+
+- 三个来源的 Feed 时间具有同一显示和排序语义，无法解析的旧值不会删除帖子或显示技术原文
+- 普通 403、离线、超时和服务端故障不会误导用户重新登录
+- 筛选可以扩展新条件而不继续增加首页独立按钮或每次编辑立即发请求
+- Web 发帖入口仍依赖站点页面合约，需要真机会话回归；未验证来源不会展示无效按钮
+
 ## Template
 
 Use this structure for future decisions:

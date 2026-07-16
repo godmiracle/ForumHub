@@ -1582,6 +1582,8 @@ struct ForumHubTests {
         #expect(topic.author == "v2ex-user")
         #expect(topic.authorAvatarURL?.absoluteString == "https://cdn.v2ex.com/avatar/example.png")
         #expect(topic.replyCount == 12)
+        #expect(topic.createdAtDate != nil)
+        #expect(topic.lastReplyAtDate != nil)
         #expect(topic.body.contains("第一段"))
         #expect(topic.body.contains("[图片] https://example.com/test.png"))
     }

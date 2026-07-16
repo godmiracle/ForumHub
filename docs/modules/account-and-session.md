@@ -29,6 +29,9 @@ It includes:
 - Session restore runs at launch and is retried with a 30-second throttle when the app returns to the foreground, covering credentials that arrive after initial startup.
 - App logout clears the current device and deletes the synchronized backup request, but does not claim to revoke website sessions that already exist on another device.
 - Auth flows differ sharply by source and should remain isolated.
+- Upper-layer session presentation uses `checking`, `signedOut`, `authenticated`, and `expired`. The Home login CTA is hidden for checking/authenticated, reads “登录” for signed out, and “重新登录” only after explicit source authentication-expired evidence.
+- Timeout, offline, rate-limit, 5xx and ordinary 403 errors do not mutate a session into `expired`.
+- A signed-out compose tap may keep a source/channel-bound pending action. It resumes only after successful authentication while the source, channel, capability and destination still match; dismissal or context changes clear it.
 
 ## Current Sources
 

@@ -21,6 +21,8 @@ struct ForumPayloadParser {
                 authorAvatarURL: item.authorAvatarURL,
                 createdAt: item.createdAt,
                 lastReplyAt: item.lastReplyAt,
+                createdAtDate: item.createdAtDate,
+                lastReplyAtDate: item.lastReplyAtDate,
                 replyCount: item.replyCount,
                 viewCount: item.viewCount,
                 body: item.summary,
@@ -137,14 +139,19 @@ struct ForumPayloadParser {
             return nil
         }
 
+        let createdAt = string(for: ["postdate", "timestamp", "created_at", "post_time", "time"], in: dictionary) ?? "未知时间"
+        let lastReplyAt = string(for: ["lastpost", "postdate", "timestamp", "last_reply_time", "lastmodify"], in: dictionary) ?? "未知时间"
+
         return ThreadCandidate(
             id: id,
             title: title,
             summary: string(for: ["content", "intro", "subject", "title", "post_subject"], in: dictionary)?.cleanedForumText ?? title,
             author: authorName(in: dictionary) ?? "未知作者",
             authorAvatarURL: avatarURL(in: dictionary, userAvatarURLs: userAvatarURLs),
-            createdAt: string(for: ["postdate", "timestamp", "created_at", "post_time", "time"], in: dictionary) ?? "未知时间",
-            lastReplyAt: string(for: ["lastpost", "postdate", "timestamp", "last_reply_time", "lastmodify"], in: dictionary) ?? "未知时间",
+            createdAt: createdAt,
+            lastReplyAt: lastReplyAt,
+            createdAtDate: ForumTime.parse(createdAt),
+            lastReplyAtDate: ForumTime.parse(lastReplyAt),
             replyCount: max(
                 int(for: ["replies", "reply_count", "replys"], in: dictionary) ?? 0,
                 max((int(for: ["postnum"], in: dictionary) ?? 1) - 1, 0)
@@ -392,6 +399,8 @@ private struct ThreadCandidate {
     let authorAvatarURL: URL?
     let createdAt: String
     let lastReplyAt: String
+    let createdAtDate: Date?
+    let lastReplyAtDate: Date?
     let replyCount: Int
     let viewCount: Int
 }

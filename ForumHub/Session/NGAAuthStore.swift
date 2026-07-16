@@ -127,6 +127,14 @@ struct NGALoginState {
         return !uid.localizedCaseInsensitiveContains("guest")
     }
 
+    var sourceSessionState: SourceSessionState {
+        if isLoggedIn { return .authenticated }
+        if cookieNames.contains("ngaPassportUid") || cookieNames.contains("ngaPassportCid") {
+            return .expired
+        }
+        return .signedOut
+    }
+
     var cidPreview: String {
         guard let cid, !cid.isEmpty else {
             return "未识别"

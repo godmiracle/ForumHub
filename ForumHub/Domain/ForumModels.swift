@@ -33,6 +33,7 @@ struct ForumCapabilities: Equatable {
     let supportsImageUpload: Bool
     let supportsWebFallback: Bool
     let requiresImageReferer: Bool
+    let supportsCreateThread: Bool
 
     init(
         supportsSearch: Bool,
@@ -44,7 +45,8 @@ struct ForumCapabilities: Equatable {
         threadPaginationStyle: ThreadPaginationStyle = .none,
         supportsImageUpload: Bool = false,
         supportsWebFallback: Bool = false,
-        requiresImageReferer: Bool = false
+        requiresImageReferer: Bool = false,
+        supportsCreateThread: Bool = false
     ) {
         self.supportsSearch = supportsSearch
         self.supportsFavorites = supportsFavorites
@@ -56,6 +58,7 @@ struct ForumCapabilities: Equatable {
         self.supportsImageUpload = supportsImageUpload
         self.supportsWebFallback = supportsWebFallback
         self.requiresImageReferer = requiresImageReferer
+        self.supportsCreateThread = supportsCreateThread
     }
 }
 
@@ -250,6 +253,8 @@ struct ForumThread: Identifiable, Equatable {
     let authorAvatarURL: URL?
     let createdAt: String
     let lastReplyAt: String
+    let createdAtDate: Date?
+    let lastReplyAtDate: Date?
     let replyCount: Int
     let viewCount: Int
     let contentDocument: ForumPostDocument
@@ -267,6 +272,8 @@ struct ForumThread: Identifiable, Equatable {
         authorAvatarURL: URL? = nil,
         createdAt: String = "",
         lastReplyAt: String,
+        createdAtDate: Date? = nil,
+        lastReplyAtDate: Date? = nil,
         replyCount: Int,
         viewCount: Int,
         body: String,
@@ -284,6 +291,8 @@ struct ForumThread: Identifiable, Equatable {
         self.authorAvatarURL = authorAvatarURL
         self.createdAt = createdAt
         self.lastReplyAt = lastReplyAt
+        self.createdAtDate = createdAtDate ?? ForumTime.parse(createdAt)
+        self.lastReplyAtDate = lastReplyAtDate ?? ForumTime.parse(lastReplyAt)
         self.replyCount = replyCount
         self.viewCount = viewCount
         self.contentDocument = contentDocument ?? .plainText(body)
@@ -310,11 +319,11 @@ struct ForumThread: Identifiable, Equatable {
     }
 
     var createdAtSortDate: Date? {
-        Self.sortDate(from: createdAt)
+        createdAtDate
     }
 
     var lastReplySortDate: Date? {
-        Self.sortDate(from: lastReplyAt)
+        lastReplyAtDate
     }
 
     func appendingReplies(_ additionalReplies: [Reply]) -> ForumThread {
@@ -332,6 +341,8 @@ struct ForumThread: Identifiable, Equatable {
             authorAvatarURL: authorAvatarURL,
             createdAt: createdAt,
             lastReplyAt: uniqueReplies.last?.createdAt ?? lastReplyAt,
+            createdAtDate: createdAtDate,
+            lastReplyAtDate: uniqueReplies.last.flatMap { ForumTime.parse($0.createdAt) } ?? lastReplyAtDate,
             replyCount: max(replyCount, combinedReplies.count),
             viewCount: viewCount,
             body: body,
@@ -353,6 +364,8 @@ struct ForumThread: Identifiable, Equatable {
             authorAvatarURL: authorAvatarURL,
             createdAt: createdAt,
             lastReplyAt: lastReplyAt,
+            createdAtDate: createdAtDate,
+            lastReplyAtDate: lastReplyAtDate,
             replyCount: replyCount,
             viewCount: viewCount,
             body: body,
@@ -378,6 +391,8 @@ struct ForumThread: Identifiable, Equatable {
             authorAvatarURL: authorAvatarURL,
             createdAt: createdAt,
             lastReplyAt: lastReplyAt ?? self.lastReplyAt,
+            createdAtDate: createdAtDate,
+            lastReplyAtDate: lastReplyAt.flatMap(ForumTime.parse) ?? lastReplyAtDate,
             replyCount: replyCount ?? self.replyCount,
             viewCount: viewCount,
             body: body,
@@ -399,6 +414,8 @@ struct ForumThread: Identifiable, Equatable {
             authorAvatarURL: authorAvatarURL ?? fallback.authorAvatarURL,
             createdAt: createdAt.isUsefulForumValue ? createdAt : fallback.createdAt,
             lastReplyAt: lastReplyAt.isUsefulForumValue ? lastReplyAt : fallback.lastReplyAt,
+            createdAtDate: createdAtDate ?? fallback.createdAtDate,
+            lastReplyAtDate: lastReplyAtDate ?? fallback.lastReplyAtDate,
             replyCount: max(replyCount, fallback.replyCount),
             viewCount: max(viewCount, fallback.viewCount),
             // 信息流只提供摘要；详情响应缺少正文时不能用列表内容冒充主楼。

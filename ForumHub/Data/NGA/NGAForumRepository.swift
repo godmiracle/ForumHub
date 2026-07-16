@@ -33,7 +33,8 @@ struct NGALiveThreadRepository: ThreadRepository {
         threadPaginationStyle: .numbered(pageSize: 20),
         supportsImageUpload: true,
         supportsWebFallback: true,
-        requiresImageReferer: true
+        requiresImageReferer: true,
+        supportsCreateThread: true
     )
     let defaultChannel = ForumChannel.defaultForum
 
@@ -867,7 +868,8 @@ struct MockThreadRepository: ThreadRepository {
                 supportsReply: true,
                 supportsReplyTargeting: true,
                 supportsAuthentication: true,
-                supportsFeedPagination: true
+                supportsFeedPagination: true,
+                supportsCreateThread: true
             )
         case .v2ex:
             ForumCapabilities(

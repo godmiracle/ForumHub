@@ -62,7 +62,94 @@ final class ForumHubUITests: XCTestCase {
             app.textFields["forum-search-field"].waitForExistence(timeout: 5)
         )
         XCTAssertFalse(app.textFields["forum-search-field"].isEnabled)
-        XCTAssertTrue(app.staticTexts["active-forum-title"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["forum-channel--20002"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testHomeShowsActionableSignedOutStateAndUnifiedFilter() throws {
+        let app = launch(scenario: "UITEST_DEFAULT_FEED")
+
+        XCTAssertTrue(app.buttons["forum-session-action-button"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["forum-compose-button"].waitForExistence(timeout: 5))
+
+        let filter = app.buttons["feed-filter-button"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 5))
+        filter.tap()
+
+        let pinnedToggle = app.switches["feed-filter-pinned-toggle"]
+        XCTAssertTrue(pinnedToggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(pinnedToggle.value as? String, "1")
+        pinnedToggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let isOff = NSPredicate(format: "value == %@", "0")
+        let toggled = XCTNSPredicateExpectation(predicate: isOff, object: pinnedToggle)
+        wait(for: [toggled], timeout: 3)
+        app.buttons["feed-filter-apply-button"].tap()
+
+        let hasOneActiveFilter = NSPredicate(format: "label == %@", "筛选帖子，已启用 1 项")
+        let updated = XCTNSPredicateExpectation(predicate: hasOneActiveFilter, object: filter)
+        wait(for: [updated], timeout: 5)
+    }
+
+    @MainActor
+    func testHomeHidesAuthenticatedCTAAndLabelsExpiredCTA() throws {
+        let authenticated = launch(scenario: "UITEST_AUTHENTICATED_FEED")
+        XCTAssertTrue(authenticated.buttons["forum-compose-button"].waitForExistence(timeout: 8))
+        XCTAssertFalse(authenticated.buttons["forum-session-action-button"].exists)
+        authenticated.terminate()
+
+        let expired = launch(scenario: "UITEST_EXPIRED_FEED")
+        let action = expired.buttons["forum-session-action-button"]
+        XCTAssertTrue(action.waitForExistence(timeout: 8))
+        XCTAssertEqual(action.label, "重新登录")
+    }
+
+    @MainActor
+    func testHomeCollapsesActionsButKeepsNavigationContext() throws {
+        let app = launch(scenario: "UITEST_DEFAULT_FEED")
+        let search = app.textFields["forum-search-field"]
+        XCTAssertTrue(search.waitForExistence(timeout: 8))
+
+        for _ in 0..<3 { app.swipeUp() }
+
+        XCTAssertFalse(search.isHittable)
+        XCTAssertTrue(app.buttons["forum-channel--7"].exists)
+        XCTAssertTrue(app.buttons["feed-filter-button"].exists)
+
+        app.swipeDown()
+        let searchIsHittable = NSPredicate(format: "hittable == true")
+        let restored = XCTNSPredicateExpectation(predicate: searchIsHittable, object: search)
+        wait(for: [restored], timeout: 5)
+    }
+
+    @MainActor
+    func testHomeActionsRemainReachableAtAccessibilityTextSize() throws {
+        let app = launch(
+            scenario: "UITEST_DEFAULT_FEED",
+            contentSizeCategory: "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
+        )
+
+        for identifier in [
+            "current-community-button",
+            "forum-refresh-button",
+            "forum-compose-button",
+            "forum-channel--7",
+            "feed-sort-lastReply",
+            "feed-sort-latestPost",
+            "feed-filter-button",
+            "forum-session-action-button"
+        ] {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.waitForExistence(timeout: 8), "\(identifier) 应在大号动态字体下存在")
+            XCTAssertTrue(button.isHittable, "\(identifier) 应在大号动态字体下可点击")
+        }
+    }
+
+    @MainActor
+    func testHomePassesFocusedAccessibilityAudit() throws {
+        let app = launch(scenario: "UITEST_DEFAULT_FEED")
+        XCTAssertTrue(app.buttons["feed-filter-button"].waitForExistence(timeout: 8))
+
+        try app.performAccessibilityAudit(for: [.hitRegion, .trait])
     }
 
     @MainActor
@@ -173,9 +260,12 @@ final class ForumHubUITests: XCTestCase {
         button.tap()
     }
 
-    private func launch(scenario: String) -> XCUIApplication {
+    private func launch(scenario: String, contentSizeCategory: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments.append(scenario)
+        if let contentSizeCategory {
+            app.launchArguments.append(contentsOf: ["-UIPreferredContentSizeCategoryName", contentSizeCategory])
+        }
         app.launch()
         return app
     }

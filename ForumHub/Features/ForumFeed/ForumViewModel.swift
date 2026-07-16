@@ -13,6 +13,7 @@ final class ForumViewModel {
     var isLoading = false
     var hasLoadedInitialFeed = false
     var isAuthenticated = false
+    var sessionState: SourceSessionState = .checking
     var errorMessage: String?
     var requiresLinuxDoBrowserVerification = false
     var loginState = NGALoginState.empty
@@ -122,6 +123,7 @@ final class ForumViewModel {
     static func preview() -> ForumViewModel {
         let viewModel = ForumViewModel(repository: MockThreadRepository())
         viewModel.isAuthenticated = true
+        viewModel.sessionState = .authenticated
         viewModel.loginState = NGALoginState(
             uid: "preview-user",
             cid: "preview-cookie",
@@ -139,6 +141,7 @@ final class ForumViewModel {
         let repository = MockPagedThreadRepository()
         let viewModel = ForumViewModel(repository: repository)
         viewModel.isAuthenticated = false
+        viewModel.sessionState = .signedOut
         viewModel.loginState = .empty
         viewModel.forum = ForumPayload.mock.forum
         viewModel.channels = ForumPayload.mock.channels
@@ -153,8 +156,10 @@ final class ForumViewModel {
     }
 
     func restoreSession() async {
+        sessionState = .checking
         loginState = await NGAAuthStore.shared.currentLoginState()
         isAuthenticated = loginState.isLoggedIn
+        sessionState = loginState.sourceSessionState
 
         await loadChannels()
     }
@@ -206,7 +211,9 @@ final class ForumViewModel {
             canLoadMore = false
             pinnedThreads = []
             threads = []
-            errorMessage = error.localizedDescription
+            let resolved = ForumError.resolve(error)
+            errorMessage = resolved?.userMessage ?? error.localizedDescription
+            applyAuthenticationFailureIfNeeded(resolved)
             requiresLinuxDoBrowserVerification = error is LinuxDoRequestError
             hasLoadedInitialFeed = true
         }
@@ -331,12 +338,14 @@ final class ForumViewModel {
             }
         } catch {
             guard isCurrentFeedLoad(generation), !error.isCancellationLike else { return }
-            errorMessage = error.localizedDescription
+            let resolved = ForumError.resolve(error)
+            errorMessage = resolved?.userMessage ?? error.localizedDescription
+            applyAuthenticationFailureIfNeeded(resolved)
             requiresLinuxDoBrowserVerification = error is LinuxDoRequestError
         }
     }
 
-    func switchForum(to channel: ForumChannel) async {
+    func switchForum(to channel: ForumChannel, reloadsFeed: Bool = true) async {
         suspendFeedLoading()
         forum = ForumSummary(
             id: channel.id,
@@ -355,7 +364,9 @@ final class ForumViewModel {
         selectedForum = channel
         selectedChildChannelIDs = []
 
-        await reload()
+        if reloadsFeed {
+            await reload()
+        }
     }
 
     func switchFeed(to tab: FeedTab) async {
@@ -405,6 +416,11 @@ final class ForumViewModel {
         await reload()
     }
 
+    func restoreFeedPreferences(sortMode: FeedSortMode, selectedChildChannelIDs: Set<Int>) {
+        feedSortMode = sortMode
+        self.selectedChildChannelIDs = selectedChildChannelIDs.intersection(Set(availableChildChannels.map(\.id)))
+    }
+
     var availableChildChannels: [ForumChannel] {
         guard source == .nga else { return [] }
         return channels.filter { $0.id != selectedForum.id }
@@ -423,7 +439,7 @@ final class ForumViewModel {
         }
     }
 
-    func switchSource(to newSource: ForumSource) async {
+    func switchSource(to newSource: ForumSource, reloadsFeed: Bool = true) async {
         guard newSource != source, let newRepository = repositories[newSource] else { return }
 
         suspendFeedLoading()
@@ -462,7 +478,9 @@ final class ForumViewModel {
                 source: newSource
             )
         }
-        await reload()
+        if reloadsFeed {
+            await reload()
+        }
     }
 
     func logout() async {
@@ -470,6 +488,7 @@ final class ForumViewModel {
         await NGAAuthStore.shared.logout()
         loginState = .empty
         isAuthenticated = false
+        sessionState = .signedOut
         pinnedThreads = []
         threads = []
         canLoadMore = false
@@ -497,6 +516,12 @@ final class ForumViewModel {
             && feedTab == .home
             && selectedForum.id == repository.defaultChannel.id
             && !selectedChildChannelIDs.isEmpty
+    }
+
+    private func applyAuthenticationFailureIfNeeded(_ error: ForumError?) {
+        guard source == .nga, error == .authenticationExpired else { return }
+        sessionState = .expired
+        isAuthenticated = false
     }
 
     private func makeFeedRequest(page: Int) -> FeedRequest {

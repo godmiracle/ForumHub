@@ -38,6 +38,8 @@ struct LinuxDoDiscourseParserTests {
         #expect(thread.id == 77)
         #expect(thread.author == "owner")
         #expect(thread.channelTitle == "开发")
+        #expect(thread.createdAtDate == ForumTime.parse("2026-07-11T10:00:00Z"))
+        #expect(thread.lastReplyAtDate != nil)
         #expect(thread.body.contains("[图片] https://linux.do/uploads/main.png"))
         #expect(thread.replies.map(\.sourcePostID) == [101])
     }
