@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Local AI and IDE state
+.codex/
+.idea/
+.vscode/
+
+# Xcode user state
+**/xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+*.moved-aside
+
+# Build products
+DerivedData/
+build/
+.build/
+
+# Editor temporary files
+*.swp
+*.swo
+*~
+*.orig
+*.rej
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
