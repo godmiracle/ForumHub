@@ -39,7 +39,7 @@ struct ThreadDetailView: View {
     @State private var activeInlineGIFPlaybackIDs: Set<UUID> = []
     @State private var cachedDisplayedReplies: [Reply] = []
     @State private var cachedDisplayedReplyEntries: [ThreadDetailDisplayedReplyEntry] = []
-    @State private var replyComposerKeyboardHeight: CGFloat = 0
+    @State private var replySubmissionTask: Task<Void, Never>?
 
     init(
         thread: ForumThread,
@@ -122,15 +122,6 @@ struct ThreadDetailView: View {
     private var replyDocumentBinding: Binding<ReplyComposerDocument> { Binding(get: { actionState.replyDocument }, set: { actionState.replyDocument = $0 }) }
     private var replyAttachmentsBinding: Binding<[ReplyComposerAttachment]> { Binding(get: { actionState.replyAttachments }, set: { actionState.replyAttachments = $0 }) }
     private var showsReplyComposerBinding: Binding<Bool> { Binding(get: { actionState.showsReplyComposer }, set: { actionState.showsReplyComposer = $0 }) }
-
-    private var replyComposerDetents: Set<PresentationDetent> {
-        guard replyComposerKeyboardHeight > 0 else { return [.medium] }
-
-        let screenHeight = UIScreen.main.bounds.height
-        let maximumCombinedHeight = screenHeight * 0.66
-        let composerHeight = max(280, maximumCombinedHeight - replyComposerKeyboardHeight)
-        return [.height(composerHeight)]
-    }
 
     var body: some View {
         let replyEntries = displayedReplyEntries
@@ -463,7 +454,9 @@ struct ThreadDetailView: View {
         } message: {
             Text(replySuccessMessage ?? "帖子内容已刷新。")
         }
-        .sheet(isPresented: showsReplyComposerBinding) {
+        .sheet(isPresented: showsReplyComposerBinding, onDismiss: {
+            replyTarget = .thread
+        }) {
             ReplyComposerSheet(
                 source: repository.source,
                 capabilities: repository.capabilities,
@@ -472,29 +465,23 @@ struct ThreadDetailView: View {
                 attachments: replyAttachmentsBinding,
                 isSubmitting: isSubmittingReply,
                 onCancel: {
+                    replySubmissionTask?.cancel()
                     showsReplyComposer = false
-                    replyTarget = .thread
                 },
                 onSubmit: {
-                    Task { await submitReply() }
+                    guard replySubmissionTask == nil else { return }
+                    replySubmissionTask = Task {
+                        await submitReply()
+                        replySubmissionTask = nil
+                    }
                 }
             )
-            .presentationDetents(replyComposerDetents)
+            .presentationDetents([.large])
             .presentationContentInteraction(.scrolls)
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(32)
             .presentationBackground(.ultraThinMaterial)
             .interactiveDismissDisabled(isSubmittingReply)
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-                guard let endFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-                replyComposerKeyboardHeight = max(0, UIScreen.main.bounds.maxY - endFrame.minY)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                replyComposerKeyboardHeight = 0
-            }
-            .onDisappear {
-                replyComposerKeyboardHeight = 0
-            }
         }
         .sheet(isPresented: $showsPagePicker) {
             ThreadDetailPagePickerSheet(

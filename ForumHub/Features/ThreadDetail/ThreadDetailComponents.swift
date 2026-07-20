@@ -274,6 +274,7 @@ struct ThreadDetailActionBar: View {
                         isDisabled: isSubmittingReply,
                         action: onReply
                     )
+                    .accessibilityIdentifier("thread-detail-reply-action")
                 }
 
                 ForumFloatingBar(padding: 4) {

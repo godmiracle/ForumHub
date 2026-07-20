@@ -13,8 +13,10 @@ struct ReplyComposerSheet: View {
     let onSubmit: () -> Void
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var imageLoadErrorMessage: String?
-    @State private var showsEmojiPicker = false
-    @State private var shouldFocusRichEditor = false
+    @State private var inputMode: ReplyComposerInputMode = .keyboard
+    @State private var selectedEmojiGroup: NGAForumEmojiGroup = .ng
+    @State private var editorFocusCommand = ReplyComposerEditorFocusCommand.focus(generation: 0)
+    @State private var presentsEmojiAfterResign = false
 
     private var quickEmojis: [NGAForumEmojiItem] {
         Array(NGAForumEmojiGroup.ng.items.prefix(8))
@@ -39,12 +41,21 @@ struct ReplyComposerSheet: View {
 
             ReplyComposerRichTextEditor(
                 document: $document,
-                shouldFocus: $shouldFocusRichEditor,
+                focusCommand: editorFocusCommand,
                 isEditable: !isSubmitting
             )
             .frame(minHeight: 104, maxHeight: .infinity)
-            .padding(.horizontal, 4)
-            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(.horizontal, 6)
+            .background(
+                PaperTheme.card.opacity(0.52),
+                in: RoundedRectangle(cornerRadius: ForumRadius.card, style: .continuous)
+            )
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    guard inputMode == .emoji else { return }
+                    focusEditor()
+                }
+            )
 
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -59,7 +70,15 @@ struct ReplyComposerSheet: View {
 
             composerToolbar
             if source == .nga {
-                quickEmojiBar
+                if inputMode == .emoji {
+                    ReplyComposerEmojiPanel(
+                        selectedGroup: $selectedEmojiGroup,
+                        isSubmitting: isSubmitting,
+                        onSelect: { insertEmoji($0, focusesEditor: false) }
+                    )
+                } else {
+                    quickEmojiBar
+                }
             }
         }
         .padding(.horizontal, 18)
@@ -73,9 +92,6 @@ struct ReplyComposerSheet: View {
             )
             .allowsHitTesting(false)
         }
-        .onAppear {
-            shouldFocusRichEditor = true
-        }
         .onChange(of: selectedPhotoItems) { _, items in
             guard !items.isEmpty else { return }
             Task {
@@ -86,12 +102,6 @@ struct ReplyComposerSheet: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(imageLoadErrorMessage ?? "请换一张图片重试。")
-        }
-        .sheet(isPresented: $showsEmojiPicker) {
-            NGAEmojiPickerSheet { emoji in
-                insertEmoji(emoji)
-                showsEmojiPicker = false
-            }
         }
     }
 
@@ -106,6 +116,7 @@ struct ReplyComposerSheet: View {
                     .font(.headline)
                     .foregroundStyle(PaperTheme.ink)
                     .lineLimit(1)
+                    .accessibilityIdentifier("reply-composer-target-title")
 
                 Text("通过 \(source.title) 发送")
                     .font(.caption)
@@ -131,72 +142,122 @@ struct ReplyComposerSheet: View {
                     .background(Color.primary.opacity(0.08), in: Circle())
             }
             .buttonStyle(.plain)
-            .disabled(isSubmitting)
-            .accessibilityLabel("关闭回复编辑器")
+            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityLabel(isSubmitting ? "取消发布并关闭回复编辑器" : "关闭回复编辑器")
+            .accessibilityIdentifier("reply-composer-close")
         }
     }
 
     private var composerToolbar: some View {
-        HStack(spacing: 18) {
-            if source == .nga {
-                Button {
-                    showsEmojiPicker = true
-                } label: {
-                    Image(systemName: "face.smiling")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 18) {
+                composerToolButtons
+
+                Spacer(minLength: 4)
+
+                composerStatusAndSubmit
+            }
+
+            VStack(spacing: 8) {
+                HStack(spacing: 18) {
+                    composerToolButtons
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 12) {
+                    Spacer(minLength: 0)
+                    composerStatusAndSubmit
                 }
             }
-
-            if capabilities.supportsImageUpload {
-                PhotosPicker(
-                    selection: $selectedPhotoItems,
-                    maxSelectionCount: max(1, 9 - attachments.count),
-                    matching: .images
-                ) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                }
-                .disabled(isSubmitting || attachments.count >= 9)
-            }
-
-            Button {
-                document.insert(text: "@")
-                shouldFocusRichEditor = true
-            } label: {
-                Image(systemName: "at")
-            }
-
-            Button {
-                document.insert(text: "#")
-                shouldFocusRichEditor = true
-            } label: {
-                Image(systemName: "number")
-            }
-
-            Spacer(minLength: 4)
-
-            Text("\(document.displayCharacterCount) 字")
-                .font(.caption)
-                .foregroundStyle(PaperTheme.mutedText)
-
-            Button(action: onSubmit) {
-                Group {
-                    if isSubmitting {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Text("发布")
-                            .font(.subheadline.weight(.bold))
-                    }
-                }
-                .frame(minWidth: 58, minHeight: 34)
-            }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.capsule)
-            .tint(PaperTheme.accent)
-            .disabled(isSubmitting || document.isEmpty)
         }
         .font(.title3)
         .foregroundStyle(PaperTheme.mutedText)
         .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .forumGlass(
+            in: RoundedRectangle(cornerRadius: ForumRadius.control, style: .continuous)
+        )
+    }
+
+    @ViewBuilder
+    private var composerToolButtons: some View {
+        if source == .nga {
+            Button {
+                toggleEmojiPanel()
+            } label: {
+                Image(systemName: inputMode == .emoji ? "keyboard" : "face.smiling")
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            .foregroundStyle(inputMode == .emoji ? PaperTheme.accent : PaperTheme.mutedText)
+            .accessibilityLabel(inputMode == .emoji ? "返回键盘" : "打开表情")
+            .accessibilityIdentifier("reply-composer-emoji-toggle")
+            .disabled(isSubmitting)
+        }
+
+        if capabilities.supportsImageUpload {
+            PhotosPicker(
+                selection: $selectedPhotoItems,
+                maxSelectionCount: max(1, 9 - attachments.count),
+                matching: .images
+            ) {
+                Image(systemName: "photo.on.rectangle.angled")
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            .disabled(isSubmitting || attachments.count >= 9)
+            .accessibilityLabel("添加图片")
+        }
+
+        Button {
+            document.insert(text: "@")
+            focusEditor()
+        } label: {
+            Image(systemName: "at")
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+        .accessibilityLabel("插入艾特符号")
+
+        Button {
+            document.insert(text: "#")
+            focusEditor()
+        } label: {
+            Image(systemName: "number")
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+        .accessibilityLabel("插入井号")
+    }
+
+    @ViewBuilder
+    private var composerStatusAndSubmit: some View {
+        Text("\(document.displayCharacterCount) 字")
+            .font(.caption)
+            .foregroundStyle(PaperTheme.mutedText)
+
+        Button(action: onSubmit) {
+            Group {
+                if isSubmitting {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock")
+                        Text("发布中")
+                            .font(.subheadline.weight(.bold))
+                    }
+                } else {
+                    Text("发布")
+                        .font(.subheadline.weight(.bold))
+                }
+            }
+            .frame(minWidth: 58, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .tint(PaperTheme.accent)
+        .disabled(isSubmitting || document.isEmpty)
+        .accessibilityLabel(isSubmitting ? "发布中" : "发布")
+        .accessibilityIdentifier("reply-composer-submit")
     }
 
     private var quickEmojiBar: some View {
@@ -204,7 +265,7 @@ struct ReplyComposerSheet: View {
             HStack(spacing: 18) {
                 ForEach(quickEmojis) { emoji in
                     ReplyComposerQuickEmojiButton(emoji: emoji) {
-                        insertEmoji($0)
+                        insertEmoji($0, focusesEditor: true)
                     }
                     .disabled(isSubmitting)
                 }
@@ -213,9 +274,44 @@ struct ReplyComposerSheet: View {
         }
     }
 
-    private func insertEmoji(_ emoji: NGAForumEmojiItem) {
+    private func insertEmoji(_ emoji: NGAForumEmojiItem, focusesEditor: Bool) {
         document.insert(emoji: ReplyComposerEmoji(emoji))
-        shouldFocusRichEditor = true
+        if focusesEditor {
+            focusEditor()
+        }
+    }
+
+    private func toggleEmojiPanel() {
+        let showsEmojiPanel = inputMode != .emoji
+        if showsEmojiPanel {
+            presentsEmojiAfterResign = true
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil,
+                from: nil,
+                for: nil
+            )
+            DispatchQueue.main.async {
+                guard presentsEmojiAfterResign else { return }
+                presentsEmojiAfterResign = false
+                inputMode = .emoji
+            }
+        } else {
+            presentsEmojiAfterResign = false
+            inputMode = .keyboard
+            issueEditorFocusCommand()
+        }
+    }
+
+    private func focusEditor() {
+        presentsEmojiAfterResign = false
+        inputMode = .keyboard
+        issueEditorFocusCommand()
+    }
+
+    private func issueEditorFocusCommand() {
+        let generation = editorFocusCommand.generation + 1
+        editorFocusCommand = .focus(generation: generation)
     }
 
     private var imageLoadErrorBinding: Binding<Bool> {
@@ -281,7 +377,7 @@ private struct ReplyComposerQuickEmojiButton: View {
 
     var body: some View {
         Button {
-            onSelect(emoji.withPreviewImage(image))
+            onSelect(emoji)
         } label: {
             Group {
                 if let image {
@@ -296,6 +392,9 @@ private struct ReplyComposerQuickEmojiButton: View {
             .frame(width: 34, height: 34)
         }
         .buttonStyle(.plain)
+        .frame(minWidth: 44, minHeight: 44)
+        .accessibilityLabel("插入\(emoji.group.title)表情 \(emoji.displayName)")
+        .accessibilityIdentifier("reply-composer-quick-emoji-\(emoji.filename)")
         .task(id: emoji.id) {
             guard image == nil else { return }
             image = try? await NGAImageLoader.load(url: emoji.imageURL)
@@ -303,53 +402,67 @@ private struct ReplyComposerQuickEmojiButton: View {
     }
 }
 
-private struct NGAEmojiPickerSheet: View {
+private struct ReplyComposerEmojiPanel: View {
+    @Binding var selectedGroup: NGAForumEmojiGroup
+    let isSubmitting: Bool
     let onSelect: (NGAForumEmojiItem) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var selectedGroup: NGAForumEmojiGroup = .ng
-
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 5)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 14) {
-                Picker("表情分组", selection: $selectedGroup) {
+        VStack(spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 18) {
                     ForEach(NGAForumEmojiGroup.allCases) { group in
-                        Text(group.title).tag(group)
-                    }
-                }
-                .pickerStyle(.segmented)
+                        Button {
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                selectedGroup = group
+                            }
+                        } label: {
+                            VStack(spacing: 6) {
+                                Text(group.title)
+                                    .font(.subheadline.weight(selectedGroup == group ? .semibold : .regular))
+                                    .foregroundStyle(selectedGroup == group ? PaperTheme.accent : PaperTheme.mutedText)
+                                    .fixedSize(horizontal: true, vertical: false)
 
-                Text("一期先按图片表情插入正文，连续点选会依次追加到回帖末尾。")
-                    .font(.footnote)
-                    .foregroundStyle(PaperTheme.mutedText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 10) {
-                        ForEach(selectedGroup.items) { emoji in
-                            NGAEmojiPickerItemView(
-                                emoji: emoji,
-                                onSelect: onSelect
-                            )
+                                Capsule()
+                                    .fill(selectedGroup == group ? PaperTheme.accent : Color.clear)
+                                    .frame(height: 2)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                        .accessibilityLabel("\(group.title)表情")
+                        .accessibilityIdentifier("reply-composer-emoji-group-\(group.rawValue)")
+                        .accessibilityAddTraits(selectedGroup == group ? .isSelected : [])
                     }
-                    .padding(.bottom, 8)
                 }
+                .padding(.horizontal, 4)
             }
-            .padding(20)
-            .background(PaperBackground())
-            .navigationTitle("添加表情")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("关闭") {
-                        dismiss()
+            .accessibilityIdentifier("reply-composer-emoji-groups")
+
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(selectedGroup.items) { emoji in
+                        NGAEmojiPickerItemView(
+                            emoji: emoji,
+                            onSelect: onSelect
+                        )
+                        .disabled(isSubmitting)
                     }
                 }
+                .padding(.horizontal, 2)
+                .padding(.bottom, 6)
             }
         }
-        .presentationDetents([.medium, .large])
+        .frame(height: 274)
+        .padding(12)
+        .background(
+            PaperTheme.paper.opacity(0.72),
+            in: RoundedRectangle(cornerRadius: ForumRadius.card, style: .continuous)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("NGA 表情选择器")
     }
 }
 
@@ -361,7 +474,7 @@ private struct NGAEmojiPickerItemView: View {
 
     var body: some View {
         Button {
-            onSelect(emoji.withPreviewImage(loadedImage))
+            onSelect(emoji)
         } label: {
             VStack(spacing: 6) {
                 Group {
@@ -388,10 +501,13 @@ private struct NGAEmojiPickerItemView: View {
                     .foregroundStyle(PaperTheme.mutedText)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(minWidth: 52, minHeight: 62)
+        .accessibilityLabel("插入\(emoji.group.title)表情 \(emoji.displayName)")
+        .accessibilityIdentifier("reply-composer-emoji-\(emoji.filename)")
         .task(id: emoji.id) {
             guard loadedImage == nil, !loadFailed else { return }
             do {
@@ -403,119 +519,19 @@ private struct NGAEmojiPickerItemView: View {
     }
 }
 
-enum NGAForumEmojiGroup: String, CaseIterable, Identifiable {
-    case ng
-    case ac
-    case a2
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .ng:
-            return "NG娘"
-        case .ac:
-            return "AC娘v1"
-        case .a2:
-            return "AC娘v2"
-        }
-    }
-
-    var items: [NGAForumEmojiItem] {
-        switch self {
-        case .ng:
-            return (1...40).map {
-                NGAForumEmojiItem(group: self, displayName: "\($0)", filename: "ng_\($0).png")
-            }
-        case .ac:
-            return (1...40).map {
-                NGAForumEmojiItem(group: self, displayName: "\($0)", filename: "ac\($0).png")
-            }
-        case .a2:
-            return (1...40).map {
-                let name = String(format: "%02d", $0)
-                return NGAForumEmojiItem(group: self, displayName: name, filename: "a2_\(name).png")
-            }
-        }
-    }
+private enum ReplyComposerInputMode {
+    case keyboard
+    case emoji
 }
 
-struct NGAForumEmojiItem: Identifiable {
-    let group: NGAForumEmojiGroup
-    let displayName: String
-    let filename: String
-    private let imageURLOverride: URL?
-    private let previewImageOverride: UIImage?
+enum ReplyComposerEditorFocusCommand: Equatable {
+    case focus(generation: Int)
 
-    init(group: NGAForumEmojiGroup, displayName: String, filename: String) {
-        self.group = group
-        self.displayName = displayName
-        self.filename = filename
-        self.imageURLOverride = nil
-        self.previewImageOverride = nil
-    }
-
-    var id: String { filename }
-
-    var imageURL: URL {
-        imageURLOverride ?? URL(string: "https://img4.nga.178.com/ngabbs/post/smile/\(filename)")!
-    }
-
-    var markup: String {
-        "[img]\(imageURL.absoluteString)[/img]"
-    }
-
-    var previewImage: UIImage? {
-        previewImageOverride
-    }
-
-    func withPreviewImage(_ image: UIImage?) -> NGAForumEmojiItem {
-        NGAForumEmojiItem(
-            group: group,
-            displayName: displayName,
-            filename: filename,
-            imageURLOverride: imageURLOverride,
-            previewImageOverride: image
-        )
-    }
-
-    init?(filename: String, imageURL: URL) {
-        self.filename = filename
-        switch true {
-        case filename.hasPrefix("ng_"):
-            group = .ng
-            displayName = filename
-                .replacingOccurrences(of: "ng_", with: "")
-                .replacingOccurrences(of: ".png", with: "")
-        case filename.hasPrefix("ac"):
-            group = .ac
-            displayName = filename
-                .replacingOccurrences(of: "ac", with: "")
-                .replacingOccurrences(of: ".png", with: "")
-        case filename.hasPrefix("a2_"):
-            group = .a2
-            displayName = filename
-                .replacingOccurrences(of: "a2_", with: "")
-                .replacingOccurrences(of: ".png", with: "")
-        default:
-            return nil
+    var generation: Int {
+        switch self {
+        case let .focus(generation):
+            generation
         }
-        imageURLOverride = imageURL
-        previewImageOverride = nil
-    }
-
-    private init(
-        group: NGAForumEmojiGroup,
-        displayName: String,
-        filename: String,
-        imageURLOverride: URL?,
-        previewImageOverride: UIImage?
-    ) {
-        self.group = group
-        self.displayName = displayName
-        self.filename = filename
-        self.imageURLOverride = imageURLOverride
-        self.previewImageOverride = previewImageOverride
     }
 }
 
@@ -534,10 +550,9 @@ struct ReplyComposerEmoji: Equatable {
         guard markup.hasPrefix("[img]"), markup.hasSuffix("[/img]") else { return nil }
         let urlText = String(markup.dropFirst(5).dropLast(6))
         guard let imageURL = URL(string: urlText),
-              let filename = imageURL.pathComponents.last,
-              let _ = NGAForumEmojiItem(filename: filename, imageURL: imageURL)
+              let item = NGAReplyEmojiCatalog.item(imageURL: imageURL)
         else { return nil }
-        self.filename = filename
+        filename = item.filename
         self.imageURL = imageURL
     }
 }
@@ -698,23 +713,30 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
     private static let emojiAnchorCharacter = "\u{200B}"
     private static let emojiMarkupAttribute = NSAttributedString.Key("ForumHubEmojiMarkup")
     @Binding var document: ReplyComposerDocument
-    @Binding var shouldFocus: Bool
+    let focusCommand: ReplyComposerEditorFocusCommand
     let isEditable: Bool
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(document: $document, shouldFocus: $shouldFocus)
+        Coordinator(
+            document: $document,
+            focusCommand: focusCommand
+        )
     }
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+    func makeUIView(context: Context) -> ReplyComposerTextView {
+        let textView = ReplyComposerTextView()
         textView.backgroundColor = .clear
         textView.delegate = context.coordinator
+        textView.onDidMoveToWindow = { [weak coordinator = context.coordinator] textView in
+            coordinator?.applyPendingFocusCommand(to: textView)
+        }
         textView.font = UIFont.preferredFont(forTextStyle: .body)
         textView.textColor = UIColor(PaperTheme.secondaryInk)
         textView.tintColor = UIColor(PaperTheme.accent)
         textView.allowsEditingTextAttributes = true
         textView.isScrollEnabled = true
         textView.keyboardDismissMode = .interactive
+        textView.accessibilityIdentifier = "reply-composer-editor"
         textView.textContainerInset = UIEdgeInsets(top: 12, left: 6, bottom: 12, right: 6)
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.typingAttributes = Coordinator.baseAttributes(for: textView.font ?? .preferredFont(forTextStyle: .body))
@@ -722,22 +744,27 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
         return textView
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
+    func updateUIView(_ textView: ReplyComposerTextView, context: Context) {
         textView.isEditable = isEditable
         textView.isSelectable = true
         context.coordinator.synchronize(document, to: textView)
-        context.coordinator.updateFocusIfNeeded(for: textView)
+        context.coordinator.updateFocusCommand(focusCommand, for: textView)
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         @Binding private var document: ReplyComposerDocument
-        @Binding private var shouldFocus: Bool
+        private var pendingFocusCommand: ReplyComposerEditorFocusCommand
+        private var handledFocusGeneration: Int?
+        private var scheduledFocusGeneration: Int?
         private var isApplyingProgrammaticChange = false
         private var lastRenderedComponents: [ReplyComposerDocumentComponent]?
 
-        init(document: Binding<ReplyComposerDocument>, shouldFocus: Binding<Bool>) {
+        init(
+            document: Binding<ReplyComposerDocument>,
+            focusCommand: ReplyComposerEditorFocusCommand
+        ) {
             _document = document
-            _shouldFocus = shouldFocus
+            pendingFocusCommand = focusCommand
         }
 
         func synchronize(_ document: ReplyComposerDocument, to textView: UITextView) {
@@ -756,12 +783,34 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
             }
         }
 
-        func updateFocusIfNeeded(for textView: UITextView) {
-            guard shouldFocus else { return }
-            if !textView.isFirstResponder {
-                textView.becomeFirstResponder()
+        func updateFocusCommand(
+            _ command: ReplyComposerEditorFocusCommand,
+            for textView: UITextView
+        ) {
+            pendingFocusCommand = command
+            applyPendingFocusCommand(to: textView)
+        }
+
+        func applyPendingFocusCommand(to textView: UITextView) {
+            let command = pendingFocusCommand
+            guard handledFocusGeneration != command.generation,
+                  scheduledFocusGeneration != command.generation,
+                  textView.window != nil
+            else { return }
+
+            scheduledFocusGeneration = command.generation
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                if self.scheduledFocusGeneration == command.generation {
+                    self.scheduledFocusGeneration = nil
+                }
+                guard self.pendingFocusCommand.generation == command.generation,
+                      self.handledFocusGeneration != command.generation,
+                      textView.window != nil,
+                      textView.isFirstResponder || textView.becomeFirstResponder()
+                else { return }
+                self.handledFocusGeneration = command.generation
             }
-            DispatchQueue.main.async { [weak self] in self?.shouldFocus = false }
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -893,6 +942,19 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
                 let image = UIImage(systemName: "face.smiling", withConfiguration: config)?.withTintColor(UIColor(PaperTheme.mutedText), renderingMode: .alwaysOriginal)
                 image?.draw(in: CGRect(x: side * 0.2, y: side * 0.2, width: side * 0.6, height: side * 0.6))
             }
+        }
+    }
+}
+
+final class ReplyComposerTextView: UITextView {
+    var onDidMoveToWindow: ((ReplyComposerTextView) -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.onDidMoveToWindow?(self)
         }
     }
 }

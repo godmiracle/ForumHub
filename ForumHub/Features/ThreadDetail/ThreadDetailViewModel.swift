@@ -204,12 +204,24 @@ final class ThreadDetailViewModel {
             actions.replyDocument = ReplyComposerDocument()
             actions.replyAttachments = []
             actions.showsReplyComposer = false
-            actions.replyTarget = .thread
             await refreshDetail()
             actions.replySuccessMessage = replySuccessMessage(for: target)
+        } catch where Self.isCancellation(error) {
+            return
         } catch {
             actions.replyErrorMessage = ForumError.resolve(error)?.userMessage ?? "回复失败，请稍后重试。"
         }
+    }
+
+    private static func isCancellation(_ error: any Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
     private func replySuccessMessage(for target: ThreadReplyTarget) -> String {

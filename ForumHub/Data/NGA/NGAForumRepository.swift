@@ -22,6 +22,8 @@ protocol ThreadRepository {
 }
 
 struct NGALiveThreadRepository: ThreadRepository {
+    private static let replyRequestTimeout: TimeInterval = 30
+    private static let attachmentUploadTimeout: TimeInterval = 60
     let source = ForumSource.nga
     let capabilities = ForumCapabilities(
         supportsSearch: true,
@@ -355,7 +357,8 @@ struct NGALiveThreadRepository: ThreadRepository {
 
         let (_, rawText) = try await post(
             url: url,
-            form: form
+            form: form,
+            timeoutInterval: Self.replyRequestTimeout
         )
 
         if let message = postFailureMessage(from: rawText) {
@@ -468,7 +471,10 @@ struct NGALiveThreadRepository: ThreadRepository {
             throw NGARequestError.invalidResponse
         }
 
-        let (data, rawText) = try await get(url: url)
+        let (data, rawText) = try await get(
+            url: url,
+            timeoutInterval: Self.replyRequestTimeout
+        )
         guard let object = NGAJSONParser.object(from: data, fallbackText: rawText) as? [String: Any],
               let dataDictionary = object["data"] as? [String: Any],
               let fid = (dataDictionary["fid"] as? NSNumber)?.intValue
@@ -597,6 +603,7 @@ struct NGALiveThreadRepository: ThreadRepository {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         var request = URLRequest(url: uploadURL)
+        request.timeoutInterval = Self.attachmentUploadTimeout
         request.httpMethod = "POST"
         request.httpBody = body
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -732,8 +739,11 @@ struct NGALiveThreadRepository: ThreadRepository {
         """)
     }
 
-    private func get(url: URL) async throws -> (Data, String) {
+    private func get(url: URL, timeoutInterval: TimeInterval? = nil) async throws -> (Data, String) {
         var request = URLRequest(url: url)
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
         request.httpMethod = "GET"
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 NGAPrototype/1.0", forHTTPHeaderField: "User-Agent")
@@ -758,8 +768,15 @@ struct NGALiveThreadRepository: ThreadRepository {
         return (data, rawText)
     }
 
-    private func post(url: URL, form: [String: String]) async throws -> (Data, String) {
+    private func post(
+        url: URL,
+        form: [String: String],
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> (Data, String) {
         var request = URLRequest(url: url)
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
         request.httpMethod = "POST"
         request.httpBody = form
             .map { key, value in "\(percentEncode(key))=\(percentEncode(value))" }

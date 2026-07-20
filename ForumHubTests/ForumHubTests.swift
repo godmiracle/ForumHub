@@ -29,6 +29,90 @@ struct ForumHubTests {
         #expect(!document.isEmpty)
     }
 
+    @Test func cancellingReplySubmissionRestoresStateWithoutDiscardingDraft() async {
+        let thread = ForumPayload.mock.threads[0]
+        let viewModel = ThreadDetailViewModel(thread: thread)
+        viewModel.actions.replyDocument = ReplyComposerDocument(text: "保留的回复草稿")
+        viewModel.actions.showsReplyComposer = true
+
+        let submission = Task {
+            await viewModel.submitReply(
+                thread: thread,
+                repository: SuspendedReplyRepository(),
+                refreshDetail: {}
+            )
+        }
+
+        while !viewModel.actions.isSubmittingReply {
+            await Task.yield()
+        }
+        submission.cancel()
+        await submission.value
+
+        #expect(!viewModel.actions.isSubmittingReply)
+        #expect(viewModel.actions.replyErrorMessage == nil)
+        #expect(viewModel.actions.replyDocument.markup == "保留的回复草稿")
+        #expect(viewModel.actions.showsReplyComposer)
+    }
+
+    @Test func ngaReplyEmojiCatalogIncludesConfirmedResourceRanges() {
+        let groups: [(NGAForumEmojiGroup, String, String, Int)] = [
+            (.pt, "pt00.png", "pt64.png", 65),
+            (.dt, "dt01.png", "dt33.png", 33),
+            (.pg, "pg01.png", "pg15.png", 15)
+        ]
+
+        for (group, firstFilename, lastFilename, expectedCount) in groups {
+            let items = group.items
+            #expect(items.first?.filename == firstFilename)
+            #expect(items.last?.filename == lastFilename)
+            #expect(items.count == expectedCount)
+            #expect(Set(items.map(\.filename)).count == expectedCount)
+            #expect(items.first?.imageURL.absoluteString == "https://img4.nga.178.com/ngabbs/post/smile/\(firstFilename)")
+        }
+    }
+
+    @Test func ngaReplyEmojiCatalogRecognizesAllGroupsAndRejectsUnknownImages() {
+        let knownItems: [(String, NGAForumEmojiGroup)] = [
+            ("ng_1.png", .ng),
+            ("ac1.png", .ac),
+            ("a2_01.png", .a2),
+            ("pt00.png", .pt),
+            ("dt01.png", .dt),
+            ("pg01.png", .pg)
+        ]
+
+        for (filename, expectedGroup) in knownItems {
+            #expect(NGAReplyEmojiCatalog.item(filename: filename)?.group == expectedGroup)
+        }
+
+        #expect(NGAReplyEmojiCatalog.item(filename: "pt65.png") == nil)
+        #expect(NGAReplyEmojiCatalog.item(filename: "ordinary.png") == nil)
+        #expect(ReplyComposerEmoji(markup: "[img]https://example.com/pt00.png[/img]") == nil)
+        #expect(ReplyComposerEmoji(markup: "[img]https://img4.nga.178.com/ngabbs/post/smile/ordinary.png[/img]") == nil)
+    }
+
+    @Test func replyComposerDocumentRoundTripsNewEmojiGroupsAtCurrentSelection() throws {
+        let items = try ["pt64.png", "dt33.png", "pg15.png"].map { filename in
+            try #require(NGAReplyEmojiCatalog.item(filename: filename))
+        }
+        var document = ReplyComposerDocument(text: "前后")
+        document.updateSelection(NSRange(location: 1, length: 0))
+
+        for item in items {
+            document.insert(emoji: ReplyComposerEmoji(item))
+        }
+
+        let expectedMiddle = items.map(\.markup).joined()
+        #expect(document.markup == "前\(expectedMiddle)后")
+        #expect(document.displayCharacterCount == 5)
+
+        let restored = try items.map { item in
+            try #require(ReplyComposerEmoji(markup: item.markup))
+        }
+        #expect(restored == items.map(ReplyComposerEmoji.init))
+    }
+
     @Test func replyComposerDocumentInsertsToolbarTextAtCurrentSelection() {
         var document = ReplyComposerDocument(text: "前后")
         document.updateSelection(NSRange(location: 1, length: 0))
@@ -2109,6 +2193,37 @@ struct ForumHubTests {
 }
 
 private final class FixtureLocator {}
+
+private struct SuspendedReplyRepository: ThreadRepository {
+    private let base = MockThreadRepository(source: .v2ex)
+
+    var source: ForumSource { base.source }
+    var capabilities: ForumCapabilities { base.capabilities }
+    var defaultChannel: ForumChannel { base.defaultChannel }
+
+    func fetchChannels() async throws -> [ForumChannel] { try await base.fetchChannels() }
+    func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult {
+        try await base.fetchForum(channel: channel, page: page)
+    }
+    func fetchHotThreads(page: Int) async throws -> ThreadFetchResult { try await base.fetchHotThreads(page: page) }
+    func fetchFavoriteThreads(page: Int) async throws -> ThreadFetchResult { try await base.fetchFavoriteThreads(page: page) }
+    func searchThreads(query: String, page: Int) async throws -> ThreadFetchResult {
+        try await base.searchThreads(query: query, page: page)
+    }
+    func fetchThread(tid: Int, page: Int) async throws -> ThreadDetailFetchResult {
+        try await base.fetchThread(tid: tid, page: page)
+    }
+    func addFavoriteThread(tid: Int) async throws { try await base.addFavoriteThread(tid: tid) }
+    func removeFavoriteThread(tid: Int) async throws { try await base.removeFavoriteThread(tid: tid) }
+    func replyThread(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload]
+    ) async throws {
+        try await Task.sleep(for: .seconds(60))
+    }
+}
 
 @MainActor
 private final class TestICloudKeyValueStore: ICloudKeyValueStoring {

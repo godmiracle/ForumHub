@@ -454,6 +454,33 @@ Accepted
 - 筛选可以扩展新条件而不继续增加首页独立按钮或每次编辑立即发请求
 - Web 发帖入口仍依赖站点页面合约，需要真机会话回归；未验证来源不会展示无效按钮
 
+## ADR-018 Reply Composer Focus Is A One-Shot Lifecycle Command
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+回复 Sheet 的富文本编辑器曾用持续布尔状态表达焦点。真机测试证明，Sheet 关闭期间的 SwiftUI 更新会再次触发 `becomeFirstResponder()`，与 dismiss 竞争并导致界面无法关闭；同时按键盘高度动态压缩 detent 会裁切回复目标和底部表情。
+
+### Decision
+
+编辑器焦点使用递增 generation 的一次性命令，每代只在文本视图挂入窗口后的下一主线程周期消费一次。进入表情模式通过 responder chain 请求当前 first responder 辞职，再异步切换面板；返回键盘时签发新 generation。回复 Sheet 固定使用 `.large`，关闭路径只改变展示状态，回复目标统一在 `onDismiss` 清理。
+
+### Consequences
+
+- 初次打开和从表情返回时仍能明确获取键盘，但 dismiss 更新不会重复抢焦点
+- 键盘、表情面板和 Sheet 高度不再形成相互反馈，标题与底部操作获得稳定空间
+- 任何未来需要聚焦编辑器的动作都必须签发新 generation，不能恢复持续 `isFocused` 绑定
+- 发布任务由详情页持有；提交中禁止重复发布和下滑关闭，但显式关闭会取消 Task、保留草稿并静默退出
+- NGA 回复上下文和最终 POST 使用 30 秒超时，附件上传使用 60 秒超时，避免依赖共享 Session 默认等待把用户长期锁在提交态
+- 固定大号 Sheet 占用更多垂直空间，小屏真机仍需单独验证布局
+
 ## Template
 
 Use this structure for future decisions:

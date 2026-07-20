@@ -314,6 +314,266 @@ final class ForumHubUITests: XCTestCase {
         wait(for: [secondReturn], timeout: 5)
     }
 
+    @MainActor
+    func testNGAReplyComposerSwitchesInlineEmojiGroupsAndReturnsToKeyboard() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(scenario: "UITEST_AUTHENTICATED_FEED")
+
+        let threadRow = app.buttons["thread-row-90002"]
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 8))
+        threadRow.tap()
+
+        let replyAction = app.buttons["thread-detail-reply-action"]
+        XCTAssertTrue(replyAction.waitForExistence(timeout: 8))
+        replyAction.tap()
+
+        XCTAssertTrue(app.buttons["reply-composer-close"].waitForExistence(timeout: 5))
+        let targetTitle = app.staticTexts["reply-composer-target-title"]
+        XCTAssertTrue(targetTitle.waitForExistence(timeout: 5))
+        XCTAssertTrue(targetTitle.isHittable, "回复目标标题不应被 Sheet 顶部遮挡")
+
+        let quickEmoji = app.buttons["reply-composer-quick-emoji-ng_1.png"]
+        XCTAssertTrue(quickEmoji.waitForExistence(timeout: 5))
+        XCTAssertTrue(quickEmoji.isHittable, "键盘模式下快捷表情不应被 Sheet 底部遮挡")
+
+        let editor = app.textViews["reply-composer-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+
+        let emojiToggle = app.buttons["reply-composer-emoji-toggle"]
+        XCTAssertTrue(emojiToggle.waitForExistence(timeout: 3))
+        XCTAssertEqual(emojiToggle.label, "打开表情")
+        emojiToggle.tap()
+
+        let emojiPanelAnchor = app.buttons["reply-composer-emoji-group-ng"]
+        XCTAssertTrue(emojiPanelAnchor.waitForExistence(timeout: 5))
+        XCTAssertEqual(emojiToggle.label, "返回键盘")
+
+        for (group, filename) in [("pt", "pt00.png"), ("dt", "dt01.png"), ("pg", "pg01.png")] {
+            let groupButton = app.buttons["reply-composer-emoji-group-\(group)"]
+            XCTAssertTrue(groupButton.waitForExistence(timeout: 3))
+            groupButton.tap()
+
+            let emojiButton = app.buttons["reply-composer-emoji-\(filename)"]
+            XCTAssertTrue(emojiButton.waitForExistence(timeout: 5))
+            emojiButton.tap()
+            XCTAssertTrue(emojiPanelAnchor.exists, "连续选择表情时面板必须保持打开")
+        }
+
+        emojiToggle.tap()
+        let returnsToKeyboardMode = NSPredicate(format: "label == %@", "打开表情")
+        let keyboardModeExpectation = XCTNSPredicateExpectation(
+            predicate: returnsToKeyboardMode,
+            object: emojiToggle
+        )
+        wait(for: [keyboardModeExpectation], timeout: 5)
+        XCTAssertFalse(emojiPanelAnchor.exists)
+        XCTAssertTrue(app.buttons["reply-composer-submit"].isEnabled)
+    }
+
+    @MainActor
+    func testNGAReplyComposerClosesWhileKeyboardIsVisible() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(scenario: "UITEST_AUTHENTICATED_FEED")
+
+        let threadRow = app.buttons["thread-row-90002"]
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 8))
+        threadRow.tap()
+
+        let replyAction = app.buttons["thread-detail-reply-action"]
+        XCTAssertTrue(replyAction.waitForExistence(timeout: 8))
+        replyAction.tap()
+
+        let closeButton = app.buttons["reply-composer-close"]
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(closeButton.isHittable, "键盘可见时关闭按钮应可点击")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "初次打开回复页应自动显示键盘")
+        closeReplyComposer(closeButton, in: app, returningTo: replyAction)
+    }
+
+    @MainActor
+    func testNGAReplyComposerClosesAfterTypingText() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(scenario: "UITEST_AUTHENTICATED_FEED")
+
+        let threadRow = app.buttons["thread-row-90002"]
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 8))
+        threadRow.tap()
+
+        let replyAction = app.buttons["thread-detail-reply-action"]
+        XCTAssertTrue(replyAction.waitForExistence(timeout: 8))
+        replyAction.tap()
+
+        let editor = app.textViews["reply-composer-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        editor.typeText("typed reply")
+
+        let submitButton = app.buttons["reply-composer-submit"]
+        XCTAssertTrue(submitButton.isEnabled, "键盘输入正文后发布按钮应立即启用")
+        closeReplyComposer(
+            app.buttons["reply-composer-close"],
+            in: app,
+            returningTo: replyAction
+        )
+    }
+
+    @MainActor
+    func testNGAReplyComposerSubmitsAfterTypingText() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(scenario: "UITEST_AUTHENTICATED_FEED")
+
+        let threadRow = app.buttons["thread-row-90002"]
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 8))
+        threadRow.tap()
+
+        let replyAction = app.buttons["thread-detail-reply-action"]
+        XCTAssertTrue(replyAction.waitForExistence(timeout: 8))
+        replyAction.tap()
+
+        let editor = app.textViews["reply-composer-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        editor.typeText("typed reply")
+
+        let submitButton = app.buttons["reply-composer-submit"]
+        XCTAssertTrue(submitButton.isEnabled)
+        submitButton.tap()
+
+        XCTAssertTrue(
+            app.alerts["回复已发送"].waitForExistence(timeout: 8),
+            "输入正文后点击发布应执行 Mock Repository 并显示成功反馈"
+        )
+        XCTAssertFalse(app.textViews["reply-composer-editor"].exists)
+    }
+
+    @MainActor
+    func testNGAReplyComposerClosesFromEmojiAndReturnedKeyboardModes() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(scenario: "UITEST_AUTHENTICATED_FEED")
+
+        let threadRow = app.buttons["thread-row-90002"]
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 8))
+        threadRow.tap()
+
+        let replyAction = app.buttons["thread-detail-reply-action"]
+        XCTAssertTrue(replyAction.waitForExistence(timeout: 8))
+        replyAction.tap()
+
+        let emojiToggle = app.buttons["reply-composer-emoji-toggle"]
+        XCTAssertTrue(emojiToggle.waitForExistence(timeout: 5))
+        emojiToggle.tap()
+        XCTAssertTrue(app.buttons["reply-composer-emoji-group-ng"].waitForExistence(timeout: 5))
+        closeReplyComposer(app.buttons["reply-composer-close"], in: app, returningTo: replyAction)
+
+        replyAction.tap()
+        XCTAssertTrue(emojiToggle.waitForExistence(timeout: 5))
+        emojiToggle.tap()
+        XCTAssertTrue(app.buttons["reply-composer-emoji-group-ng"].waitForExistence(timeout: 5))
+        emojiToggle.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "从表情模式返回后应恢复键盘")
+        closeReplyComposer(app.buttons["reply-composer-close"], in: app, returningTo: replyAction)
+    }
+
+    @MainActor
+    func testNGAReplyComposerSupportsThreeConsecutiveOpenCloseCycles() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(scenario: "UITEST_AUTHENTICATED_FEED")
+
+        let threadRow = app.buttons["thread-row-90002"]
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 8))
+        threadRow.tap()
+
+        let replyAction = app.buttons["thread-detail-reply-action"]
+        XCTAssertTrue(replyAction.waitForExistence(timeout: 8))
+
+        for cycle in 1...3 {
+            replyAction.tap()
+            let closeButton = app.buttons["reply-composer-close"]
+            XCTAssertTrue(closeButton.waitForExistence(timeout: 5), "第 \(cycle) 次打开回复页应成功")
+            closeReplyComposer(closeButton, in: app, returningTo: replyAction)
+        }
+    }
+
+    @MainActor
+    private func closeReplyComposer(
+        _ closeButton: XCUIElement,
+        in app: XCUIApplication,
+        returningTo replyAction: XCUIElement
+    ) {
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(closeButton.isHittable)
+        closeButton.tap()
+
+        let composerDismissed = NSPredicate(format: "exists == false")
+        let dismissExpectation = XCTNSPredicateExpectation(
+            predicate: composerDismissed,
+            object: closeButton
+        )
+        wait(for: [dismissExpectation], timeout: 5)
+        XCTAssertFalse(app.textViews["reply-composer-editor"].exists)
+        XCTAssertTrue(replyAction.isHittable)
+    }
+
+    @MainActor
+    func testNGAReplyComposerRemainsAccessibleAtLargestTextSize() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(
+            scenario: "UITEST_AUTHENTICATED_FEED",
+            contentSizeCategory: "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
+        )
+
+        let threadRow = app.buttons["thread-row-90002"]
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 8))
+        threadRow.tap()
+
+        let replyAction = app.buttons["thread-detail-reply-action"]
+        XCTAssertTrue(replyAction.waitForExistence(timeout: 8))
+        replyAction.tap()
+
+        for identifier in [
+            "reply-composer-close",
+            "reply-composer-emoji-toggle",
+            "reply-composer-submit"
+        ] {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.waitForExistence(timeout: 5), "\(identifier) 应在最大辅助字体下存在")
+            XCTAssertTrue(button.isHittable, "\(identifier) 应在最大辅助字体下可点击")
+        }
+
+        let editor = app.textViews["reply-composer-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        XCTAssertTrue(editor.isHittable, "正文编辑区应在最大辅助字体下可点击")
+
+        app.buttons["reply-composer-emoji-toggle"].tap()
+        let groupScroller = app.scrollViews["reply-composer-emoji-groups"]
+        XCTAssertTrue(groupScroller.waitForExistence(timeout: 5))
+        for group in ["ng", "ac", "a2", "pt", "dt", "pg"] {
+            let button = app.buttons["reply-composer-emoji-group-\(group)"]
+            XCTAssertTrue(button.waitForExistence(timeout: 5), "表情分类 \(group) 应可访问")
+            var swipeCount = 0
+            while !button.isHittable, swipeCount < 6 {
+                groupScroller.swipeLeft()
+                swipeCount += 1
+            }
+            XCTAssertTrue(button.isHittable, "表情分类 \(group) 应可点击")
+            button.tap()
+        }
+
+        var auditFailures: [String] = []
+        try app.performAccessibilityAudit(for: [.hitRegion, .trait]) { issue in
+            auditFailures.append(
+                "\(issue.compactDescription): \(issue.detailedDescription) element=\(String(describing: issue.element))"
+            )
+            return true
+        }
+        XCTAssertTrue(auditFailures.isEmpty, auditFailures.joined(separator: "\n"))
+
+        let closeButton = app.buttons["reply-composer-close"]
+        XCTAssertTrue(closeButton.isHittable, "最大辅助字体下关闭按钮应保持可点击")
+        closeReplyComposer(closeButton, in: app, returningTo: replyAction)
+    }
+
     private func tapBottomTab(named title: String, in app: XCUIApplication) {
         let button = app.buttons[title]
         XCTAssertTrue(button.waitForExistence(timeout: 5), "底栏应该展示\(title)按钮。")
