@@ -396,6 +396,18 @@
     - V2EX parser/请求隔离、Feed generation、完整真机测试与 Debug 构建通过；
     - 在新安装的真机包完成人工验收后再勾选。
 
+- [x] **SD-7.8 使用 NGA 父版权威目录重建网事杂谈子版筛选**
+  - 具体问题：网事杂谈筛选曾把全站 NGA 栏目视为子版，混淆父子关系、`fid/stid` 浏览目标和服务器过滤 ID；目录变化与局部加载失败也缺少安全状态。
+  - 涉及文件或模块：`ForumHub/Data/NGA`、`AuthoritativeChildForumDirectory`、`ForumHub/Features/ForumFeed`、Feed 偏好、NGA Fixtures 与测试
+  - 优先级：P1
+  - 状态：已完成。2026-07-22，Xcode Beta，真机“哥谭之王”（UDID `00008150-001A4D5E1428401C`）：用户按验收清单人工完成主版始终包含/默认只看主版、多选后应用、重新打开恢复、本地搜索、较大字体、VoiceOver、取消草稿和一次应用，并明确回复“一切正常”。前台目录刷新、子版局部失败、新增/取消模拟、异常快照保留和 generation 边界由同机 Swift Testing 覆盖，不宣称为人工检查；使用全新 DerivedData 运行 `NGAAuthoritativeChildForumParserTests`、`NGAAuthoritativeChildForumDirectoryRepositoryTests`、`AuthoritativeChildForumDirectoryStateTests`、`ForumFeedPresentationTests`，39/39（4 suites）通过，新增测试证明目录取消当前已选子版时只以剩余稳定键 reload 一次且旧 in-flight generation 不可提交。严格 Rasen 校验与 diff 检查见本变更最终验证记录。
+  - 验收标准：
+    - 筛选只消费父版 `fid=-7` 的完整权威直接子版目录，且 `fid/stid` 稳定身份、过滤 ID 与 attributes 不混用；
+    - 首次基线、新增、改名、取消、异常快照及旧偏好延迟迁移行为可解释且有回归测试；
+    - 主版始终包含，子版局部失败不清空成功内容，generation、分页、排序及 `source + tid` 去重不回归；
+    - 不调用 `nuke.php` 修改服务器端屏蔽，不改变 V2EX、LINUX DO 或 Mock 的来源能力；
+    - 聚焦自动化测试、严格 Rasen 校验、diff 检查和人工真机交互/可访问性验收全部通过。
+
 ---
 
 ## 已完成基线（不再重复迁移）

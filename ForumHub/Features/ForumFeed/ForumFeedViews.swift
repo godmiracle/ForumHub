@@ -89,10 +89,14 @@ struct ForumFeedContent: View {
     let showsRetapRefreshIndicator: Bool
     let sortMode: FeedSortMode
     let filterState: FeedFilterState
-    let childChannels: [ForumChannel]
+    let childChannels: [AuthoritativeChildForum]
+    let childForumStatus: FeedChildForumStatus
     let onSortChange: (FeedSortMode) -> Void
     let onFilterApply: (FeedFilterState) async -> Void
     let onFilterReset: () async -> Void
+    let onNewChildForumsSeen: () -> Void
+    let onCancelledChildForumNoticeDismiss: () -> Void
+    let onRetryFailedChildForums: () async -> Void
     let onRefresh: () async -> Void
     let onLoadNextPage: () async -> Void
     var onBrowserVerificationRequested: () -> Void = {}
@@ -129,8 +133,10 @@ struct ForumFeedContent: View {
                                 sortMode: sortMode,
                                 filterState: filterState,
                                 childChannels: childChannels,
+                                childForumStatus: childForumStatus,
                                 onSortChange: onSortChange,
-                                onFilterApply: onFilterApply
+                                onFilterApply: onFilterApply,
+                                onNewChildForumsSeen: onNewChildForumsSeen
                             )
                         }
                     }
@@ -212,9 +218,13 @@ struct ForumFeedContent: View {
 
     @ViewBuilder
     private var errorContent: some View {
-        if let errorMessage {
+        if errorMessage != nil
+            || childForumStatus.cancelledSelectionNotice != nil
+            || childForumStatus.partialFailureMessage != nil {
             VStack(alignment: .leading, spacing: 10) {
-                ErrorBanner(message: errorMessage)
+                if let errorMessage {
+                    ErrorBanner(message: errorMessage)
+                }
                 if showsBrowserVerificationAction {
                     Button("打开浏览器验证") {
                         onBrowserVerificationRequested()
@@ -222,6 +232,22 @@ struct ForumFeedContent: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Color(red: 0.18, green: 0.48, blue: 0.38))
                     .accessibilityIdentifier("linuxdo-browser-verification-button")
+                }
+                if let notice = childForumStatus.cancelledSelectionNotice {
+                    FeedStatusBanner(
+                        message: notice,
+                        actionTitle: "知道了",
+                        action: onCancelledChildForumNoticeDismiss
+                    )
+                    .accessibilityIdentifier("feed-child-forum-cancelled-notice")
+                }
+                if let message = childForumStatus.partialFailureMessage {
+                    FeedStatusBanner(
+                        message: message,
+                        actionTitle: "重试",
+                        action: { Task { await onRetryFailedChildForums() } }
+                    )
+                    .accessibilityIdentifier("feed-child-forum-partial-failure")
                 }
             }
                 .padding(.horizontal, 14)
@@ -845,11 +871,22 @@ struct ForumTopBar: View {
 private struct FeedSortBar: View {
     let sortMode: FeedSortMode
     let filterState: FeedFilterState
-    let childChannels: [ForumChannel]
+    let childChannels: [AuthoritativeChildForum]
+    let childForumStatus: FeedChildForumStatus
     let onSortChange: (FeedSortMode) -> Void
     let onFilterApply: (FeedFilterState) async -> Void
+    let onNewChildForumsSeen: () -> Void
     @State private var showsFilter = false
     @State private var draft = FeedFilterState()
+
+    private var childPresentation: ChildForumFilterPresentation {
+        ChildForumFilterPresentation(
+            children: childChannels,
+            selectedStableKeys: filterState.selectedChildForumKeys,
+            pendingNewStableKeys: childForumStatus.pendingNewStableKeys,
+            searchText: ""
+        )
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -867,6 +904,13 @@ private struct FeedSortBar: View {
                         .font(.system(size: 12, weight: .bold))
                     Text(filterState.activeCount == 0 ? "筛选" : "筛选 \(filterState.activeCount)")
                         .font(.subheadline.weight(.semibold))
+                    if childPresentation.pendingNewCount > 0 {
+                        Text("新")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(PaperTheme.accent.opacity(0.14), in: Capsule())
+                    }
                 }
                 .foregroundStyle(filterState.isActive ? PaperTheme.accent : PaperTheme.secondaryInk)
                 .padding(.horizontal, 12)
@@ -880,15 +924,20 @@ private struct FeedSortBar: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("feed-filter-button")
-            .accessibilityLabel(filterState.activeCount == 0 ? "筛选帖子" : "筛选帖子，已启用 \(filterState.activeCount) 项")
+            .accessibilityLabel(filterButtonAccessibilityLabel)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(PaperTheme.paper.opacity(0.78))
-        .sheet(isPresented: $showsFilter) {
+        .sheet(isPresented: $showsFilter, onDismiss: {
+            if !childForumStatus.pendingNewStableKeys.isEmpty {
+                onNewChildForumsSeen()
+            }
+        }) {
             FeedFilterSheet(
                 draft: $draft,
                 childChannels: childChannels,
+                childForumStatus: childForumStatus,
                 onApply: { appliedFilter in
                     await onFilterApply(appliedFilter)
                     showsFilter = false
@@ -896,6 +945,14 @@ private struct FeedSortBar: View {
                 onCancel: { showsFilter = false }
             )
         }
+    }
+
+    private var filterButtonAccessibilityLabel: String {
+        var parts = [filterState.activeCount == 0 ? "筛选帖子" : "筛选帖子，已启用 \(filterState.activeCount) 项"]
+        if childPresentation.pendingNewCount > 0 {
+            parts.append("有 \(childPresentation.pendingNewCount) 个新子版")
+        }
+        return parts.joined(separator: "，")
     }
 
     private func sortButton(for mode: FeedSortMode) -> some View {
@@ -927,63 +984,146 @@ private struct FeedSortBar: View {
 
 private struct FeedFilterSheet: View {
     @Binding var draft: FeedFilterState
-    let childChannels: [ForumChannel]
+    let childChannels: [AuthoritativeChildForum]
+    let childForumStatus: FeedChildForumStatus
     let onApply: (FeedFilterState) async -> Void
     let onCancel: () -> Void
+    @State private var childSearchText = ""
+    @State private var isApplying = false
+
+    private var childPresentation: ChildForumFilterPresentation {
+        ChildForumFilterPresentation(
+            children: childChannels,
+            selectedStableKeys: draft.selectedChildForumKeys,
+            pendingNewStableKeys: childForumStatus.pendingNewStableKeys,
+            searchText: childSearchText
+        )
+    }
 
     var body: some View {
         NavigationStack {
-            Form {
-                if !childChannels.isEmpty {
-                    Section("子版") {
-                        Button("只看主版") {
-                            draft.selectedChildChannelIDs = []
+            searchableFilterForm
+                .navigationTitle("筛选")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消", action: onCancel)
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("应用") {
+                            guard !isApplying else { return }
+                            isApplying = true
+                            let appliedFilter = draft
+                            Task { await onApply(appliedFilter) }
                         }
-                        .foregroundStyle(draft.selectedChildChannelIDs.isEmpty ? PaperTheme.accent : PaperTheme.ink)
-
-                        ForEach(childChannels) { channel in
-                            Toggle(channel.title, isOn: childBinding(for: channel.id))
-                        }
+                        .disabled(isApplying)
+                        .accessibilityIdentifier("feed-filter-apply-button")
                     }
                 }
+        }
+    }
 
-                Section("主题") {
-                    Toggle("显示置顶", isOn: $draft.showsPinnedThreads)
-                        .accessibilityIdentifier("feed-filter-pinned-toggle")
-                }
+    @ViewBuilder
+    private var searchableFilterForm: some View {
+        if childPresentation.needsSearch {
+            filterForm.searchable(text: $childSearchText, prompt: "搜索子版名称或编号")
+        } else {
+            filterForm
+        }
+    }
 
+    private var filterForm: some View {
+        Form {
+            if childForumStatus.isApplicable {
                 Section {
-                    Button("重置筛选", role: .destructive) {
-                        draft = FeedFilterState()
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: "lock.fill")
+                            .foregroundStyle(PaperTheme.accent)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("网事杂谈主版")
+                                .font(.body.weight(.semibold))
+                            Text("主版始终包含")
+                                .font(.footnote)
+                                .foregroundStyle(PaperTheme.secondaryInk)
+                        }
                     }
-                    .accessibilityIdentifier("feed-filter-reset-button")
+                    .frame(minHeight: 44)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("网事杂谈主版，始终包含")
+
+                    Button("只看主版") {
+                        draft.selectedChildForumKeys = []
+                    }
+                    .foregroundStyle(draft.selectedChildForumKeys.isEmpty ? PaperTheme.accent : PaperTheme.ink)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityHint("清空所有子版草稿，应用后只加载主版")
+
+                    if let message = childForumStatus.directoryUnavailableMessage {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(PaperTheme.secondaryInk)
+                            .accessibilityIdentifier("feed-child-forum-directory-unavailable")
+                    } else if childChannels.isEmpty {
+                        Text("暂无可选子版")
+                            .font(.footnote)
+                            .foregroundStyle(PaperTheme.secondaryInk)
+                    } else if childPresentation.filteredChildren.isEmpty {
+                        ContentUnavailableView.search(text: childSearchText)
+                    } else {
+                        ForEach(childPresentation.filteredChildren) { channel in
+                            Toggle(isOn: childBinding(for: channel.stableKey)) {
+                                HStack(spacing: 8) {
+                                    Text(channel.title)
+                                    if childPresentation.isNew(channel.stableKey) {
+                                        Text("新")
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(PaperTheme.accent)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 3)
+                                            .background(PaperTheme.accent.opacity(0.12), in: Capsule())
+                                    }
+                                }
+                            }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                            .accessibilityLabel(childAccessibilityLabel(channel))
+                            .accessibilityIdentifier("feed-child-forum-\(channel.stableKey)")
+                        }
+                    }
+                } header: {
+                    Text("子版（已选 \(childPresentation.selectedCount)）")
+                } footer: {
+                    Text("只显示网事杂谈权威目录中的真实直接子版。")
                 }
             }
-            .navigationTitle("筛选")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消", action: onCancel)
+
+            Section("主题") {
+                Toggle("显示置顶", isOn: $draft.showsPinnedThreads)
+                    .accessibilityIdentifier("feed-filter-pinned-toggle")
+            }
+
+            Section {
+                Button("重置筛选", role: .destructive) {
+                    draft = FeedFilterState()
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("应用") {
-                        let appliedFilter = draft
-                        Task { await onApply(appliedFilter) }
-                    }
-                    .accessibilityIdentifier("feed-filter-apply-button")
-                }
+                .accessibilityIdentifier("feed-filter-reset-button")
             }
         }
     }
 
-    private func childBinding(for id: Int) -> Binding<Bool> {
+    private func childAccessibilityLabel(_ child: AuthoritativeChildForum) -> String {
+        childPresentation.isNew(child.stableKey) ? "\(child.title)，新子版" : child.title
+    }
+
+    private func childBinding(for stableKey: String) -> Binding<Bool> {
         Binding(
-            get: { draft.selectedChildChannelIDs.contains(id) },
+            get: { draft.selectedChildForumKeys.contains(stableKey) },
             set: { isSelected in
                 if isSelected {
-                    draft.selectedChildChannelIDs.insert(id)
+                    draft.selectedChildForumKeys.insert(stableKey)
                 } else {
-                    draft.selectedChildChannelIDs.remove(id)
+                    draft.selectedChildForumKeys.remove(stableKey)
                 }
             }
         )
@@ -1286,6 +1426,27 @@ struct ErrorBanner: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
             .background(PaperTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct FeedStatusBanner: View {
+    let message: String
+    let actionTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(PaperTheme.secondaryInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(actionTitle, action: action)
+                .font(.footnote.weight(.semibold))
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

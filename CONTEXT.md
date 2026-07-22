@@ -17,6 +17,7 @@ Current sources:
 - **Community Screen**: The channel-management surface. Source switching now happens from the Home top-left menu instead of treating Community as the primary source switcher.
 - **Browsing History**: A local, source-aware list of the 50 most recently opened topics, keyed by source plus native topic ID.
 - **Forum Feed**: A paginated list of pinned and regular topics for a Forum Channel, or the hot feed.
+- **Authoritative Child Forum Directory**: The last fully validated direct-child snapshot for one Forum Source and parent Forum Channel. Shared consumers use source-and-parent scope plus kind-preserving stable keys; source response fields remain inside the provider adapter.
 - **Forum Subscription**: A locally persisted choice that controls which returned Forum Channels appear in the top navigation.
 - **Topic**: A forum thread summary shown in a Forum Feed.
 - **Thread Detail**: The first post and replies for a Topic, with local presentation options such as only-author filtering, reverse order, floor labels, image preview, and pagination.
@@ -45,7 +46,9 @@ Current sources:
 - Public forum usernames in the blocked-user list sync through iCloud KVS; credentials sync separately through iCloud Keychain and never enter the KVS payload.
 - NGA thread detail pagination should preserve source fetch order, accumulate continuation pages into one reading flow, and must not reintroduce the main post as a reply row.
 - Feed time ordering and display use structured dates created at adapter boundaries; legacy time strings are compatibility-only and unparseable values never discard a topic.
-- Feed sort and pinned preferences are source-scoped, while child-channel selections are source-and-parent-channel scoped and sanitized against currently available channels.
+- Feed sort and pinned preferences are source-scoped, while child-channel selections are source-and-parent-channel scoped and sanitized against the latest confirmed authoritative directory.
+- NGA Wangshi child filtering uses only fully validated parent metadata. Shared stable keys preserve the distinction between `fid:` and `stid:` browsing identities, while NGA filtering IDs, attributes, and positional response fields remain inside the NGA adapter.
+- Authoritative directory refreshes fail closed: request, decoding, or structural failure retains the last confirmed snapshot and selection. Only a complete snapshot may add, rename, or cancel children; cancelling an active selection invalidates the old Feed generation before one reload with the remaining stable keys.
 
 ## Current Focus Areas
 

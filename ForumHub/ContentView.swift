@@ -29,6 +29,7 @@ struct ContentView: View {
     @State private var feedRetapRefreshGeneration = 0
     @State private var showsPinnedThreads = true
     @State private var feedPreferences = FeedPreferencesStore()
+    @State private var authoritativeChildForumDirectories = AuthoritativeChildForumDirectoryStore()
     @State private var isFeedHeaderCollapsed = false
     @State private var pendingComposeAction: PendingComposeAction?
     @State private var composeDestination: ComposeDestination?
@@ -37,7 +38,9 @@ struct ContentView: View {
     init() {
         if let scenario = UITestScenario.current {
             UserDefaults.standard.removeObject(forKey: "forum-feed-preferences-v2")
+            UserDefaults.standard.removeObject(forKey: "nga-authoritative-child-forum-directories-v1")
             _feedPreferences = State(initialValue: FeedPreferencesStore())
+            _authoritativeChildForumDirectories = State(initialValue: AuthoritativeChildForumDirectoryStore())
             _viewModel = State(initialValue: scenario.makeViewModel())
         } else {
             _viewModel = State(initialValue: ForumViewModel())
@@ -101,7 +104,7 @@ struct ContentView: View {
             lastSessionRestoreAt = .now
             subscriptions.prepareDefaults(for: viewModel.channels)
             selectedChannelID = viewModel.forum.id
-            restoreFeedPreferences()
+            await refreshAuthoritativeChildForumsAndRestorePreferences()
             await viewModel.reload()
         }
         .onReceive(
@@ -134,6 +137,7 @@ struct ContentView: View {
                     v2exAuthStore: v2exAuthStore,
                     linuxDoAuthStore: linuxDoAuthStore
                 )
+                await refreshAuthoritativeChildForumsAndRestorePreferences(reloadsFeedOnSelectionChange: true)
             }
         }
     }
@@ -262,6 +266,7 @@ struct ContentView: View {
                 sortMode: viewModel.feedSortMode,
                 filterState: currentFilterState,
                 childChannels: tab == .home ? availableChildChannels : [],
+                childForumStatus: tab == .home ? currentChildForumStatus : FeedChildForumStatus(),
                 onSortChange: { mode in
                     withAnimation(.snappy(duration: 0.22)) { viewModel.feedSortMode = mode }
                     persistFeedPreferences()
@@ -271,13 +276,22 @@ struct ContentView: View {
                         showsPinnedThreads = filter.showsPinnedThreads
                     }
                     persistFeedPreferences(filter: filter)
-                    await viewModel.setSelectedChildChannels(filter.selectedChildChannelIDs)
+                    await viewModel.setSelectedChildForumKeys(filter.selectedChildForumKeys)
                 },
                 onFilterReset: {
                     let reset = FeedFilterState()
                     withAnimation(.snappy(duration: 0.22)) { showsPinnedThreads = true }
                     persistFeedPreferences(filter: reset)
-                    await viewModel.setSelectedChildChannels([])
+                    await viewModel.setSelectedChildForumKeys([])
+                },
+                onNewChildForumsSeen: {
+                    viewModel.confirmPendingNewChildForumsSeen(using: authoritativeChildForumDirectories)
+                },
+                onCancelledChildForumNoticeDismiss: {
+                    viewModel.dismissCancelledChildForumNotice()
+                },
+                onRetryFailedChildForums: {
+                    await viewModel.retryFailedChildForums()
                 },
                 onRefresh: { await viewModel.reload() },
                 onLoadNextPage: { await viewModel.loadNextPage() },
@@ -329,7 +343,7 @@ struct ContentView: View {
                         await viewModel.switchSource(to: source, reloadsFeed: false)
                         subscriptions.prepareDefaults(for: viewModel.channels)
                         selectedChannelID = viewModel.forum.id
-                        restoreFeedPreferences()
+                        await refreshAuthoritativeChildForumsAndRestorePreferences()
                         await viewModel.reload()
                     }
                 },
@@ -372,15 +386,28 @@ struct ContentView: View {
         viewModel.displayedThreads
     }
 
-    private var availableChildChannels: [ForumChannel] {
+    private var availableChildChannels: [AuthoritativeChildForum] {
         guard selectedTab == .home, selectedChannelID == viewModel.repository.defaultChannel.id else { return [] }
         return viewModel.availableChildChannels
     }
 
     private var currentFilterState: FeedFilterState {
         FeedFilterState(
-            selectedChildChannelIDs: viewModel.selectedChildChannelIDs,
+            selectedChildForumKeys: viewModel.selectedChildForumKeys,
             showsPinnedThreads: showsPinnedThreads
+        )
+    }
+
+    private var currentChildForumStatus: FeedChildForumStatus {
+        let isApplicable = selectedTab == .home
+            && viewModel.source == .nga
+            && selectedChannelID == viewModel.repository.defaultChannel.id
+        return FeedChildForumStatus(
+            isApplicable: isApplicable,
+            hasConfirmedDirectory: isApplicable && viewModel.authoritativeChildForumDirectory != nil,
+            pendingNewStableKeys: isApplicable ? viewModel.pendingNewChildForumStableKeys : [],
+            cancelledSelectionNotice: isApplicable ? viewModel.cancelledChildForumNotice : nil,
+            failedChildForumCount: isApplicable ? viewModel.failedChildForumStableKeys.count : 0
         )
     }
 
@@ -396,23 +423,34 @@ struct ContentView: View {
     }
 
     private func restoreFeedPreferences() {
-        let validChildIDs = Set(viewModel.availableChildChannels.map(\.id))
         let preference = feedPreferences.preference(
             source: viewModel.source,
-            channelID: selectedChannelID,
-            validChildChannelIDs: validChildIDs
+            parent: viewModel.currentForumChannel,
+            directory: viewModel.authoritativeChildForumDirectory
         )
         showsPinnedThreads = preference.filter.showsPinnedThreads
         viewModel.restoreFeedPreferences(
             sortMode: preference.sortMode,
-            selectedChildChannelIDs: preference.filter.selectedChildChannelIDs
+            selectedChildForumKeys: preference.filter.selectedChildForumKeys
         )
+    }
+
+    private func refreshAuthoritativeChildForumsAndRestorePreferences(
+        reloadsFeedOnSelectionChange: Bool = false
+    ) async {
+        viewModel.restoreCachedAuthoritativeChildForumDirectory(using: authoritativeChildForumDirectories)
+        restoreFeedPreferences()
+        await viewModel.refreshAuthoritativeChildForumDirectory(
+            using: authoritativeChildForumDirectories,
+            reloadsFeedOnSelectionChange: reloadsFeedOnSelectionChange
+        )
+        restoreFeedPreferences()
     }
 
     private func persistFeedPreferences(filter: FeedFilterState? = nil) {
         feedPreferences.save(
             source: viewModel.source,
-            channelID: selectedChannelID,
+            parent: viewModel.currentForumChannel,
             sortMode: viewModel.feedSortMode,
             filter: filter ?? currentFilterState
         )
@@ -421,7 +459,7 @@ struct ContentView: View {
     private func switchToChannel(_ channel: ForumChannel) async {
         selectedChannelID = channel.id
         await viewModel.switchForum(to: channel, reloadsFeed: false)
-        restoreFeedPreferences()
+        await refreshAuthoritativeChildForumsAndRestorePreferences()
         await viewModel.reload()
     }
 

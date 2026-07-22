@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  脱敏真实形状；2026-07-20 从已登录真机“哥谭之王”请求
+  GET https://bbs.nga.cn/thread.php?fid=-7&page=1&lite=xml&__inchst=UTF8
+  仅保留父版身份与 __F/sub_forums；账号、Cookie、主题和其他响应字段已删除。
+-->
+<root>
+  <__F>
+    <fid>-7</fid>
+    <name>网事杂谈</name>
+    <sub_forums>
+      <item><item>570</item><item>优惠信息 购物指南</item><item></item><item>12700430</item><item>4906</item></item>
+      <item><item>-522474</item><item>体育综合讨论</item><item>2024年巴黎夏季奥运会</item><item>27604851</item><item>4906</item></item>
+      <item><item>524</item><item>漩涡书院</item><item></item><item>15947599</item><item>4906</item></item>
+      <item><item>-1459709</item><item>职场人生</item><item></item><item>16446619</item><item>4906</item></item>
+      <item><item>704</item><item>生活万象</item><item></item><item>20235978</item><item>4654</item></item>
+      <item><item>-576177</item><item>影音讨论区</item><item></item><item>20487381</item><item>4654</item></item>
+      <item><item>-8725919</item><item>小窗视界</item><item>旅游，摄影</item><item>21121632</item><item>4906</item></item>
+      <item><item>498</item><item>二 手 交 易</item><item>信息互助</item><item>11852286</item><item>4906</item></item>
+      <t47206901><item>47206901</item><item>[股市]技术分析</item><item></item><item>47206901</item><item>2590</item></t47206901>
+      <item><item>-1742851</item><item>青玉巫婆的小屋</item><item>GirlsTalk</item><item>18645010</item><item>4654</item></item>
+      <item><item>414</item><item>游戏综合讨论</item><item></item><item>21809886</item><item>296</item></item>
+      <item><item>-81981</item><item>生命之杯</item><item></item><item>21809887</item><item>4906</item></item>
+      <item><item>-343809</item><item>汽车俱乐部</item><item></item><item>21809888</item><item>4906</item></item>
+      <item><item>485</item><item>篮球</item><item></item><item>21809889</item><item>4906</item></item>
+      <item><item>-608808</item><item>恩基爱厨艺美食交流</item><item></item><item>21809890</item><item>4906</item></item>
+      <item><item>-353371</item><item>萌萌宠物</item><item></item><item>18372474</item><item>4906</item></item>
+      <item><item>436</item><item>消费电子 IT新闻</item><item></item><item>19716669</item><item>4906</item></item>
+      <item><item>-4567100</item><item>狼人杀</item><item></item><item>21813710</item><item>4906</item></item>
+      <item><item>-187628</item><item>Home, sweet home</item><item></item><item>21813725</item><item>4654</item></item>
+      <item><item>716</item><item>NGATOYS</item><item>NGATOYS模玩手办</item><item>21813266</item><item>4906</item></item>
+      <item><item>300</item><item>网络游戏综合</item><item></item><item>21171299</item><item>4906</item></item>
+      <item><item>-39223361</item><item>娱乐吃瓜区</item><item>八卦吃瓜国家地理</item><item>22387879</item><item>4654</item></item>
+      <item><item>-7955747</item><item>晴风村</item><item>我有酒，你有故事吗？</item><item>23094539</item><item>4906</item></item>
+      <item><item>761</item><item>桌游讨论</item><item></item><item>25265827</item><item>4906</item></item>
+      <item><item>767</item><item>剧本杀(谋杀之谜)</item><item></item><item>25367111</item><item>4906</item></item>
+      <item><item>510346</item><item>永歌森林</item><item></item><item>29944224</item><item>4654</item></item>
+      <item><item>843</item><item>国际新闻</item><item></item><item>30775991</item><item>4906</item></item>
+      <item><item>428</item><item>手机 网页游戏综合讨论</item><item>手游/页游综合讨论</item><item>8876060</item><item>296</item></item>
+      <item><item>847</item><item>历史研究</item><item></item><item>31481151</item><item>4654</item></item>
+      <item><item>510418</item><item>视频与主播讨论</item><item></item><item>37401602</item><item>4654</item></item>
+      <t44618580><item>44618580</item><item>期货交易</item><item></item><item>44618580</item><item>2590</item></t44618580>
+    </sub_forums>
+  </__F>
+</root>

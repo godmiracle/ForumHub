@@ -15,12 +15,16 @@ final class ForumViewModel {
     var isAuthenticated = false
     var sessionState: SourceSessionState = .checking
     var errorMessage: String?
+    private(set) var failedChildForumStableKeys: Set<String> = []
+    private(set) var pendingNewChildForumStableKeys: Set<String> = []
+    private(set) var cancelledChildForumNotice: String?
     var requiresLinuxDoBrowserVerification = false
     var loginState = NGALoginState.empty
     var isLoadingMore = false
     var canLoadMore = false
     var channels: [ForumChannel] = ForumChannel.defaultChannels
-    var selectedChildChannelIDs: Set<Int> = []
+    private(set) var authoritativeChildForumDirectory: AuthoritativeChildForumDirectory?
+    var selectedChildForumKeys: Set<String> = []
 
     private let repositories: [ForumSource: any ThreadRepository]
     private(set) var source: ForumSource
@@ -41,6 +45,14 @@ final class ForumViewModel {
 
     var availableSources: [ForumSource] {
         ForumSource.allCases.filter { repositories[$0] != nil }
+    }
+
+    var currentForumChannel: ForumChannel {
+        selectedForum
+    }
+
+    var canRetryFailedChildForums: Bool {
+        !failedChildForumStableKeys.isEmpty
     }
 
     private func rebuildDisplayedThreads() {
@@ -177,6 +189,7 @@ final class ForumViewModel {
         feedLoadTask = nil
         isLoading = false
         isLoadingMore = false
+        failedChildForumStableKeys = []
     }
 
     private func replaceFeedLoad(with request: FeedRequest) async {
@@ -185,6 +198,7 @@ final class ForumViewModel {
         feedLoadTask?.cancel()
         isLoading = true
         errorMessage = nil
+        failedChildForumStableKeys = []
         requiresLinuxDoBrowserVerification = false
 
         let task = Task { [weak self] in
@@ -212,6 +226,7 @@ final class ForumViewModel {
             canLoadMore = false
             pinnedThreads = []
             threads = []
+            failedChildForumStableKeys = []
             let resolved = ForumError.resolve(error)
             errorMessage = resolved?.userMessage ?? error.localizedDescription
             applyAuthenticationFailureIfNeeded(resolved)
@@ -239,7 +254,9 @@ final class ForumViewModel {
             pinnedThreads = aggregated.pinned
             threads = aggregated.threads
             forum = aggregated.forum
+            failedChildForumStableKeys = aggregated.failedChildForumStableKeys
         case let .forum(result):
+            failedChildForumStableKeys = []
             canLoadMore = result.hasMore
             guard let payload = result.payload else {
                 pinnedThreads = []
@@ -264,6 +281,7 @@ final class ForumViewModel {
             pinnedThreads = threadsApplyingFallbackChannel(payload.pinned, fallback: request.selectedForum)
             threads = threadsApplyingFallbackChannel(payload.threads, fallback: request.selectedForum)
         case let .hot(result):
+            failedChildForumStableKeys = []
             canLoadMore = result.hasMore
             guard let payload = result.payload else {
                 pinnedThreads = []
@@ -314,6 +332,7 @@ final class ForumViewModel {
                 if usesAggregatedChildForums {
                     let aggregated = try await fetchAggregatedForum(page: nextPage)
                     guard isCurrentFeedLoad(generation) else { return }
+                    failedChildForumStableKeys = aggregated.failedChildForumStableKeys
                     guard !aggregated.threads.isEmpty else {
                         canLoadMore = false
                         return
@@ -339,6 +358,7 @@ final class ForumViewModel {
             }
         } catch {
             guard isCurrentFeedLoad(generation), !error.isCancellationLike else { return }
+            failedChildForumStableKeys = []
             let resolved = ForumError.resolve(error)
             errorMessage = resolved?.userMessage ?? error.localizedDescription
             applyAuthenticationFailureIfNeeded(resolved)
@@ -375,7 +395,8 @@ final class ForumViewModel {
         hasLoadedInitialFeed = false
         feedTab = .home
         selectedForum = channel
-        selectedChildChannelIDs = []
+        selectedChildForumKeys = []
+        authoritativeChildForumDirectory = nil
 
         if reloadsFeed {
             await reload()
@@ -421,22 +442,97 @@ final class ForumViewModel {
         }
     }
 
-    func setSelectedChildChannels(_ ids: Set<Int>) async {
-        let normalized = ids.intersection(Set(availableChildChannels.map(\.id)))
-        guard normalized != selectedChildChannelIDs else { return }
-        selectedChildChannelIDs = normalized
+    func restoreCachedAuthoritativeChildForumDirectory(
+        using store: AuthoritativeChildForumDirectoryStore
+    ) {
+        guard let parent = authoritativeChildForumParent else {
+            authoritativeChildForumDirectory = nil
+            selectedChildForumKeys = []
+            pendingNewChildForumStableKeys = []
+            cancelledChildForumNotice = nil
+            return
+        }
+        authoritativeChildForumDirectory = store.latestDirectory(for: parent)
+        normalizeSelectedChildForumKeys()
+        restoreChildForumNotices(using: store, parent: parent)
+    }
+
+    func refreshAuthoritativeChildForumDirectory(
+        using store: AuthoritativeChildForumDirectoryStore,
+        reloadsFeedOnSelectionChange: Bool = false
+    ) async {
+        guard let parent = authoritativeChildForumParent else {
+            authoritativeChildForumDirectory = nil
+            selectedChildForumKeys = []
+            pendingNewChildForumStableKeys = []
+            cancelledChildForumNotice = nil
+            return
+        }
+
+        if let cachedDirectory = store.latestDirectory(for: parent) {
+            authoritativeChildForumDirectory = cachedDirectory
+            normalizeSelectedChildForumKeys()
+        }
+
+        do {
+            guard let directory = try await repository.fetchAuthoritativeChildForumDirectory(parent: parent),
+                  authoritativeChildForumParent == parent
+            else {
+                return
+            }
+            let result = try store.synchronize(directory, selectedStableKeys: selectedChildForumKeys)
+            let didChangeSelection = result.selectedStableKeys != selectedChildForumKeys
+            authoritativeChildForumDirectory = directory
+            selectedChildForumKeys = result.selectedStableKeys
+            restoreChildForumNotices(using: store, parent: parent)
+            guard didChangeSelection,
+                  feedTab == .home,
+                  selectedForum.id == repository.defaultChannel.id
+            else {
+                return
+            }
+            suspendFeedLoading()
+            if reloadsFeedOnSelectionChange {
+                await reload()
+            }
+        } catch {
+            // 权威目录失败时保留最近一次完整确认的快照，不用全站目录回退。
+        }
+    }
+
+    func confirmPendingNewChildForumsSeen(
+        using store: AuthoritativeChildForumDirectoryStore
+    ) {
+        guard let parent = authoritativeChildForumParent else { return }
+        store.markPendingNewChildrenAsSeen(for: parent)
+        pendingNewChildForumStableKeys = []
+    }
+
+    func dismissCancelledChildForumNotice() {
+        cancelledChildForumNotice = nil
+    }
+
+    func setSelectedChildForumKeys(_ stableKeys: Set<String>) async {
+        let normalized = stableKeys.intersection(Set(availableChildChannels.map(\.stableKey)))
+        guard normalized != selectedChildForumKeys else { return }
+        selectedChildForumKeys = normalized
         guard feedTab == .home, selectedForum.id == repository.defaultChannel.id else { return }
         await reload()
     }
 
-    func restoreFeedPreferences(sortMode: FeedSortMode, selectedChildChannelIDs: Set<Int>) {
-        feedSortMode = sortMode
-        self.selectedChildChannelIDs = selectedChildChannelIDs.intersection(Set(availableChildChannels.map(\.id)))
+    func retryFailedChildForums() async {
+        guard canRetryFailedChildForums else { return }
+        await reload()
     }
 
-    var availableChildChannels: [ForumChannel] {
-        guard source == .nga else { return [] }
-        return channels.filter { $0.id != selectedForum.id }
+    func restoreFeedPreferences(sortMode: FeedSortMode, selectedChildForumKeys: Set<String>) {
+        feedSortMode = sortMode
+        self.selectedChildForumKeys = selectedChildForumKeys.intersection(Set(availableChildChannels.map(\.stableKey)))
+    }
+
+    var availableChildChannels: [AuthoritativeChildForum] {
+        guard authoritativeChildForumParent != nil else { return [] }
+        return authoritativeChildForumDirectory?.children ?? []
     }
 
     func loadChannels() async {
@@ -461,7 +557,8 @@ final class ForumViewModel {
         feedTab = .home
         currentPage = 1
         selectedForum = newRepository.defaultChannel
-        selectedChildChannelIDs = []
+        selectedChildForumKeys = []
+        authoritativeChildForumDirectory = nil
         channels = [newRepository.defaultChannel]
         forum = ForumSummary(
             id: newRepository.defaultChannel.id,
@@ -513,7 +610,8 @@ final class ForumViewModel {
         currentPage = 1
         feedTab = .home
         selectedForum = currentDefault
-        selectedChildChannelIDs = []
+        selectedChildForumKeys = []
+        authoritativeChildForumDirectory = nil
         forum = ForumSummary(
             id: currentDefault.id,
             title: currentDefault.title,
@@ -528,7 +626,7 @@ final class ForumViewModel {
         source == .nga
             && feedTab == .home
             && selectedForum.id == repository.defaultChannel.id
-            && !selectedChildChannelIDs.isEmpty
+            && !selectedChildForumKeys.isEmpty
     }
 
     private func applyAuthenticationFailureIfNeeded(_ error: ForumError?) {
@@ -538,7 +636,7 @@ final class ForumViewModel {
     }
 
     private func makeFeedRequest(page: Int) -> FeedRequest {
-        let selectedChildren = availableChildChannels.filter { selectedChildChannelIDs.contains($0.id) }
+        let selectedChildren = availableChildChannels.filter { selectedChildForumKeys.contains($0.stableKey) }.map(\.channel)
         return FeedRequest(
             tab: feedTab,
             source: source,
@@ -555,26 +653,70 @@ final class ForumViewModel {
         generation == feedLoadGeneration
     }
 
+    private var authoritativeChildForumParent: ForumChannel? {
+        let defaultChannel = repository.defaultChannel
+        guard source == .nga,
+              selectedForum.source == defaultChannel.source,
+              selectedForum.id == defaultChannel.id,
+              selectedForum.nativeKey == defaultChannel.nativeKey
+        else {
+            return nil
+        }
+        return selectedForum
+    }
+
+    private func normalizeSelectedChildForumKeys() {
+        selectedChildForumKeys.formIntersection(Set(availableChildChannels.map(\.stableKey)))
+    }
+
+    private func restoreChildForumNotices(
+        using store: AuthoritativeChildForumDirectoryStore,
+        parent: ForumChannel
+    ) {
+        pendingNewChildForumStableKeys = store.pendingNewStableKeys(for: parent)
+        let cancelledChildren = store.consumeCancelledSelectedChildren(for: parent)
+        guard !cancelledChildren.isEmpty else { return }
+        if cancelledChildren.count == 1, let title = cancelledChildren.first?.title {
+            cancelledChildForumNotice = "\(title)已从筛选中移除。"
+        } else {
+            cancelledChildForumNotice = "\(cancelledChildren.count) 个已选子版已从筛选中移除。"
+        }
+    }
+
     private func fetchAggregatedForum(page: Int) async throws -> AggregatedForumResult {
         try await fetchAggregatedForum(for: makeFeedRequest(page: page))
     }
 
     private func fetchAggregatedForum(for request: FeedRequest) async throws -> AggregatedForumResult {
-        let forumsToLoad = [request.selectedForum] + request.selectedChildChannels
+        try Task.checkCancellation()
+        let mainResult = try await request.repository.fetchForum(channel: request.selectedForum, page: request.page)
+        guard let mainPayload = mainResult.payload else {
+            throw NSError(
+                domain: "ForumViewModel",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "主版内容未能解析。"]
+            )
+        }
 
-        var results: [(channel: ForumChannel, result: ThreadFetchResult)] = []
-        for channel in forumsToLoad {
+        var payloads: [(ForumChannel, ForumPayload)] = [(request.selectedForum, mainPayload)]
+        var successfulChildResults: [ThreadFetchResult] = []
+        var failedChildForumStableKeys = Set<String>()
+        for channel in request.selectedChildChannels {
             try Task.checkCancellation()
-            let result = try await request.repository.fetchForum(channel: channel, page: request.page)
-            results.append((channel, result))
-        }
-
-        let payloads = results.compactMap { entry -> (ForumChannel, ForumPayload)? in
-            guard let payload = entry.result.payload else { return nil }
-            return (entry.channel, payload)
-        }
-        guard !payloads.isEmpty else {
-            throw NSError(domain: "ForumViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "没有加载到子版内容。"])
+            do {
+                let result = try await request.repository.fetchForum(channel: channel, page: request.page)
+                guard let payload = result.payload else {
+                    failedChildForumStableKeys.insert(channel.nativeKey)
+                    continue
+                }
+                payloads.append((channel, payload))
+                successfulChildResults.append(result)
+            } catch {
+                if error.isCancellationLike {
+                    throw error
+                }
+                failedChildForumStableKeys.insert(channel.nativeKey)
+            }
         }
 
         let mergedPinned = deduplicatedThreads(
@@ -602,7 +744,8 @@ final class ForumViewModel {
             ),
             pinned: mergedPinned,
             threads: mergedThreads,
-            hasMore: results.contains { $0.result.hasMore }
+            hasMore: mainResult.hasMore || successfulChildResults.contains { $0.hasMore },
+            failedChildForumStableKeys: failedChildForumStableKeys
         )
     }
 
@@ -648,6 +791,7 @@ private struct AggregatedForumResult {
     let pinned: [ForumThread]
     let threads: [ForumThread]
     let hasMore: Bool
+    let failedChildForumStableKeys: Set<String>
 }
 
 private struct FeedRequest {

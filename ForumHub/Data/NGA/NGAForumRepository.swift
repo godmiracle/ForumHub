@@ -19,9 +19,22 @@ protocol ThreadRepository {
         content: String,
         attachments: [ReplyAttachmentUpload]
     ) async throws
+    func fetchAuthoritativeChildForumDirectory(
+        parent: ForumChannel
+    ) async throws -> AuthoritativeChildForumDirectory?
+}
+
+extension ThreadRepository {
+    func fetchAuthoritativeChildForumDirectory(
+        parent _: ForumChannel
+    ) async throws -> AuthoritativeChildForumDirectory? {
+        nil
+    }
 }
 
 struct NGALiveThreadRepository: ThreadRepository {
+    typealias AuthoritativeChildForumDataLoader = @Sendable (URL) async throws -> Data
+
     private static let replyRequestTimeout: TimeInterval = 30
     private static let attachmentUploadTimeout: TimeInterval = 60
     let source = ForumSource.nga
@@ -39,6 +52,13 @@ struct NGALiveThreadRepository: ThreadRepository {
         supportsCreateThread: true
     )
     let defaultChannel = ForumChannel.defaultForum
+    private let authoritativeChildForumDataLoader: AuthoritativeChildForumDataLoader?
+
+    init(
+        authoritativeChildForumDataLoader: AuthoritativeChildForumDataLoader? = nil
+    ) {
+        self.authoritativeChildForumDataLoader = authoritativeChildForumDataLoader
+    }
 
     func fetchChannels() async throws -> [ForumChannel] {
         let attempts: [(URL, [String: String])] = [
@@ -77,7 +97,16 @@ struct NGALiveThreadRepository: ThreadRepository {
     }
 
     func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult {
-        let fid = channel.id
+        let browseTarget = NGAForumBrowseTarget(
+            stableKey: channel.nativeKey,
+            expectedValue: channel.id
+        ) ?? .fid(channel.id)
+
+        if case .stid = browseTarget {
+            return try await fetchWebForum(target: browseTarget, page: page)
+        }
+
+        let fid = browseTarget.value
         let url = URL(string: "https://bbs.nga.cn/app_api.php?__lib=subject&__act=list")!
         let (data, rawText) = try await post(
             url: url,
@@ -95,7 +124,7 @@ struct NGALiveThreadRepository: ThreadRepository {
         }
 
         try Task.checkCancellation()
-        let webResult = try await fetchWebForum(fid: fid, page: page)
+        let webResult = try await fetchWebForum(target: browseTarget, page: page)
         let combinedRawText = """
         app_api.php 没有解析出主题，已尝试网页兜底。
 
@@ -106,6 +135,49 @@ struct NGALiveThreadRepository: ThreadRepository {
         \(webResult.rawText)
         """
         return ThreadFetchResult(payload: webResult.payload, rawText: combinedRawText)
+    }
+
+    func fetchAuthoritativeChildForumDirectory(
+        parent: ForumChannel
+    ) async throws -> AuthoritativeChildForumDirectory? {
+        guard parent.source == source else { return nil }
+
+        try Task.checkCancellation()
+        let url = Self.authoritativeChildForumDirectoryURL(parent: parent)
+        let data: Data
+        if let authoritativeChildForumDataLoader {
+            data = try await authoritativeChildForumDataLoader(url)
+        } else {
+            let response = try await get(url: url)
+            data = response.0
+        }
+        try Task.checkCancellation()
+
+        let parsedDirectory = try NGAAuthoritativeChildForumParser.parse(
+            data: data,
+            expectedParent: parent
+        )
+        return AuthoritativeChildForumDirectory(
+            parent: parent,
+            children: parsedDirectory.children.map { child in
+                AuthoritativeChildForum(
+                    stableKey: child.stableKey,
+                    title: child.title,
+                    channel: child.channel
+                )
+            }
+        )
+    }
+
+    static func authoritativeChildForumDirectoryURL(parent: ForumChannel) -> URL {
+        var components = URLComponents(string: "https://bbs.nga.cn/thread.php")!
+        components.queryItems = [
+            URLQueryItem(name: "fid", value: "\(parent.id)"),
+            URLQueryItem(name: "page", value: "1"),
+            URLQueryItem(name: "lite", value: "xml"),
+            URLQueryItem(name: "__inchst", value: "UTF8")
+        ]
+        return components.url!
     }
 
     func fetchHotThreads(page: Int) async throws -> ThreadFetchResult {
@@ -366,15 +438,18 @@ struct NGALiveThreadRepository: ThreadRepository {
         }
     }
 
-    private func fetchWebForum(fid: Int, page: Int) async throws -> ThreadFetchResult {
+    private func fetchWebForum(
+        target: NGAForumBrowseTarget,
+        page: Int
+    ) async throws -> ThreadFetchResult {
         var components = URLComponents(string: "https://bbs.nga.cn/thread.php")!
         components.queryItems = [
-            URLQueryItem(name: "fid", value: "\(fid)"),
+            URLQueryItem(name: target.requestParameterName, value: "\(target.value)"),
             URLQueryItem(name: "page", value: "\(page)")
         ]
 
         let (_, rawText) = try await get(url: components.url!)
-        let payload = WebForumParser.parseForumHTML(rawText, fid: fid, page: page)
+        let payload = WebForumParser.parseForumHTML(rawText, fid: target.value, page: page)
         return ThreadFetchResult(payload: payload, rawText: rawText)
     }
 
@@ -836,6 +911,36 @@ enum NGAThreadParseQuality {
 private enum NGAReplyPostAction: String {
     case reply
     case quote
+}
+
+private extension NGAForumBrowseTarget {
+    init?(stableKey: String, expectedValue: Int) {
+        let components = stableKey.split(separator: ":", maxSplits: 1)
+        guard components.count == 2,
+              let value = Int(components[1]),
+              value == expectedValue
+        else {
+            return nil
+        }
+
+        switch components[0] {
+        case "fid":
+            self = .fid(value)
+        case "stid":
+            self = .stid(value)
+        default:
+            return nil
+        }
+    }
+
+    var requestParameterName: String {
+        switch self {
+        case .fid:
+            "fid"
+        case .stid:
+            "stid"
+        }
+    }
 }
 
 enum NGAReplySubmissionForm {
