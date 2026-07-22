@@ -34,6 +34,8 @@ It includes:
 - Feed rows consume structured `Date` values and present `回复 MM-dd HH:mm` or `发布 MM-dd HH:mm`; source strings are compatibility input, not display authority.
 - Sorting remains an immediate presentation concern. Child-channel and pinned visibility changes are edited as a draft in one filter sheet and committed once on Apply.
 - Sort and pinned preferences are scoped by source. NGA child-channel selections use stable keys, are scoped by source plus parent channel, and are intersected with the latest confirmed authoritative directory on restore. Legacy numeric selections migrate only after a directory can map them uniquely.
+- Home channel navigation, highlighting, horizontal paging and subscription ordering use canonical source-scoped keys. NGA ordinary numeric channels normalize to `nga:fid:<id>`, while authoritative `stid` targets remain `nga:stid:<id>`.
+- A subscribed authoritative child is a normal independent Home channel and loads only its own Feed. This is separate from the 网事杂谈 filter, which continues to aggregate the main forum and selected children.
 - The complete header is source → search/refresh/compose → channels → sort/filter → conditional session prompt. Scrolling collapses the first two rows while channels and sort/filter remain discoverable.
 - Compose is capability-driven. NGA uses the verified same-session Web compose destination; V2EX and LINUX DO keep the action hidden until a supported destination is verified.
 - Feed loads use cancellable tasks plus request generations. A response may update feed state only when its generation is still current, preventing stale Home/Hot responses from surfacing errors after a tab or source change.
@@ -50,6 +52,7 @@ It includes:
 ## Current Risks
 
 - Refresh, tab switching, source switching and filter changes can create overlapping async tasks; all must continue through the existing generation/cancellation seam.
+- Canonical channel selection must remain the generation boundary when equal numeric `fid` and `stid` targets coexist.
 - Authoritative child metadata is a remote NGA contract; unknown or incomplete shapes must preserve the last confirmed directory instead of guessing.
 - Aggregated child-channel content needs careful deduplication and stable pagination behavior.
 - User perception is strongly affected by loading-state timing, even when data is technically correct.

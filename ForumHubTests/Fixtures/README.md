@@ -20,6 +20,7 @@
 | `nga-thread-web-access-denied.html` | NGA Web | 人工组合失败边界 | Web 访问拒绝不得伪装为正文 |
 | `nga-thread-web-content-unusable.html` | NGA Web | 人工组合失败边界 | 两来源正文均 unusable 时返回 typed error |
 | `nga-wangshi-authoritative-child-forums.xml` | NGA 主题列表 XML | 2026-07-20 从已登录真机“哥谭之王”取得并裁剪的脱敏真实形状 | 网事杂谈父版身份、31 个直接子版、`fid/stid` 容器表达、过滤 ID 与 attributes 位置 |
+| `nga-stid-forum-list.html` | NGA `stid` 网页主题列表 HTML | 2026-07-22 从已登录真机“哥谭之王”取得并裁剪、替换作者的脱敏真实形状 | `topicrow` 中回复辅助链接先于真实标题链接，作者位于相邻 `author` 节点 |
 | `v2ex-topics.json` | V2EX API | 脱敏响应形状 | V2EX 主题、正文图片和来源映射 |
 | `v2ex-threaded-replies-1227563-shape.json` | V2EX API | 依据主题 `1227563` 回复引用形状脱敏裁剪 | 显式楼层引用、最近同名作者、跨页分支、冲突楼层、多用户歧义和未解析引用 |
 | `v2ex-node-qna-shape.html` | V2EX Web | 依据 `/go/qna` 普通节点页真实 DOM 形状脱敏裁剪 | `TopicsNode` 内 `cell from_<uid> t_<topicid>` 容器、无 `topic-link` class、属性顺序变化、节点说明主题干扰链接、作者、回复数和 onclick 下一页标记 |

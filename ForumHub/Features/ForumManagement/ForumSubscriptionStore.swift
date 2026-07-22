@@ -12,28 +12,35 @@ final class ForumSubscriptionStore {
     private(set) var orderedChannelKeys: [String]
     var subscribedIDs: Set<Int> {
         Set(subscribedChannelKeys.compactMap { key in
-            guard key.hasPrefix("nga:") else { return nil }
-            return Int(key.dropFirst(4))
+            guard key.hasPrefix("nga:fid:") else { return nil }
+            return Int(key.dropFirst("nga:fid:".count))
         })
     }
     private let defaults: UserDefaults
-    private let storageKey = "subscribed-forum-channel-ids"
-    private let sourceStorageKey = "subscribed-forum-channel-keys-v3"
-    private let orderStorageKey = "subscribed-forum-channel-order-v1"
+    private let legacyIDStorageKey = "subscribed-forum-channel-ids"
+    private let legacySourceStorageKey = "subscribed-forum-channel-keys-v3"
+    private let legacyOrderStorageKey = "subscribed-forum-channel-order-v1"
+    private let sourceStorageKey = "subscribed-forum-channel-keys-v4"
+    private let orderStorageKey = "subscribed-forum-channel-order-v2"
     private let migrationKey = "forum-subscriptions-defaults-v2"
     private let v2exHotMigrationKey = "forum-subscriptions-v2ex-hot-default-v1"
     private let schemaVersionKey = "forum-subscriptions-schema-version"
-    private let schemaVersion = 1
+    private let schemaVersion = 2
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
         if let savedKeys = defaults.stringArray(forKey: sourceStorageKey) {
-            let validKeys = savedKeys.filter(Self.isValidChannelKey)
+            let validKeys = savedKeys.compactMap(Self.normalizedPersistedKey)
             subscribedChannelKeys = validKeys.isEmpty
-                ? Set(Self.defaultChannelIDs.map { "nga:\($0)" })
+                ? Set(Self.defaultChannelIDs.map(Self.defaultKey))
                 : Set(validKeys)
-        } else if let savedIDs = defaults.array(forKey: storageKey)?
+        } else if let savedKeys = defaults.stringArray(forKey: legacySourceStorageKey) {
+            let validKeys = savedKeys.compactMap(Self.normalizedPersistedKey)
+            subscribedChannelKeys = validKeys.isEmpty
+                ? Set(Self.defaultChannelIDs.map(Self.defaultKey))
+                : Set(validKeys)
+        } else if let savedIDs = defaults.array(forKey: legacyIDStorageKey)?
             .compactMap({ ($0 as? NSNumber)?.intValue }), !savedIDs.isEmpty {
             var restoredIDs = Set(savedIDs)
 
@@ -43,15 +50,17 @@ final class ForumSubscriptionStore {
                 restoredIDs.formUnion(Self.defaultChannelIDs)
             }
 
-            subscribedChannelKeys = Set(restoredIDs.map { "nga:\($0)" })
+            subscribedChannelKeys = Set(restoredIDs.map(Self.defaultKey))
         } else {
-            subscribedChannelKeys = Set(Self.defaultChannelIDs.map { "nga:\($0)" })
+            subscribedChannelKeys = Set(Self.defaultChannelIDs.map(Self.defaultKey))
         }
 
         if let savedOrder = defaults.stringArray(forKey: orderStorageKey) {
-            orderedChannelKeys = savedOrder.filter(Self.isValidChannelKey)
+            orderedChannelKeys = savedOrder.compactMap(Self.normalizedPersistedKey)
+        } else if let savedOrder = defaults.stringArray(forKey: legacyOrderStorageKey) {
+            orderedChannelKeys = savedOrder.compactMap(Self.normalizedPersistedKey)
         } else {
-            orderedChannelKeys = Self.defaultChannelOrder.map { "nga:\($0)" }
+            orderedChannelKeys = Self.defaultChannelOrder.map(Self.defaultKey)
         }
 
         defaults.set(true, forKey: migrationKey)
@@ -97,9 +106,9 @@ final class ForumSubscriptionStore {
 
     func restoreDefaults() {
         subscribedChannelKeys = subscribedChannelKeys.filter { !$0.hasPrefix("nga:") }
-        subscribedChannelKeys.formUnion(Self.defaultChannelIDs.map { "nga:\($0)" })
+        subscribedChannelKeys.formUnion(Self.defaultChannelIDs.map(Self.defaultKey))
         orderedChannelKeys.removeAll { $0.hasPrefix("nga:") }
-        orderedChannelKeys.append(contentsOf: Self.defaultChannelOrder.map { "nga:\($0)" })
+        orderedChannelKeys.append(contentsOf: Self.defaultChannelOrder.map(Self.defaultKey))
         normalizeOrder()
         persist()
     }
@@ -109,7 +118,7 @@ final class ForumSubscriptionStore {
         let sourcePrefix = "\(source.rawValue):"
         subscribedChannelKeys = subscribedChannelKeys.filter { !$0.hasPrefix(sourcePrefix) }
         let sourceDefaults = source == .nga
-            ? channels.filter { Self.defaultChannelIDs.contains($0.id) }
+            ? channels.filter { Set(Self.defaultChannelIDs.map(Self.defaultKey)).contains($0.canonicalKey) }
             : preferredDefaultChannels(for: channels)
         subscribedChannelKeys.formUnion(sourceDefaults.map(key))
         orderedChannelKeys.removeAll { $0.hasPrefix(sourcePrefix) }
@@ -123,7 +132,7 @@ final class ForumSubscriptionStore {
 
         if !subscribedChannelKeys.contains(where: { $0.hasPrefix("\(source.rawValue):") }) {
             let defaults = source == .nga
-                ? channels.filter { Self.defaultChannelIDs.contains($0.id) }
+                ? channels.filter { Set(Self.defaultChannelIDs.map(Self.defaultKey)).contains($0.canonicalKey) }
                 : preferredDefaultChannels(for: channels)
             subscribedChannelKeys.formUnion(defaults.map(key))
             orderedChannelKeys.append(contentsOf: defaults.map(key).filter { !orderedChannelKeys.contains($0) })
@@ -166,14 +175,32 @@ final class ForumSubscriptionStore {
         replaceOrderedKeys(for: sourceChannel.source, with: orderedSourceKeys)
     }
 
+    @discardableResult
+    func removeCancelledAuthoritativeChannels(_ channels: [ForumChannel]) -> [ForumChannel] {
+        let removed = channels.filter { subscribedChannelKeys.contains(key(for: $0)) }
+        guard !removed.isEmpty else { return [] }
+
+        let removedKeys = Set(removed.map(key))
+        subscribedChannelKeys.subtract(removedKeys)
+        orderedChannelKeys.removeAll { removedKeys.contains($0) }
+
+        if !subscribedChannelKeys.contains(where: { $0.hasPrefix("nga:") }) {
+            let fallback = Self.defaultKey(ForumChannel.defaultForum.id)
+            subscribedChannelKeys.insert(fallback)
+            orderedChannelKeys.append(fallback)
+        }
+        normalizeOrder()
+        persist()
+        return removed
+    }
+
     private func persist() {
-        defaults.set(subscribedIDs.sorted(), forKey: storageKey)
         defaults.set(subscribedChannelKeys.sorted(), forKey: sourceStorageKey)
         defaults.set(orderedChannelKeys, forKey: orderStorageKey)
     }
 
     private func key(for channel: ForumChannel) -> String {
-        "\(channel.source.rawValue):\(channel.nativeKey)"
+        channel.canonicalKey
     }
 
     private func replaceOrderedKeys(for source: ForumSource, with reorderedSourceKeys: [String]) {
@@ -198,11 +225,26 @@ final class ForumSubscriptionStore {
         orderedChannelKeys.append(contentsOf: missingKeys)
     }
 
-    private static func isValidChannelKey(_ key: String) -> Bool {
+    private static func normalizedPersistedKey(_ key: String) -> String? {
         guard let separator = key.firstIndex(of: ":"),
-              ForumSource(rawValue: String(key[..<separator])) != nil
-        else { return false }
-        return !key[key.index(after: separator)...].isEmpty
+              let source = ForumSource(rawValue: String(key[..<separator]))
+        else { return nil }
+        let nativeKey = String(key[key.index(after: separator)...])
+        guard !nativeKey.isEmpty else { return nil }
+
+        guard source == .nga else { return "\(source.rawValue):\(nativeKey)" }
+        if nativeKey.hasPrefix("fid:"), Int(nativeKey.dropFirst(4)) != nil {
+            return "nga:\(nativeKey)"
+        }
+        if nativeKey.hasPrefix("stid:"), Int(nativeKey.dropFirst(5)) != nil {
+            return "nga:\(nativeKey)"
+        }
+        guard let legacyID = Int(nativeKey) else { return nil }
+        return defaultKey(legacyID)
+    }
+
+    private static func defaultKey(_ id: Int) -> String {
+        "nga:fid:\(id)"
     }
 
     private func preferredDefaultChannels(for channels: [ForumChannel]) -> [ForumChannel] {
@@ -210,7 +252,8 @@ final class ForumSubscriptionStore {
 
         switch source {
         case .nga:
-            return channels.filter { Self.defaultChannelIDs.contains($0.id) }
+            let defaultKeys = Set(Self.defaultChannelIDs.map(Self.defaultKey))
+            return channels.filter { defaultKeys.contains($0.canonicalKey) }
         case .v2ex:
             let hotChannels = channels.filter { $0.nativeKey == "hot" }
             let remaining = channels.filter { $0.nativeKey != "hot" }

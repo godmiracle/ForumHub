@@ -547,6 +547,26 @@ struct ForumHubTests {
         #expect(thread.replies.count == 1)
     }
 
+    @Test func webForumParserUsesTopicRowsInsteadOfReplyShortcutLinks() throws {
+        let bundle = Bundle(for: FixtureLocator.self)
+        let fixtureURL = try #require(
+            bundle.url(forResource: "nga-stid-forum-list", withExtension: "html", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "nga-stid-forum-list", withExtension: "html")
+        )
+        let html = String(decoding: try Data(contentsOf: fixtureURL), as: UTF8.self)
+
+        let payload = try #require(WebForumParser.parseForumHTML(html, fid: 47_206_901, page: 1))
+
+        #expect(payload.threads.map(\.id) == [47_212_166, 47_206_901])
+        #expect(payload.threads.map(\.title) == [
+            "[置顶]浪奔浪流 顺应趋势 技术分析 临时讨论 勿转时事",
+            "[股市]技术分析"
+        ])
+        #expect(payload.threads.map(\.author) == ["示例作者甲", "示例作者乙"])
+        #expect(payload.threads.map(\.replyCount) == [0, 9])
+        #expect(payload.threads.allSatisfy { $0.summary.isEmpty })
+    }
+
     @Test func ngaWebFallbackSelectsWholeDocumentWithoutCreatingWebReplies() throws {
         let bundle = Bundle(for: FixtureLocator.self)
         let apiURL = try #require(
@@ -864,7 +884,7 @@ struct ForumHubTests {
         let subscriptions = ForumSubscriptionStore(defaults: defaults)
 
         #expect(subscriptions.subscribedIDs == [-7, 706, -7_955_747, 436])
-        #expect(defaults.integer(forKey: "forum-subscriptions-schema-version") == 1)
+        #expect(defaults.integer(forKey: "forum-subscriptions-schema-version") == 2)
     }
 
     @Test func forumSubscriptionsDiscardMalformedSourceKeys() throws {
@@ -976,10 +996,10 @@ struct ForumHubTests {
             ForumChannel(id: -7_955_747, title: "晴风村")
         ]
 
-        #expect(ChannelPagingPolicy.destination(currentID: -7, channels: channels, direction: .next)?.id == 706)
-        #expect(ChannelPagingPolicy.destination(currentID: 706, channels: channels, direction: .next)?.id == -7_955_747)
-        #expect(ChannelPagingPolicy.destination(currentID: -7_955_747, channels: channels, direction: .next)?.id == -7)
-        #expect(ChannelPagingPolicy.destination(currentID: -7, channels: channels, direction: .previous)?.id == -7_955_747)
+        #expect(ChannelPagingPolicy.destination(currentKey: channels[0].canonicalKey, channels: channels, direction: .next)?.id == 706)
+        #expect(ChannelPagingPolicy.destination(currentKey: channels[1].canonicalKey, channels: channels, direction: .next)?.id == -7_955_747)
+        #expect(ChannelPagingPolicy.destination(currentKey: channels[2].canonicalKey, channels: channels, direction: .next)?.id == -7)
+        #expect(ChannelPagingPolicy.destination(currentKey: channels[0].canonicalKey, channels: channels, direction: .previous)?.id == -7_955_747)
     }
 
     @Test func channelPagingDistinguishesSwipesFromTapsAndScrolling() {

@@ -47,6 +47,8 @@ Current sources:
 - NGA thread detail pagination should preserve source fetch order, accumulate continuation pages into one reading flow, and must not reintroduce the main post as a reply row.
 - Feed time ordering and display use structured dates created at adapter boundaries; legacy time strings are compatibility-only and unparseable values never discard a topic.
 - Feed sort and pinned preferences are source-scoped, while child-channel selections are source-and-parent-channel scoped and sanitized against the latest confirmed authoritative directory.
+- Channel navigation, list identity, subscriptions, and ordering use canonical source-scoped keys. Legacy NGA numeric channels normalize to `nga:fid:<id>`, authoritative topic targets remain `nga:stid:<id>`, and a bare integer never reconciles different browsing kinds.
+- An authoritative child forum may be subscribed as an independent Home channel that loads only that child. Home subscriptions and Wangshi main-plus-children aggregation selections are separate preferences and never implicitly update each other.
 - NGA Wangshi child filtering uses only fully validated parent metadata. Shared stable keys preserve the distinction between `fid:` and `stid:` browsing identities, while NGA filtering IDs, attributes, and positional response fields remain inside the NGA adapter.
 - Authoritative directory refreshes fail closed: request, decoding, or structural failure retains the last confirmed snapshot and selection. Only a complete snapshot may add, rename, or cancel children; cancelling an active selection invalidates the old Feed generation before one reload with the remaining stable keys.
 

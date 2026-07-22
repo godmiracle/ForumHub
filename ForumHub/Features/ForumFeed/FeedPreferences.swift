@@ -241,6 +241,33 @@ final class FeedPreferencesStore {
         persist(payload)
     }
 
+    func removeCancelledAuthoritativeChildForumKeys(
+        _ stableKeys: Set<String>,
+        source: ForumSource,
+        parent: ForumChannel
+    ) {
+        guard !stableKeys.isEmpty,
+              let index = childRecordIndex(source: source, parent: parent)
+        else { return }
+
+        var updatedPayload = payload
+        var record = updatedPayload.childRecords[index]
+        if let selectedKeys = record.selectedChildForumKeys {
+            record.selectedChildForumKeys = Set(selectedKeys).subtracting(stableKeys).sorted()
+        }
+        if let legacyIDs = record.legacySelectedChildChannelIDs {
+            let removedIDs = Set(stableKeys.compactMap { stableKey -> Int? in
+                if stableKey.hasPrefix("fid:") { return Int(stableKey.dropFirst(4)) }
+                if stableKey.hasPrefix("stid:") { return Int(stableKey.dropFirst(5)) }
+                return nil
+            })
+            record.legacySelectedChildChannelIDs = legacyIDs.filter { !removedIDs.contains($0) }
+        }
+        updatedPayload.childRecords[index] = record
+        persist(updatedPayload)
+        payload = updatedPayload
+    }
+
     private func childRecord(source: ForumSource, parent: ForumChannel) -> ChildRecord? {
         guard parent.source == source else { return nil }
         return payload.childRecords.first {

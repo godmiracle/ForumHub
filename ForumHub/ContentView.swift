@@ -15,7 +15,7 @@ struct ContentView: View {
     @State private var showsLinuxDoBrowserVerification = false
     @State private var submittedSearchText = ""
     @State private var showsSearchResults = false
-    @State private var selectedChannelID = ForumChannel.defaultForum.id
+    @State private var selectedChannelKey = ForumChannel.defaultForum.canonicalKey
     @State private var selectedTab: FeedTab = .home
     @State private var subscriptions = ForumSubscriptionStore()
     @State private var blockedUsers = BlockedUsersStore()
@@ -30,6 +30,7 @@ struct ContentView: View {
     @State private var showsPinnedThreads = true
     @State private var feedPreferences = FeedPreferencesStore()
     @State private var authoritativeChildForumDirectories = AuthoritativeChildForumDirectoryStore()
+    @State private var cancelledSubscribedChannelNotice: String?
     @State private var isFeedHeaderCollapsed = false
     @State private var pendingComposeAction: PendingComposeAction?
     @State private var composeDestination: ComposeDestination?
@@ -93,7 +94,7 @@ struct ContentView: View {
         .task {
             if UITestScenario.current != nil {
                 subscriptions.prepareDefaults(for: viewModel.channels)
-                selectedChannelID = viewModel.forum.id
+                selectedChannelKey = viewModel.currentForumChannel.canonicalKey
                 return
             }
             await AuthSessionRegistry.restoreAll(
@@ -103,7 +104,7 @@ struct ContentView: View {
             )
             lastSessionRestoreAt = .now
             subscriptions.prepareDefaults(for: viewModel.channels)
-            selectedChannelID = viewModel.forum.id
+            selectedChannelKey = viewModel.currentForumChannel.canonicalKey
             await refreshAuthoritativeChildForumsAndRestorePreferences()
             await viewModel.reload()
         }
@@ -219,14 +220,18 @@ struct ContentView: View {
 
     private var communityTabContent: some View {
         CommunityView(
-            activeSource: viewModel.source,
-            channels: viewModel.channels,
+            catalog: channelCatalog,
             isLoading: viewModel.isLoading,
+            pendingNewChildKeys: viewModel.pendingNewChildForumStableKeys,
+            cancelledSubscriptionNotice: cancelledSubscribedChannelNotice,
             subscriptions: subscriptions,
             scrollRequest: tabScrollRequest,
             onChannelSelect: { channel in
                 selectedTab = .home
                 await switchToChannel(channel)
+            },
+            onCancelledSubscriptionNoticeDismiss: {
+                cancelledSubscribedChannelNotice = nil
             }
         )
         .background(PaperTheme.paper)
@@ -303,12 +308,12 @@ struct ContentView: View {
                     guard tab == .home,
                           !viewModel.isLoading,
                           let destination = ChannelPagingPolicy.destination(
-                            currentID: selectedChannelID,
+                            currentKey: selectedChannelKey,
                             channels: visibleChannels,
                             direction: direction
                           )
                     else { return }
-                    withAnimation(.snappy(duration: 0.28)) { selectedChannelID = destination.id }
+                    withAnimation(.snappy(duration: 0.28)) { selectedChannelKey = destination.canonicalKey }
                     Task { await switchToChannel(destination) }
                 },
                 onHeaderCollapseChange: { collapsed in
@@ -322,7 +327,7 @@ struct ContentView: View {
 
     private var feedTopBar: some View {
         ForumTopBar(
-                selectedChannelID: $selectedChannelID,
+                selectedChannelKey: $selectedChannelKey,
                 activeTab: selectedTab,
                 selectedSource: viewModel.source,
                 availableSources: viewModel.availableSources,
@@ -332,6 +337,7 @@ struct ContentView: View {
                 isV2EXAuthenticated: v2exAuthStore.isAuthenticated,
                 linuxDoUsername: linuxDoAuthStore.username,
                 capabilities: viewModel.capabilities,
+                canComposeInCurrentChannel: canComposeInCurrentChannel,
                 sessionState: activeSessionState,
                 isCollapsed: isFeedHeaderCollapsed,
                 onSourceSelect: { source in
@@ -342,7 +348,7 @@ struct ContentView: View {
                         isFeedHeaderCollapsed = false
                         await viewModel.switchSource(to: source, reloadsFeed: false)
                         subscriptions.prepareDefaults(for: viewModel.channels)
-                        selectedChannelID = viewModel.forum.id
+                        selectedChannelKey = viewModel.currentForumChannel.canonicalKey
                         await refreshAuthoritativeChildForumsAndRestorePreferences()
                         await viewModel.reload()
                     }
@@ -374,7 +380,15 @@ struct ContentView: View {
 
     private var visibleChannels: [ForumChannel] {
         guard selectedTab != .hot else { return [] }
-        return subscriptions.visibleChannels(from: viewModel.channels)
+        return subscriptions.visibleChannels(from: channelCatalog.channels)
+    }
+
+    private var channelCatalog: ForumChannelCatalog {
+        ForumChannelCatalog.build(
+            source: viewModel.source,
+            channels: viewModel.channels,
+            authoritativeDirectory: viewModel.authoritativeChildForumDirectory
+        )
     }
 
     private var displayedPinnedThreads: [ForumThread] {
@@ -387,7 +401,9 @@ struct ContentView: View {
     }
 
     private var availableChildChannels: [AuthoritativeChildForum] {
-        guard selectedTab == .home, selectedChannelID == viewModel.repository.defaultChannel.id else { return [] }
+        guard selectedTab == .home,
+              selectedChannelKey == viewModel.repository.defaultChannel.canonicalKey
+        else { return [] }
         return viewModel.availableChildChannels
     }
 
@@ -401,7 +417,7 @@ struct ContentView: View {
     private var currentChildForumStatus: FeedChildForumStatus {
         let isApplicable = selectedTab == .home
             && viewModel.source == .nga
-            && selectedChannelID == viewModel.repository.defaultChannel.id
+            && selectedChannelKey == viewModel.repository.defaultChannel.canonicalKey
         return FeedChildForumStatus(
             isApplicable: isApplicable,
             hasConfirmedDirectory: isApplicable && viewModel.authoritativeChildForumDirectory != nil,
@@ -422,6 +438,11 @@ struct ContentView: View {
         }
     }
 
+    private var canComposeInCurrentChannel: Bool {
+        guard viewModel.capabilities.supportsCreateThread else { return false }
+        return !(viewModel.source == .nga && viewModel.currentForumChannel.canonicalNativeKey.hasPrefix("stid:"))
+    }
+
     private func restoreFeedPreferences() {
         let preference = feedPreferences.preference(
             source: viewModel.source,
@@ -440,10 +461,25 @@ struct ContentView: View {
     ) async {
         viewModel.restoreCachedAuthoritativeChildForumDirectory(using: authoritativeChildForumDirectories)
         restoreFeedPreferences()
-        await viewModel.refreshAuthoritativeChildForumDirectory(
+        let result = await viewModel.refreshAuthoritativeChildForumDirectory(
             using: authoritativeChildForumDirectories,
             reloadsFeedOnSelectionChange: reloadsFeedOnSelectionChange
         )
+        if let result {
+            feedPreferences.removeCancelledAuthoritativeChildForumKeys(
+                result.removedStableKeys,
+                source: viewModel.source,
+                parent: viewModel.repository.defaultChannel
+            )
+            let removed = subscriptions.removeCancelledAuthoritativeChannels(
+                result.removedChildren.map(\.channel)
+            )
+            if removed.count == 1, let title = removed.first?.title {
+                cancelledSubscribedChannelNotice = "\(title) 已从首页栏目中移除。"
+            } else if !removed.isEmpty {
+                cancelledSubscribedChannelNotice = "\(removed.count) 个已取消子版已从首页栏目中移除。"
+            }
+        }
         restoreFeedPreferences()
     }
 
@@ -457,7 +493,7 @@ struct ContentView: View {
     }
 
     private func switchToChannel(_ channel: ForumChannel) async {
-        selectedChannelID = channel.id
+        selectedChannelKey = channel.canonicalKey
         await viewModel.switchForum(to: channel, reloadsFeed: false)
         await refreshAuthoritativeChildForumsAndRestorePreferences()
         await viewModel.reload()
@@ -473,8 +509,8 @@ struct ContentView: View {
     }
 
     private func handleComposeTap() {
-        guard viewModel.capabilities.supportsCreateThread else { return }
-        let action = PendingComposeAction(source: viewModel.source, channelID: selectedChannelID)
+        guard canComposeInCurrentChannel else { return }
+        let action = PendingComposeAction(source: viewModel.source, channelID: viewModel.currentForumChannel.id)
         guard activeSessionState == .authenticated else {
             pendingComposeAction = action
             handleHomeLogin()
@@ -487,7 +523,7 @@ struct ContentView: View {
         guard let action = pendingComposeAction,
               action.canResume(
                 source: viewModel.source,
-                channelID: selectedChannelID,
+                channelID: viewModel.currentForumChannel.id,
                 sessionState: activeSessionState,
                 capabilities: viewModel.capabilities
               )
@@ -503,7 +539,7 @@ struct ContentView: View {
         guard let url = action.destinationURL else { return }
         composeDestination = ComposeDestination(
             source: action.source,
-            channelTitle: visibleChannels.first(where: { $0.id == action.channelID })?.title ?? viewModel.forum.title,
+            channelTitle: visibleChannels.first(where: { $0.canonicalKey == selectedChannelKey })?.title ?? viewModel.forum.title,
             url: url
         )
     }

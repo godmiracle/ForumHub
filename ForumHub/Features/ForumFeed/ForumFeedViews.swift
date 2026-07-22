@@ -8,12 +8,12 @@ enum ChannelPagingDirection {
 
 enum ChannelPagingPolicy {
     static func destination(
-        currentID: Int,
+        currentKey: String,
         channels: [ForumChannel],
         direction: ChannelPagingDirection
     ) -> ForumChannel? {
         guard channels.count > 1 else { return nil }
-        let currentIndex = channels.firstIndex(where: { $0.id == currentID }) ?? 0
+        let currentIndex = channels.firstIndex(where: { $0.canonicalKey == currentKey }) ?? 0
         let offset = direction == .next ? 1 : -1
         let destinationIndex = (currentIndex + offset + channels.count) % channels.count
         return channels[destinationIndex]
@@ -592,7 +592,7 @@ struct ThreadRow: View {
 }
 
 struct ForumTopBar: View {
-    @Binding var selectedChannelID: Int
+    @Binding var selectedChannelKey: String
     let activeTab: FeedTab
     @State private var searchDraft = ""
     @FocusState private var isSearchFocused: Bool
@@ -604,6 +604,7 @@ struct ForumTopBar: View {
     let isV2EXAuthenticated: Bool
     let linuxDoUsername: String?
     let capabilities: ForumCapabilities
+    let canComposeInCurrentChannel: Bool
     let sessionState: SourceSessionState
     let isCollapsed: Bool
     let onSourceSelect: (ForumSource) -> Void
@@ -742,7 +743,7 @@ struct ForumTopBar: View {
                 .accessibilityIdentifier("forum-refresh-button")
                 .accessibilityLabel(isLoading ? "正在刷新版面" : "刷新版面")
 
-                    if capabilities.supportsCreateThread {
+                    if canComposeInCurrentChannel {
                         Button(action: onCompose) {
                             Image(systemName: "square.and.pencil")
                                 .font(.system(size: 17, weight: .semibold))
@@ -762,7 +763,7 @@ struct ForumTopBar: View {
             if !channels.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 20) {
-                        ForEach(channels) { channel in
+                        ForEach(channels, id: \.canonicalKey) { channel in
                             Button {
                                 onChannelSelect(channel)
                             } label: {
@@ -771,20 +772,20 @@ struct ForumTopBar: View {
                                         .font(.system(
                                             .body,
                                             design: .serif,
-                                            weight: selectedChannelID == channel.id ? .bold : .medium
+                                            weight: selectedChannelKey == channel.canonicalKey ? .bold : .medium
                                         ))
-                                        .foregroundStyle(selectedChannelID == channel.id ? PaperTheme.accent : PaperTheme.mutedText)
+                                        .foregroundStyle(selectedChannelKey == channel.canonicalKey ? PaperTheme.accent : PaperTheme.mutedText)
 
                                     Capsule()
-                                        .fill(selectedChannelID == channel.id ? PaperTheme.accent : .clear)
+                                        .fill(selectedChannelKey == channel.canonicalKey ? PaperTheme.accent : .clear)
                                         .frame(width: 26, height: 3)
                                 }
                                 .frame(minHeight: 44)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityIdentifier("forum-channel-\(channel.id)")
-                            .accessibilityValue(selectedChannelID == channel.id ? "已选择" : "未选择")
-                            .accessibilityAddTraits(selectedChannelID == channel.id ? .isSelected : [])
+                            .accessibilityIdentifier("forum-channel-\(channel.canonicalKey)")
+                            .accessibilityValue(selectedChannelKey == channel.canonicalKey ? "已选择" : "未选择")
+                            .accessibilityAddTraits(selectedChannelKey == channel.canonicalKey ? .isSelected : [])
                         }
                     }
                     .padding(.horizontal, 14)

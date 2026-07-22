@@ -180,6 +180,23 @@ struct ForumChannel: Identifiable, Equatable {
         self.nativeKey = nativeKey ?? String(id)
     }
 
+    /// 栏目在列表、导航和持久化边界使用的来源作用域稳定身份。
+    /// NGA 的裸数字历史键按 fid 解释；显式 fid/stid 保留目标种类。
+    var canonicalKey: String {
+        "\(source.rawValue):\(canonicalNativeKey)"
+    }
+
+    var canonicalNativeKey: String {
+        guard source == .nga else { return nativeKey }
+        if nativeKey.hasPrefix("fid:") || nativeKey.hasPrefix("stid:") {
+            return nativeKey
+        }
+        if Int(nativeKey) != nil {
+            return "fid:\(nativeKey)"
+        }
+        return nativeKey
+    }
+
     static let defaultForum = ForumChannel(id: -7, title: "网事杂谈")
     static let defaultChannels = [
         defaultForum,

@@ -6,6 +6,7 @@ struct AuthoritativeChildForumDirectorySyncResult: Equatable {
     let addedStableKeys: Set<String>
     let renamedStableKeys: Set<String>
     let removedStableKeys: Set<String>
+    let removedChildren: [AuthoritativeChildForum]
     let selectedStableKeys: Set<String>
 }
 
@@ -189,6 +190,9 @@ final class AuthoritativeChildForumDirectoryStore {
             addedStableKeys: addedStableKeys,
             renamedStableKeys: renamedStableKeys,
             removedStableKeys: removedStableKeys,
+            removedChildren: removedStableKeys
+                .compactMap { previousChildren[$0]?.child(source: scope.source) }
+                .sorted { $0.stableKey < $1.stableKey },
             selectedStableKeys: selectedStableKeys.intersection(currentStableKeys)
         )
     }

@@ -396,7 +396,6 @@ final class ForumViewModel {
         feedTab = .home
         selectedForum = channel
         selectedChildForumKeys = []
-        authoritativeChildForumDirectory = nil
 
         if reloadsFeed {
             await reload()
@@ -445,7 +444,7 @@ final class ForumViewModel {
     func restoreCachedAuthoritativeChildForumDirectory(
         using store: AuthoritativeChildForumDirectoryStore
     ) {
-        guard let parent = authoritativeChildForumParent else {
+        guard let parent = authoritativeDirectoryParent else {
             authoritativeChildForumDirectory = nil
             selectedChildForumKeys = []
             pendingNewChildForumStableKeys = []
@@ -460,13 +459,13 @@ final class ForumViewModel {
     func refreshAuthoritativeChildForumDirectory(
         using store: AuthoritativeChildForumDirectoryStore,
         reloadsFeedOnSelectionChange: Bool = false
-    ) async {
-        guard let parent = authoritativeChildForumParent else {
+    ) async -> AuthoritativeChildForumDirectorySyncResult? {
+        guard let parent = authoritativeDirectoryParent else {
             authoritativeChildForumDirectory = nil
             selectedChildForumKeys = []
             pendingNewChildForumStableKeys = []
             cancelledChildForumNotice = nil
-            return
+            return nil
         }
 
         if let cachedDirectory = store.latestDirectory(for: parent) {
@@ -476,9 +475,9 @@ final class ForumViewModel {
 
         do {
             guard let directory = try await repository.fetchAuthoritativeChildForumDirectory(parent: parent),
-                  authoritativeChildForumParent == parent
+                  authoritativeDirectoryParent == parent
             else {
-                return
+                return nil
             }
             let result = try store.synchronize(directory, selectedStableKeys: selectedChildForumKeys)
             let didChangeSelection = result.selectedStableKeys != selectedChildForumKeys
@@ -487,23 +486,25 @@ final class ForumViewModel {
             restoreChildForumNotices(using: store, parent: parent)
             guard didChangeSelection,
                   feedTab == .home,
-                  selectedForum.id == repository.defaultChannel.id
+                  isBrowsingAuthoritativeDirectoryParent
             else {
-                return
+                return result
             }
             suspendFeedLoading()
             if reloadsFeedOnSelectionChange {
                 await reload()
             }
+            return result
         } catch {
             // 权威目录失败时保留最近一次完整确认的快照，不用全站目录回退。
+            return nil
         }
     }
 
     func confirmPendingNewChildForumsSeen(
         using store: AuthoritativeChildForumDirectoryStore
     ) {
-        guard let parent = authoritativeChildForumParent else { return }
+        guard let parent = authoritativeDirectoryParent else { return }
         store.markPendingNewChildrenAsSeen(for: parent)
         pendingNewChildForumStableKeys = []
     }
@@ -516,7 +517,7 @@ final class ForumViewModel {
         let normalized = stableKeys.intersection(Set(availableChildChannels.map(\.stableKey)))
         guard normalized != selectedChildForumKeys else { return }
         selectedChildForumKeys = normalized
-        guard feedTab == .home, selectedForum.id == repository.defaultChannel.id else { return }
+        guard feedTab == .home, isBrowsingAuthoritativeDirectoryParent else { return }
         await reload()
     }
 
@@ -531,7 +532,7 @@ final class ForumViewModel {
     }
 
     var availableChildChannels: [AuthoritativeChildForum] {
-        guard authoritativeChildForumParent != nil else { return [] }
+        guard isBrowsingAuthoritativeDirectoryParent else { return [] }
         return authoritativeChildForumDirectory?.children ?? []
     }
 
@@ -625,7 +626,7 @@ final class ForumViewModel {
     private var usesAggregatedChildForums: Bool {
         source == .nga
             && feedTab == .home
-            && selectedForum.id == repository.defaultChannel.id
+            && isBrowsingAuthoritativeDirectoryParent
             && !selectedChildForumKeys.isEmpty
     }
 
@@ -653,16 +654,13 @@ final class ForumViewModel {
         generation == feedLoadGeneration
     }
 
-    private var authoritativeChildForumParent: ForumChannel? {
-        let defaultChannel = repository.defaultChannel
-        guard source == .nga,
-              selectedForum.source == defaultChannel.source,
-              selectedForum.id == defaultChannel.id,
-              selectedForum.nativeKey == defaultChannel.nativeKey
-        else {
-            return nil
-        }
-        return selectedForum
+    private var authoritativeDirectoryParent: ForumChannel? {
+        source == .nga ? repository.defaultChannel : nil
+    }
+
+    private var isBrowsingAuthoritativeDirectoryParent: Bool {
+        guard let parent = authoritativeDirectoryParent else { return false }
+        return selectedForum.canonicalKey == parent.canonicalKey
     }
 
     private func normalizeSelectedChildForumKeys() {
@@ -674,6 +672,7 @@ final class ForumViewModel {
         parent: ForumChannel
     ) {
         pendingNewChildForumStableKeys = store.pendingNewStableKeys(for: parent)
+        guard isBrowsingAuthoritativeDirectoryParent else { return }
         let cancelledChildren = store.consumeCancelledSelectedChildren(for: parent)
         guard !cancelledChildren.isEmpty else { return }
         if cancelledChildren.count == 1, let title = cancelledChildren.first?.title {

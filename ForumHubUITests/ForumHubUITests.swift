@@ -62,7 +62,7 @@ final class ForumHubUITests: XCTestCase {
             app.textFields["forum-search-field"].waitForExistence(timeout: 5)
         )
         XCTAssertFalse(app.textFields["forum-search-field"].isEnabled)
-        XCTAssertTrue(app.buttons["forum-channel--20002"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["forum-channel-v2ex:hot"].waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -112,7 +112,7 @@ final class ForumHubUITests: XCTestCase {
         for _ in 0..<3 { app.swipeUp() }
 
         XCTAssertFalse(search.isHittable)
-        XCTAssertTrue(app.buttons["forum-channel--7"].exists)
+        XCTAssertTrue(app.buttons["forum-channel-nga:fid:-7"].exists)
         XCTAssertTrue(app.buttons["feed-filter-button"].exists)
 
         app.swipeDown()
@@ -143,7 +143,7 @@ final class ForumHubUITests: XCTestCase {
     func testRestoredV2EXHotShortFeedSelectsAndPullsToRefresh() throws {
         let app = launch(scenario: "UITEST_V2EX_RESTORED_HOT")
 
-        let hotChannel = app.buttons["forum-channel--20001"]
+        let hotChannel = app.buttons["forum-channel-v2ex:hot"]
         XCTAssertTrue(hotChannel.waitForExistence(timeout: 8))
         XCTAssertEqual(hotChannel.value as? String, "已选择")
         XCTAssertFalse(app.buttons["thread-row-990101"].exists)
@@ -192,7 +192,7 @@ final class ForumHubUITests: XCTestCase {
             "current-community-button",
             "forum-refresh-button",
             "forum-compose-button",
-            "forum-channel--7",
+            "forum-channel-nga:fid:-7",
             "feed-sort-lastReply",
             "feed-sort-latestPost",
             "feed-filter-button",

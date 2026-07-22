@@ -2,6 +2,22 @@ import Foundation
 
 struct WebForumParser {
     static func parseForumHTML(_ html: String, fid: Int, page: Int) -> ForumPayload? {
+        let topicRowThreads = parseTopicRows(from: html, fid: fid)
+        if !topicRowThreads.isEmpty {
+            return ForumPayload(
+                forum: ForumSummary(
+                    id: fid,
+                    title: "NGA 版面 \(fid)",
+                    subtitle: "正在使用网页登录 cookie 浏览网页内容，第 \(page) 页。",
+                    todayPosts: 0,
+                    onlineUsers: topicRowThreads.count
+                ),
+                channels: parseChannels(from: html, fallbackFID: fid),
+                pinned: [],
+                threads: topicRowThreads
+            )
+        }
+
         let links = html.matches(
             pattern: #"<a([^>]+href=['"][^'"]*(?:read\.php\?tid=|tid=)(\d+)[^'"]*['"][^>]*)>(.*?)</a>"#,
             options: [.caseInsensitive, .dotMatchesLineSeparators]
@@ -58,6 +74,82 @@ struct WebForumParser {
         )
     }
 
+    private static func parseTopicRows(from html: String, fid: Int) -> [ForumThread] {
+        let rows = html.matches(
+            pattern: #"<tr[^>]*\btopicrow\b[^>]*>(.*?)</tr>"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        )
+
+        return rows.compactMap { match -> ForumThread? in
+            guard match.count >= 2 else { return nil }
+            let rowHTML = match[1]
+            let anchors = rowHTML.matches(
+                pattern: #"<a([^>]*)>(.*?)</a>"#,
+                options: [.caseInsensitive, .dotMatchesLineSeparators]
+            )
+
+            guard let topicAnchor = anchors.first(where: { anchor in
+                guard anchor.count >= 3 else { return false }
+                let attributes = anchor[1]
+                let identifier = firstAttribute(["id"], in: attributes) ?? ""
+                return hasClass("topic", in: attributes) || identifier.hasPrefix("t_tt")
+            }),
+            let href = firstAttribute(["href"], in: topicAnchor[1]),
+            let idMatch = href.matches(pattern: #"\btid=(\d+)"#, options: [.caseInsensitive]).first,
+            idMatch.count >= 2,
+            let id = Int(idMatch[1])
+            else {
+                return nil
+            }
+
+            let title = topicAnchor[2].cleanedForumText
+            guard title.count >= 2,
+                  !title.localizedCaseInsensitiveContains("打开新窗口")
+            else {
+                return nil
+            }
+
+            let author = anchors.first(where: { anchor in
+                guard anchor.count >= 3 else { return false }
+                let attributes = anchor[1]
+                let identifier = firstAttribute(["id"], in: attributes) ?? ""
+                return hasClass("author", in: attributes) || identifier.hasPrefix("t_ta")
+            })?[2].cleanedForumText
+
+            let replyCount = anchors.first(where: { anchor in
+                guard anchor.count >= 3 else { return false }
+                let attributes = anchor[1]
+                let identifier = firstAttribute(["id"], in: attributes) ?? ""
+                return hasClass("replies", in: attributes) || identifier.hasPrefix("t_rc")
+            })
+            .flatMap { Int($0[2].cleanedForumText) } ?? 0
+
+            let postDate = rowHTML.matches(
+                pattern: #"<span([^>]*(?:\bpostdate\b|\bid=['\"]t_pt[^'\"]*['\"])[^>]*)>(.*?)</span>"#,
+                options: [.caseInsensitive, .dotMatchesLineSeparators]
+            )
+            .first
+            .flatMap { $0.count >= 3 ? $0[2].cleanedForumText : nil } ?? ""
+
+            return ForumThread(
+                id: id,
+                title: title,
+                summary: "",
+                author: author?.isUsefulForumValue == true ? author! : "未知作者",
+                createdAt: postDate,
+                lastReplyAt: postDate,
+                replyCount: replyCount,
+                viewCount: 0,
+                body: title,
+                replies: [],
+                channelID: fid
+            )
+        }
+        .uniquedByThreadID()
+        .prefix(40)
+        .map { $0 }
+    }
+
     private static func parseChannels(from html: String, fallbackFID: Int) -> [ForumChannel] {
         let matches = html.matches(
             pattern: #"<a([^>]+href=['"][^'"]*(?:thread\.php\?fid=|fid=)(-?\d+)[^'"]*['"][^>]*)>(.*?)</a>"#,
@@ -103,6 +195,16 @@ struct WebForumParser {
         }
 
         return nil
+    }
+
+    private static func hasClass(_ expectedClass: String, in attributes: String) -> Bool {
+        guard let classes = firstAttribute(["class"], in: attributes) else {
+            return false
+        }
+
+        return classes
+            .split(whereSeparator: { $0.isWhitespace })
+            .contains { $0.caseInsensitiveCompare(expectedClass) == .orderedSame }
     }
 
     static func parseThreadHTML(_ html: String, tid: Int, page: Int = 1) -> ForumThread? {
