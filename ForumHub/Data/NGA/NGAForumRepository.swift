@@ -1,12 +1,28 @@
 import Foundation
 import CoreFoundation
 
+extension FeedSortMode {
+    var ngaOrderByValue: String {
+        switch self {
+        case .lastReply:
+            return ""
+        case .latestPost:
+            return "postdatedesc"
+        }
+    }
+}
+
 protocol ThreadRepository {
     var source: ForumSource { get }
     var capabilities: ForumCapabilities { get }
     var defaultChannel: ForumChannel { get }
     func fetchChannels() async throws -> [ForumChannel]
     func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult
+    func fetchForum(
+        channel: ForumChannel,
+        page: Int,
+        sortMode: FeedSortMode
+    ) async throws -> ThreadFetchResult
     func fetchHotThreads(page: Int) async throws -> ThreadFetchResult
     func fetchFavoriteThreads(page: Int) async throws -> ThreadFetchResult
     func searchThreads(query: String, page: Int) async throws -> ThreadFetchResult
@@ -25,6 +41,14 @@ protocol ThreadRepository {
 }
 
 extension ThreadRepository {
+    func fetchForum(
+        channel: ForumChannel,
+        page: Int,
+        sortMode _: FeedSortMode
+    ) async throws -> ThreadFetchResult {
+        try await fetchForum(channel: channel, page: page)
+    }
+
     func fetchAuthoritativeChildForumDirectory(
         parent _: ForumChannel
     ) async throws -> AuthoritativeChildForumDirectory? {
@@ -97,13 +121,21 @@ struct NGALiveThreadRepository: ThreadRepository {
     }
 
     func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult {
+        try await fetchForum(channel: channel, page: page, sortMode: .lastReply)
+    }
+
+    func fetchForum(
+        channel: ForumChannel,
+        page: Int,
+        sortMode: FeedSortMode
+    ) async throws -> ThreadFetchResult {
         let browseTarget = NGAForumBrowseTarget(
             stableKey: channel.nativeKey,
             expectedValue: channel.id
         ) ?? .fid(channel.id)
 
         if case .stid = browseTarget {
-            return try await fetchWebForum(target: browseTarget, page: page)
+            return try await fetchWebForum(target: browseTarget, page: page, sortMode: sortMode)
         }
 
         let fid = browseTarget.value
@@ -113,6 +145,7 @@ struct NGALiveThreadRepository: ThreadRepository {
             form: [
                 "fid": "\(fid)",
                 "page": "\(page)",
+                "order_by": sortMode.ngaOrderByValue,
                 "_v": "2",
                 "__output": "14"
             ]
@@ -124,7 +157,7 @@ struct NGALiveThreadRepository: ThreadRepository {
         }
 
         try Task.checkCancellation()
-        let webResult = try await fetchWebForum(target: browseTarget, page: page)
+        let webResult = try await fetchWebForum(target: browseTarget, page: page, sortMode: sortMode)
         let combinedRawText = """
         app_api.php 没有解析出主题，已尝试网页兜底。
 
@@ -440,12 +473,14 @@ struct NGALiveThreadRepository: ThreadRepository {
 
     private func fetchWebForum(
         target: NGAForumBrowseTarget,
-        page: Int
+        page: Int,
+        sortMode: FeedSortMode = .lastReply
     ) async throws -> ThreadFetchResult {
         var components = URLComponents(string: "https://bbs.nga.cn/thread.php")!
         components.queryItems = [
             URLQueryItem(name: target.requestParameterName, value: "\(target.value)"),
-            URLQueryItem(name: "page", value: "\(page)")
+            URLQueryItem(name: "page", value: "\(page)"),
+            URLQueryItem(name: "order_by", value: sortMode.ngaOrderByValue)
         ]
 
         let (_, rawText) = try await get(url: components.url!)

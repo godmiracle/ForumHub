@@ -243,7 +243,11 @@ final class ForumViewModel {
             if request.usesAggregatedChildForums {
                 return .aggregated(try await fetchAggregatedForum(for: request))
             }
-            return .forum(try await request.repository.fetchForum(channel: request.selectedForum, page: request.page))
+            return .forum(try await request.repository.fetchForum(
+                channel: request.selectedForum,
+                page: request.page,
+                sortMode: request.sortMode
+            ))
         }
     }
 
@@ -341,7 +345,11 @@ final class ForumViewModel {
                     canLoadMore = aggregated.hasMore
                     appendUniqueThreads(aggregated.threads)
                 } else {
-                    let result = try await repository.fetchForum(channel: selectedForum, page: nextPage)
+                    let result = try await repository.fetchForum(
+                        channel: selectedForum,
+                        page: nextPage,
+                        sortMode: feedSortMode
+                    )
                     guard isCurrentFeedLoad(generation) else { return }
                     guard let payload = result.payload, !payload.threads.isEmpty else {
                         canLoadMore = false
@@ -646,6 +654,7 @@ final class ForumViewModel {
             selectedChildChannels: selectedChildren,
             channels: channels,
             page: page,
+            sortMode: feedSortMode,
             usesAggregatedChildForums: usesAggregatedChildForums
         )
     }
@@ -688,7 +697,11 @@ final class ForumViewModel {
 
     private func fetchAggregatedForum(for request: FeedRequest) async throws -> AggregatedForumResult {
         try Task.checkCancellation()
-        let mainResult = try await request.repository.fetchForum(channel: request.selectedForum, page: request.page)
+        let mainResult = try await request.repository.fetchForum(
+            channel: request.selectedForum,
+            page: request.page,
+            sortMode: request.sortMode
+        )
         guard let mainPayload = mainResult.payload else {
             throw NSError(
                 domain: "ForumViewModel",
@@ -703,7 +716,11 @@ final class ForumViewModel {
         for channel in request.selectedChildChannels {
             try Task.checkCancellation()
             do {
-                let result = try await request.repository.fetchForum(channel: channel, page: request.page)
+                let result = try await request.repository.fetchForum(
+                    channel: channel,
+                    page: request.page,
+                    sortMode: request.sortMode
+                )
                 guard let payload = result.payload else {
                     failedChildForumStableKeys.insert(channel.nativeKey)
                     continue
@@ -801,6 +818,7 @@ private struct FeedRequest {
     let selectedChildChannels: [ForumChannel]
     let channels: [ForumChannel]
     let page: Int
+    let sortMode: FeedSortMode
     let usesAggregatedChildForums: Bool
 }
 

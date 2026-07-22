@@ -273,8 +273,10 @@ struct ContentView: View {
                 childChannels: tab == .home ? availableChildChannels : [],
                 childForumStatus: tab == .home ? currentChildForumStatus : FeedChildForumStatus(),
                 onSortChange: { mode in
+                    guard viewModel.feedSortMode != mode else { return }
                     withAnimation(.snappy(duration: 0.22)) { viewModel.feedSortMode = mode }
                     persistFeedPreferences()
+                    Task { await viewModel.reload() }
                 },
                 onFilterApply: { filter in
                     withAnimation(.snappy(duration: 0.22)) {

@@ -39,22 +39,6 @@ enum FeedPaginationPolicy {
     }
 }
 
-enum FeedSortMode: String, CaseIterable, Identifiable, Codable {
-    case lastReply
-    case latestPost
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .lastReply:
-            return "最后回复"
-        case .latestPost:
-            return "最新发帖"
-        }
-    }
-}
-
 struct FeedThreadTimePresentation: Equatable {
     let label: String
     let date: Date

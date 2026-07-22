@@ -187,6 +187,7 @@
 
 ### Stability And UX
 
+- Fixed NGA “最新发帖” so switching, pull-to-refresh, child-forum aggregation, and pagination request server-side publish-time ordering; nested and `__U`-backed topic authors no longer appear as unknown or get replaced by the last replier.
 - Preserved HTML image sources in NGA main-post normalization so detail pages no longer drop those images before rendering.
 - Prevented stale feed responses from showing parse errors or replacing content after the reader switches tabs or sources.
 - Fixed Home and Hot tab reselection so each feed returns to its own list top immediately while refreshing in the background.

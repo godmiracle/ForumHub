@@ -46,6 +46,7 @@ Current sources:
 - Public forum usernames in the blocked-user list sync through iCloud KVS; credentials sync separately through iCloud Keychain and never enter the KVS payload.
 - NGA thread detail pagination should preserve source fetch order, accumulate continuation pages into one reading flow, and must not reintroduce the main post as a reply row.
 - Feed time ordering and display use structured dates created at adapter boundaries; legacy time strings are compatibility-only and unparseable values never discard a topic.
+- Feed sort mode crosses the repository boundary for refresh, aggregation, and pagination. NGA latest-topic mode requests server-side `postdatedesc` instead of merely reordering a last-reply page locally.
 - Feed sort and pinned preferences are source-scoped, while child-channel selections are source-and-parent-channel scoped and sanitized against the latest confirmed authoritative directory.
 - Channel navigation, list identity, subscriptions, and ordering use canonical source-scoped keys. Legacy NGA numeric channels normalize to `nga:fid:<id>`, authoritative topic targets remain `nga:stid:<id>`, and a bare integer never reconciles different browsing kinds.
 - An authoritative child forum may be subscribed as an independent Home channel that loads only that child. Home subscriptions and Wangshi main-plus-children aggregation selections are separate preferences and never implicitly update each other.

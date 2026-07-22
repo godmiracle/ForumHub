@@ -247,6 +247,65 @@ struct ForumHubTests {
         #expect(thread.authorAvatarURL?.absoluteString == "https://img.nga.178.com/avatars/60459868.jpg")
     }
 
+    @Test func forumListUsesNestedAuthorName() throws {
+        let json = """
+        {
+          "items": [
+            {
+              "tid": 1001,
+              "subject": "嵌套作者测试",
+              "author": {
+                "uid": 60459868,
+                "username": "首楼作者"
+              },
+              "postdate": 1784700000,
+              "lastpost": 1784701000
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let thread = try #require(ForumPayloadParser.parse(
+            data: json,
+            fallbackText: "",
+            fid: -7
+        )?.threads.first)
+
+        #expect(thread.author == "首楼作者")
+    }
+
+    @Test func forumListResolvesAuthorNameFromUserDictionary() throws {
+        let json = """
+        {
+          "data": {
+            "__T": {
+              "1001": {
+                "tid": 1001,
+                "subject": "作者字典测试",
+                "authorid": 60459868,
+                "postdate": 1784700000,
+                "lastpost": 1784701000
+              }
+            },
+            "__U": {
+              "60459868": {
+                "uid": 60459868,
+                "username": "字典作者"
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let thread = try #require(ForumPayloadParser.parse(
+            data: json,
+            fallbackText: "",
+            fid: -7
+        )?.threads.first)
+
+        #expect(thread.author == "字典作者")
+    }
+
     @Test func ngaPostnumExcludesTheMainPostBeforePagination() throws {
         let listJSON = """
         {
@@ -564,6 +623,7 @@ struct ForumHubTests {
         ])
         #expect(payload.threads.map(\.author) == ["示例作者甲", "示例作者乙"])
         #expect(payload.threads.map(\.replyCount) == [0, 9])
+        #expect(payload.threads.allSatisfy { $0.createdAtDate != nil && $0.lastReplyAtDate == nil })
         #expect(payload.threads.allSatisfy { $0.summary.isEmpty })
     }
 

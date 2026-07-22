@@ -262,6 +262,23 @@ struct ForumThreadSourceMetadata: Equatable {
     let attachmentPrefix: String?
 }
 
+enum FeedSortMode: String, CaseIterable, Identifiable, Codable {
+    case lastReply
+    case latestPost
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .lastReply:
+            return "最后回复"
+        case .latestPost:
+            return "最新发帖"
+        }
+    }
+
+}
+
 struct ForumThread: Identifiable, Equatable {
     let id: Int
     let title: String

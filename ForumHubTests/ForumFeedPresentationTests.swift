@@ -417,6 +417,17 @@ struct ForumFeedPresentationTests {
         #expect(FeedThreadTimePresentation.resolve(thread: viewModel.displayedThreads[1], sortMode: .lastReply)?.label == "发布")
     }
 
+    @Test func latestPostRefreshForwardsRemoteSortMode() async {
+        let repository = CountingFeedRepository()
+        let viewModel = ForumViewModel(repository: repository)
+        viewModel.feedSortMode = .latestPost
+
+        await viewModel.reload()
+
+        #expect(repository.requestedSortModes == [.latestPost])
+        #expect(FeedSortMode.latestPost.ngaOrderByValue == "postdatedesc")
+    }
+
     @Test func legacySavedThreadWithoutStructuredDatesStillDecodes() throws {
         let legacy = LegacySavedForumThread(
             source: .nga,
@@ -481,6 +492,7 @@ private final class CountingFeedRepository: ThreadRepository {
     )
     let defaultChannel = ForumChannel(id: 1, title: "主版", nativeKey: "fid:1")
     private(set) var requestedChannelNativeKeys: [String] = []
+    private(set) var requestedSortModes: [FeedSortMode] = []
 
     func fetchChannels() async throws -> [ForumChannel] {
         [defaultChannel, ForumChannel(id: 404, title: "全站无关栏目", nativeKey: "fid:404")]
@@ -489,6 +501,15 @@ private final class CountingFeedRepository: ThreadRepository {
     func fetchForum(channel: ForumChannel, page: Int) async throws -> ThreadFetchResult {
         requestedChannelNativeKeys.append(channel.nativeKey)
         return result(channel: channel)
+    }
+
+    func fetchForum(
+        channel: ForumChannel,
+        page: Int,
+        sortMode: FeedSortMode
+    ) async throws -> ThreadFetchResult {
+        requestedSortModes.append(sortMode)
+        return try await fetchForum(channel: channel, page: page)
     }
 
     func fetchAuthoritativeChildForumDirectory(

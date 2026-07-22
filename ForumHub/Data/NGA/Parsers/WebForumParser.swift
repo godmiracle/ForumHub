@@ -137,7 +137,8 @@ struct WebForumParser {
                 summary: "",
                 author: author?.isUsefulForumValue == true ? author! : "未知作者",
                 createdAt: postDate,
-                lastReplyAt: postDate,
+                // topicrow 这里只提供首帖 postdate，不能伪装成最后回复时间。
+                lastReplyAt: "",
                 replyCount: replyCount,
                 viewCount: 0,
                 body: title,

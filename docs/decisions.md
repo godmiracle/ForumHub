@@ -542,6 +542,31 @@ Accepted
 - 新存储格式增加迁移维护成本，但旧快照保留为二进制回滚边界
 - stid 子版发帖目标尚未验证，因此独立 stid Feed 隐藏发帖入口，避免把 stid 错发为 fid
 
+## ADR-021 Feed Sort Semantics Cross The Repository Boundary
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+Feed 曾把“最新发帖”实现为对已按最后回复取得的当前页做本地重排。NGA 的发布时间倒序是远端查询语义；只重排当前页会漏掉真正的新主题，并混入发布时间很早但最近被回复的主题。网事杂谈聚合和继续分页还需要与首屏使用同一排序参数。
+
+### Decision
+
+`FeedSortMode` 成为共享领域值，`ThreadRepository` 增加带排序模式的 Feed 请求接缝，并为无需远端排序的来源保留默认实现。NGA 在“最新发帖”下把 `postdatedesc` 传给主版、独立 `fid/stid`、聚合子版、刷新和分页请求；切换排序先即时更新现有展示，再发起同 generation 规则约束的新请求。列表作者仍以首楼 `author` 为权威，缺失时才按 `authorid` 查询 `__U`，不得使用 `lastposter` 代替。
+
+### Consequences
+
+- NGA “最新发帖”列表与网页使用相同远端排序语义，而不再局限于当前活跃主题页
+- 主版、子版聚合和续页不会混用排序模式
+- V2EX、LINUX DO 与测试 Repository 可继续使用默认请求行为
+- 切换排序会增加一次网络请求；登录态真实列表仍需要人工与网页做最终对照
+
 ## Template
 
 Use this structure for future decisions:

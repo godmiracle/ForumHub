@@ -421,6 +421,17 @@
     - 栏目页完成信息层级、搜索、独立添加控件、编辑排序、动态字体和 VoiceOver 真机验收；
     - 聚焦测试、完整 `ForumHubTests`、Debug 真机构建、严格 Rasen 校验与 diff 检查全部通过。
 
+- [x] **SD-7.10 修复 NGA 最新发帖列表与作者、时间元数据错位**
+  - 具体问题：“最新发帖”曾只重排按最后回复取得的当前页，刷新与分页未向 NGA 请求发布时间倒序；部分列表作者使用嵌套对象或 `authorid + __U` 时被显示为未知作者。
+  - 涉及文件或模块：`ThreadRepository`、`NGALiveThreadRepository`、`ForumPayloadParser`、`ForumViewModel`、Feed 排序与测试
+  - 优先级：P1
+  - 状态：已完成；2026-07-22 在真机“哥谭之王”运行 `ForumHubTests` 与 `ForumFeedPresentationTests` 通过，用户随后完成登录态网事杂谈“最新发帖”真实列表测试并确认正常。
+  - 验收标准：
+    - “最新发帖”切换、下拉刷新、下滑分页及网事杂谈子版聚合统一请求 `order_by=postdatedesc`；
+    - 主题作者只取首楼作者，不把 `lastposter` 当作者，并支持嵌套作者和 `__U` 用户字典；
+    - 发布时间与最后回复时间继续分别使用 `postdate`、`lastpost`；
+    - 聚焦真机测试、Debug 构建和 diff 检查通过，真实登录列表人工对照正常。
+
 ---
 
 ## 已完成基线（不再重复迁移）
