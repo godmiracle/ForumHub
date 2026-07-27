@@ -44,6 +44,7 @@ struct V2EXAuthService: V2EXAuthenticating {
 final class V2EXAuthStore {
     private(set) var account: V2EXAccount?
     private(set) var hasWebSession = false
+    private(set) var webSessionGeneration = 0
     private(set) var webSessionSyncErrorMessage: String?
     private(set) var isValidating = false
     private(set) var errorMessage: String?
@@ -79,6 +80,7 @@ final class V2EXAuthStore {
         let webResult = await webSession
         hasWebSession = webResult.isValid
         webSessionSyncErrorMessage = webResult.keychainErrorMessage
+        webSessionGeneration += 1
     }
 
     @discardableResult
@@ -108,6 +110,7 @@ final class V2EXAuthStore {
         let result = await V2EXWebSession.syncCookies(from: cookieStore)
         hasWebSession = result.isValid
         webSessionSyncErrorMessage = result.keychainErrorMessage
+        webSessionGeneration += 1
         return hasWebSession
     }
 
@@ -115,11 +118,13 @@ final class V2EXAuthStore {
         let result = await V2EXWebSession.restore()
         hasWebSession = result.isValid
         webSessionSyncErrorMessage = result.keychainErrorMessage
+        webSessionGeneration += 1
     }
 
     func logoutWebSession() async {
         webSessionSyncErrorMessage = await V2EXWebSession.clearCookies()
         hasWebSession = false
+        webSessionGeneration += 1
     }
 
     func clearError() {

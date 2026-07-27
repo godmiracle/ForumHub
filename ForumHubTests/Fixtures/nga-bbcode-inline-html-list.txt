@@ -1,0 +1,2 @@
+<span style="font-size:120%;line-height:183%">第一段正文</span>
+<span style="font-size:120%;line-height:183%">第二段正文</span><ul><li><span style="font-size:130%;line-height:183%">第一项内容</span></li><li><span style="font-size:130%;line-height:183%">第二项内容</span></li></ul>

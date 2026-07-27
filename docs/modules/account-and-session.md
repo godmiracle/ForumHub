@@ -32,6 +32,10 @@ It includes:
 - Upper-layer session presentation uses `checking`, `signedOut`, `authenticated`, and `expired`. The Home login CTA is hidden for checking/authenticated, reads “登录” for signed out, and “重新登录” only after explicit source authentication-expired evidence.
 - Timeout, offline, rate-limit, 5xx and ordinary 403 errors do not mutate a session into `expired`.
 - A signed-out compose tap may keep a source/channel-bound pending action. It resumes only after successful authentication while the source, channel, capability and destination still match; dismissal or context changes clear it.
+- NGA 与 V2EX 提供彼此独立、默认关闭的启动/前台自动签到偏好。签到协调在会话恢复完成后异步运行，不属于 `restoreSession()` 的副作用，也不阻塞 Feed。
+- 最近签到结果只保存安全枚举和时间，不保存 Cookie、Token、账号标识、远端正文或动态参数。普通网络失败和未知响应不会把会话改为 `expired`。
+- 持久化签到结果仅供账户页展示；冷启动仍以服务端查询为权威。来源会话显式变化时会取消并隔离旧 generation 的任务，避免旧账号结果写入新会话或同来源任务并发。
+- V2EX 已基于 2026-07-23 的真实可领取/一次动作/二次确认链解除来源子门禁；只有严格 observed onclick、同源 redeem path 和唯一非空 `once` 可到达写请求。NGA 仍缺少稳定未签到/成功证据并保持 production 写入关闭；两来源未知结构都必须 fail closed。
 
 ## Current Sources
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-07-27 NGA 正文 HTML 标签显示修复
+
+- 修复 NGA API/Web 正文中 `<span style="font-size/line-height">`、`<ul>` 和 `<li>` 被当作普通文字显示的问题。
+- 来源字号与行高样式不再覆盖 App 字体和动态字体；无序列表保留为带项目符号的独立段落，正文顺序和原始 representation 保持不变。
+- 新增基于用户真机截图脱敏重写的混合 HTML Fixture；NGA API 与 Web 两条语义解析路径的聚焦测试、完整 `ForumHubTests`、独立 Debug 真机构建及原帖人工复查均已通过。
+
+## 2026-07-23 V2EX 自动签到真实链解锁（整项仍等待验收）
+
+- 在授权 V2EX Web Session 中确认真实领取控件为唯一 `input onclick`，动作路径为 `/mission/daily/redeem`；领取后和独立再次访问均精确显示“每日登录奖励已领取”。
+- V2EX parser 只接受 `location.href = '<URL>';` 有限语法，不执行任意 JavaScript；同时拒绝普通 `href`、恶意脚本、多个候选、跨域、额外参数和空 `once`。
+- V2EX production policy 已仅针对上述 observed Web 流程解除写入门禁；NGA production 写入继续关闭，V2EX 真实失效会话与完整重定向证据仍待补齐。
+
+## 2026-07-22 NGA / V2EX 自动签到安全接缝（等待完整真实证据验收）
+
+- 账户页新增 NGA 与 V2EX 独立自动签到开关，默认关闭；仅在 App 启动或回到前台、并完成会话恢复后异步检查，不提供后台定时保证。
+- NGA 使用 Cookie 会话先读状态，V2EX 只使用独立 Web Session；Token-only 会话不会访问每日奖励页面，LINUX DO、来源切换和 Feed 刷新不触发签到。
+- 新增进程内去重、前台节流、失败退避与安全结果摘要；普通网络错误和未知结构不弹启动提示，也不会把会话改为过期。
+- 持久化结果仅用于展示，不再替代冷启动服务端检查；Web Session 即使从有效会话切换到另一个有效会话，也会取消并隔离旧任务后重新查询。V2EX 只接受来自 HTTPS `www.v2ex.com/mission/daily` 的 HTML 页面作为状态证据。
+- NGA 真实未签到、成功和二次状态仍未补齐，production 写入保持关闭；V2EX 后续已于 2026-07-23 依据真实领取链独立解除来源子门禁。合成 Fixture 不代表线上流程已验收。
+
 ## 2026-07-22 NGA 栏目目录与权威子版独立订阅
 
 - 栏目页改为统一目录：普通 NGA 栏目与最近确认的网事杂谈直接子版可以一起浏览和搜索，子版结果显示父版上下文；搜索“技术分析”或 `stid:47206901` 可以定位 `[股市]技术分析`。

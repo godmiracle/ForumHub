@@ -17,7 +17,22 @@ enum NGAHTMLContentParser {
             options: .regularExpression
         )
         markup = markup.replacingOccurrences(
-            of: #"(?i)</?(?:div|p|span)(?:\s+[^>]*)?>"#,
+            of: #"(?i)</?span(?:\s+[^>]*)?>"#,
+            with: "",
+            options: .regularExpression
+        )
+        markup = markup.replacingOccurrences(
+            of: #"(?i)</?(?:div|p|ul)(?:\s+[^>]*)?>"#,
+            with: "[br]",
+            options: .regularExpression
+        )
+        markup = markup.replacingOccurrences(
+            of: #"(?i)<li(?:\s+[^>]*)?>"#,
+            with: "[br]• ",
+            options: .regularExpression
+        )
+        markup = markup.replacingOccurrences(
+            of: #"(?i)</li\s*>"#,
             with: "[br]",
             options: .regularExpression
         )

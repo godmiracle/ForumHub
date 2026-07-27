@@ -460,7 +460,7 @@ enum NGABBCodeContentParser {
     /// NGA API 正文会夹带少量展示 HTML。按标签边界将已验证样式映射为语义标记，
     /// 保留标签内文字；未知 HTML 不在这里静默删除，继续走可见降级路径。
     private static func normalizingKnownPresentationalHTMLTags(in markup: String) -> String {
-        let transparentTags: Set<String> = ["b"]
+        let transparentTags: Set<String> = ["b", "span"]
         var output = ""
         var cursor = markup.startIndex
 
@@ -489,6 +489,10 @@ enum NGABBCodeContentParser {
 
             if tagName == "del" {
                 output.append(isClosingTag ? "[/del]" : "[del]")
+            } else if tagName == "ul" {
+                output.append("[br]")
+            } else if tagName == "li" {
+                output.append(isClosingTag ? "[br]" : "[br]• ")
             } else if !transparentTags.contains(tagName) {
                 output.append(contentsOf: markup[openingBracket...closingBracket])
             }

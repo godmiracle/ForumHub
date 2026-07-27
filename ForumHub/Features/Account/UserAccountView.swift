@@ -11,6 +11,7 @@ struct UserAccountView: View {
     @Bindable var favoriteThreads: FavoriteThreadsStore
     @Bindable var v2exAuthStore: V2EXAuthStore
     @Bindable var linuxDoAuthStore: LinuxDoAuthStore
+    @Bindable var dailyCheckInPreferences: DailyCheckInPreferences
     let scrollRequest: TabScrollRequest?
     let repositoryForSource: (ForumSource) -> any ThreadRepository
     let onLogin: () -> Void
@@ -71,6 +72,10 @@ struct UserAccountView: View {
                             sourceAccountCard(for: descriptor)
                         }
                     }
+
+                    sectionHeader("自动签到")
+
+                    dailyCheckInCard
 
                     sectionHeader("我的内容")
 
@@ -336,6 +341,36 @@ struct UserAccountView: View {
             return Color(red: 0.27, green: 0.42, blue: 0.57)
         case .linuxDo:
             return Color(red: 0.18, green: 0.48, blue: 0.38)
+        }
+    }
+
+    private var dailyCheckInCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Toggle(isOn: $dailyCheckInPreferences.isNGAEnabled) {
+                dailyCheckInLabel(source: .nga, sessionHint: "需要有效 NGA 网页登录")
+            }
+            Toggle(isOn: $dailyCheckInPreferences.isV2EXEnabled) {
+                dailyCheckInLabel(source: .v2ex, sessionHint: "需要 V2EX 网页登录，Token 不可代替")
+            }
+
+            Text("仅在 App 启动或回到前台后检查，不提供后台定时保证。当前真实未签到样本尚待补齐，未知响应会停止操作。")
+                .font(.caption)
+                .foregroundStyle(PaperTheme.mutedText)
+                .lineSpacing(3)
+        }
+        .tint(PaperTheme.accent)
+        .padding(16)
+        .background(PaperTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func dailyCheckInLabel(source: ForumSource, sessionHint: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(source.title) 自动签到")
+                .font(.headline)
+                .foregroundStyle(PaperTheme.ink)
+            Text(dailyCheckInPreferences.status(for: source)?.result.safeStatusText ?? sessionHint)
+                .font(.caption)
+                .foregroundStyle(PaperTheme.mutedText)
         }
     }
 

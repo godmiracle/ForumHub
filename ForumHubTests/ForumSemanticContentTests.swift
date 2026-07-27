@@ -133,6 +133,35 @@ struct ForumSemanticContentTests {
         }
     }
 
+    @Test func parserLowersObservedHTMLSpanAndListWithoutDisplayingTags() throws {
+        let bundle = Bundle(for: SemanticFixtureLocator.self)
+        let url = try #require(
+            bundle.url(forResource: "nga-bbcode-inline-html-list", withExtension: "txt", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "nga-bbcode-inline-html-list", withExtension: "txt")
+        )
+        let markup = try String(contentsOf: url, encoding: .utf8)
+
+        let documents = [
+            NGABBCodeContentParser.parse(markup),
+            NGAHTMLContentParser.parse(markup)
+        ]
+
+        for document in documents {
+            #expect(document.quality == .valid)
+            #expect(document.blocks.map(\.kind) == [.paragraph, .paragraph, .paragraph])
+            #expect(document.blocks.map(\.content) == [
+                .text("第一段正文\n第二段正文"),
+                .text("• 第一项内容"),
+                .text("• 第二项内容")
+            ])
+            #expect(document.bodyText == "第一段正文\n第二段正文\n• 第一项内容\n• 第二项内容")
+            #expect(document.rawMarkup.contains("<span style="))
+            for sourceTag in ["<span", "</span>", "<ul>", "</ul>", "<li>", "</li>"] {
+                #expect(!document.bodyText.contains(sourceTag))
+            }
+        }
+    }
+
     @Test func nga47185513ShapeMapsRootMetadataAndOrderedSemanticContent() throws {
         let bundle = Bundle(for: SemanticFixtureLocator.self)
         let url = try #require(

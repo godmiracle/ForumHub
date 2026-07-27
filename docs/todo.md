@@ -12,11 +12,23 @@
 
 ## 当前执行顺序
 
-1. 其余条件事项仅在前置条件满足后启动。
+1. 补齐 NGA 自动签到真实未完成与成功 Fixture，以及 V2EX 失效会话/完整重定向证据后完成整项真机验收。
+2. 其余条件事项仅在前置条件满足后启动。
 
 ---
 
 ## 阶段 0：补齐剩余护栏（进行中）
+
+- [ ] **SD-0.6 补齐 NGA / V2EX 自动签到真实证据并解除生产写入门禁**
+  - 具体问题：默认关闭的协调、偏好、来源服务和账户 UI 已实现；V2EX 已补齐真实可领取/动作/成功/再次访问链，但 NGA 未签到/成功/二次状态及 V2EX 失效会话/完整重定向证据仍缺失。
+  - 涉及文件或模块：`ForumHub/Data/NGA/NGADailyCheckInService.swift`、`ForumHub/Data/V2EX/V2EXDailyCheckInService.swift`、`ForumHub/Session/DailyCheckIn.swift`、账户页、签到 Fixtures
+  - 优先级：P1
+  - 状态：安全接缝已修改；2026-07-23 新增 V2EX observed-sanitized onclick Fixture，并在真机通过 20 项聚焦测试、完整 `ForumHubTests` 215 项及独立 Debug build，V2EX production policy 已只针对严格 observed Web 流程解除。NGA `nuke.php/get_stat` 曾在相邻读取出现 JSON `null` 或含 `data/time` 的结构；2026-07-27 又按本地文档在确认未签到的授权账号上调用 `app_api.php/get_stat → check_in → get_stat`，三次均返回相同 `code=2` 且无状态变化，说明请求仍缺少未确认的客户端合约条件。一次性 DEBUG 探针已删除并重新安装无探针包，NGA 写入继续 fail closed。整项等待成功链、剩余真实证据和人工回归。
+  - 验收标准：
+    - 两来源完成“未完成 → 至多一次动作 → 已完成二次确认”的授权采样和脱敏 Fixture 审查；
+    - 不提交 Cookie、Token、账号标识、余额、原始响应或可重放动态参数；
+    - production evidence policy 只接受真实 Fixture 证实的结构和路径；
+    - 聚焦自动化测试、完整测试、真机构建和测试账号人工回归通过后才能标记完成。
 
 - [x] **SD-0.4 NGA 详情语义内容与 API-first 来源策略**
   - 具体问题：`normalizedText + 按行拆分 + 启发式去重` 会误删重复内容、破坏顺序，并迫使新正文异常不断增加全局规则。
@@ -160,7 +172,7 @@
   - 具体问题：表格、代码块、链接和未知标签的真实缺口尚未由 Fixture 系统证明。
   - 涉及文件或模块：`ForumContentBlock`、NGA BBCode Parser、HTML Parser、Fixtures
   - 优先级：P2
-  - 状态：待处理。
+  - 状态：进行中；2026-07-27 用户真机截图已确认 NGA API 正文中的 `<span style="font-size/line-height">` 与 `<ul>/<li>` 会泄漏为可见标签。已用脱敏真实形状 Fixture 固化并完成第一类兼容切片：展示样式透明化、无序列表保留项目符号；聚焦测试、完整 `ForumHubTests`、独立 Debug 真机构建及原帖人工复查均已通过。表格、代码块及其他未知标签仍等待独立真实样本，不视为本项完成。
   - 验收标准：
     - 每种缺失格式至少有一个脱敏真实 Fixture；
     - 记录当前原生投影和网页保真结果；
@@ -170,7 +182,7 @@
   - 具体问题：由 `SD-4.1` 证明的格式需要在不替换整棵内容模型的前提下支持。
   - 涉及文件或模块：`ForumContentBlock`、Parser、`ThreadDetailRichContent`、长图渲染
   - 优先级：P2
-  - 状态：等待 `SD-4.1`。
+  - 状态：等待 `SD-4.1` 完整清单；其中截图已证明的 `span + ul/li` 不需要新增领域节点，已在 NGA Parser 降级为现有段落投影并完成真机聚焦测试。
   - 验收标准：
     - 每次只增加一种节点；
     - Parser、原生渲染、长图和文本降级均有测试；

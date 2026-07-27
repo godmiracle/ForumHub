@@ -95,7 +95,7 @@ final class NGAAuthStore {
     }
 }
 
-struct NGALoginState {
+struct NGALoginState: Equatable {
     let uid: String?
     let cid: String?
     let cookieNames: [String]

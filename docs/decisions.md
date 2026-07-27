@@ -567,6 +567,37 @@ Feed 曾把“最新发帖”实现为对已按最后回复取得的当前页做
 - V2EX、LINUX DO 与测试 Repository 可继续使用默认请求行为
 - 切换排序会增加一次网络请求；登录态真实列表仍需要人工与网页做最终对照
 
+## ADR-022 Daily Check-In Uses Opt-In Coordination And Evidence-Gated Writes
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+NGA 与 V2EX 的每日签到都会修改第三方账号状态，但两站没有共同稳定协议。NGA 当前仍只有无法稳定解释周期语义的只读状态样本；V2EX 已于 2026-07-23 在授权 Web Session 中完成“可领取 → 一次动作 → 已领取 → 再次访问确认”的真实安全链，但真实失效会话跳转和完整重定向链仍缺失。
+
+### Decision
+
+为 NGA 与 V2EX 建立独立来源适配器和共享安全结果，在会话恢复后由独立协调对象于启动/前台触发。偏好按来源默认关闭；UI Test、来源切换、Feed 刷新和 LINUX DO 不触发。生产 evidence policy 只有在真实 Fixture 确认未完成状态、动作路径与成功判据后才允许写入；合成 Fixture 仅测试接缝，未知结构一律 fail closed。
+
+真实采样不再阻塞解析器、服务注入、协调、偏好、生命周期与账户 UI 开发，但仍是每个来源启用生产写入和最终验收的硬门禁。V2EX 只使用 Web Cookie Session，Token 不进入网页请求；其 production policy 仅接受真实观测的唯一领取 `input`、有限 `location.href = '<URL>';` onclick、精确 `/mission/daily/redeem` 与唯一非空 `once`。NGA 未确认日界线前不以本地日期替代服务端事实，并继续禁止 production 写入。
+
+2026-07-27 的真机采样进一步确认：本地文档列出的 `app_api.php` 在当前有效 Cookie 会话下可达，但 `get_stat`、一次 `check_in` 与写后 `get_stat` 均返回相同 `code=2`，没有状态变化。该结果不能作为未签到或成功 code，也不能直接支持从 `nuke.php` 切换 production 端点；必须先确认官方客户端所需的 method、请求头或设备参数，并取得成功后二次状态证据。
+
+持久化安全结果只承担展示职责，不能让冷启动跳过服务端权威检查。每个来源的进行中任务绑定会话 generation；显式会话变化会取消旧任务并在其退出后启动替代检查。V2EX 状态证据还必须来自最终 HTTPS 官方 `/mission/daily` HTML 页面，意外重定向、错误路径和非 HTML 响应一律 fail closed。
+
+### Consequences
+
+- 可按来源独立解除证据门禁：V2EX observed Web 流程可以写入，NGA 仍只执行安全检查
+- 用户开关在对应来源门禁解除前可能只完成安全检查并显示“远端状态尚未确认”
+- NGA 完整证据、V2EX 失效会话证据及两来源完整真机人工回归完成前，不得宣称整项线上自动签到已验收
+- 远端页面或响应变化会停止写入，不会把普通网络失败误判为会话过期
+
 ## Template
 
 Use this structure for future decisions:

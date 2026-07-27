@@ -20,8 +20,10 @@ struct ContentView: View {
     @State private var subscriptions = ForumSubscriptionStore()
     @State private var blockedUsers = BlockedUsersStore()
     @State private var favoriteThreads = FavoriteThreadsStore()
-    @State private var v2exAuthStore = V2EXAuthStore()
+    @State private var v2exAuthStore: V2EXAuthStore
     @State private var linuxDoAuthStore = LinuxDoAuthStore()
+    @State private var dailyCheckInPreferences: DailyCheckInPreferences
+    @State private var dailyCheckInCoordinator: DailyCheckInCoordinator
     @State private var browsingHistory = BrowsingHistoryStore()
     @State private var tabScrollRequest: TabScrollRequest?
     @State private var tabScrollRequestGeneration = 0
@@ -35,8 +37,18 @@ struct ContentView: View {
     @State private var pendingComposeAction: PendingComposeAction?
     @State private var composeDestination: ComposeDestination?
     @State private var lastSessionRestoreAt: Date?
+    @State private var handledV2EXWebSessionGeneration = 0
 
     init() {
+        let v2exAuthStore = V2EXAuthStore()
+        let dailyCheckInPreferences = DailyCheckInPreferences()
+        _v2exAuthStore = State(initialValue: v2exAuthStore)
+        _dailyCheckInPreferences = State(initialValue: dailyCheckInPreferences)
+        _dailyCheckInCoordinator = State(initialValue: DailyCheckInCoordinator(
+            preferences: dailyCheckInPreferences,
+            ngaService: NGADailyCheckInService(),
+            v2exService: V2EXDailyCheckInService(hasWebSession: { v2exAuthStore.hasWebSession })
+        ))
         if let scenario = UITestScenario.current {
             UserDefaults.standard.removeObject(forKey: "forum-feed-preferences-v2")
             UserDefaults.standard.removeObject(forKey: "nga-authoritative-child-forum-directories-v1")
@@ -49,6 +61,15 @@ struct ContentView: View {
     }
 
     init(viewModel: ForumViewModel) {
+        let v2exAuthStore = V2EXAuthStore()
+        let dailyCheckInPreferences = DailyCheckInPreferences()
+        _v2exAuthStore = State(initialValue: v2exAuthStore)
+        _dailyCheckInPreferences = State(initialValue: dailyCheckInPreferences)
+        _dailyCheckInCoordinator = State(initialValue: DailyCheckInCoordinator(
+            preferences: dailyCheckInPreferences,
+            ngaService: NGADailyCheckInService(),
+            v2exService: V2EXDailyCheckInService(hasWebSession: { v2exAuthStore.hasWebSession })
+        ))
         _viewModel = State(initialValue: viewModel)
     }
 
@@ -102,7 +123,9 @@ struct ContentView: View {
                 v2exAuthStore: v2exAuthStore,
                 linuxDoAuthStore: linuxDoAuthStore
             )
+            handleV2EXWebSessionChange(generation: v2exAuthStore.webSessionGeneration)
             lastSessionRestoreAt = .now
+            Task { await dailyCheckInCoordinator.run(trigger: .launch) }
             subscriptions.prepareDefaults(for: viewModel.channels)
             selectedChannelKey = viewModel.currentForumChannel.canonicalKey
             await refreshAuthoritativeChildForumsAndRestorePreferences()
@@ -124,6 +147,12 @@ struct ContentView: View {
                 await handleTabSelection(tab, isReselection: false)
             }
         }
+        .onChange(of: viewModel.loginState) { _, _ in
+            dailyCheckInCoordinator.sessionDidChange(for: .nga)
+        }
+        .onChange(of: v2exAuthStore.webSessionGeneration) { _, generation in
+            handleV2EXWebSessionChange(generation: generation)
+        }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             guard UITestScenario.current == nil else { return }
@@ -138,9 +167,17 @@ struct ContentView: View {
                     v2exAuthStore: v2exAuthStore,
                     linuxDoAuthStore: linuxDoAuthStore
                 )
+                handleV2EXWebSessionChange(generation: v2exAuthStore.webSessionGeneration)
+                await dailyCheckInCoordinator.run(trigger: .foreground)
                 await refreshAuthoritativeChildForumsAndRestorePreferences(reloadsFeedOnSelectionChange: true)
             }
         }
+    }
+
+    private func handleV2EXWebSessionChange(generation: Int) {
+        guard generation > handledV2EXWebSessionGeneration else { return }
+        handledV2EXWebSessionGeneration = generation
+        dailyCheckInCoordinator.sessionDidChange(for: .v2ex)
     }
 
     private var mainContent: some View {
@@ -202,6 +239,7 @@ struct ContentView: View {
             favoriteThreads: favoriteThreads,
             v2exAuthStore: v2exAuthStore,
             linuxDoAuthStore: linuxDoAuthStore,
+            dailyCheckInPreferences: dailyCheckInPreferences,
             scrollRequest: tabScrollRequest,
             repositoryForSource: { source in
                 viewModel.repository(for: source)

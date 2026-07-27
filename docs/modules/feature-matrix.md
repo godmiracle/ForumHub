@@ -31,6 +31,7 @@ This document tracks which user-facing capabilities are available for each integ
 | Search | Yes | Limited | Yes |
 | Blocked users | Local only | Local only | Local only |
 | Browsing history | Yes | Yes | Yes |
+| Opt-in launch/foreground check-in | Evidence-gated / write disabled | Enabled for observed Web flow | No |
 
 ## Notes
 
@@ -40,6 +41,7 @@ This document tracks which user-facing capabilities are available for each integ
 - `Only-author mode` and `Reverse reply order` are currently presentation-level features in the shared detail view.
 - `Threaded reply presentation` for V2EX is inferred from API reply text, is not a server-authoritative parent relation, and always provides a flat fallback.
 - `Search` for V2EX is limited compared with NGA and LINUX DO and should be treated as lower-confidence UX.
+- `Evidence-gated / write disabled` means the default-off preference and safe adapter exist, but production writes remain unreachable until real source evidence is complete. V2EX is enabled only for its observed Web Cookie flow and still fails closed for unknown HTML, arbitrary JavaScript, unexpected URLs or invalid query shapes.
 
 ## Maintenance Rules
 

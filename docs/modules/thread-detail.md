@@ -32,6 +32,7 @@ It includes:
 - V2EX tree mode caps visual indentation at three levels, reverses root groups without reversing parent-child direction, and yields to exact flat only-author filtering.
 - A verified leading V2EX reference may be omitted only from the visible tree projection; accessibility, sharing, snapshots and the authoritative content document retain the full text.
 - Rich reading, long-image snapshots, image enumeration, reply previews, accessibility text and pagination signatures consume `ForumPostDocument.blocks` or explicit projectors; they never reparse flattened text.
+- NGA 正文夹带的已验证展示 HTML 在来源 Parser 降低为语义内容：`span` 的远端字号/行高不接管 App 字体与动态字体，`ul/li` 保留为带项目符号的独立段落；原始 HTML 只保留在 representation 中用于追溯，不直接交给 SwiftUI View。
 - `ThreadDetailPaginationState` owns remote data progress (`currentPage`, `hasMoreReplies`, page start indices); `ThreadDetailScrollState` owns visible-page tracking, page-picker selection, deferred scroll targets, and the automatic-scroll trigger lock. ViewModel writes pagination progress, while the View writes scroll-derived presentation state.
 - 信息流传入的主题只可作为详情页的元数据占位；0 楼正文和回帖必须等待 `fetchThread` 成功后才可展示，避免摘要被误认为完整正文。
 - 列表摘要与完整详情即使拥有相同 `source + id` 也不是内容相等值，确保 Observation 能在详情回写时驱动当前页面更新。

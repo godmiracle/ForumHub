@@ -12,6 +12,7 @@
 | `nga-bbcode-topic-quote.txt` | NGA API BBCode | 依据真机 2 楼原始显示形状脱敏重写 | `[quote][tid]Topic[/tid]`、HTML 粗体、用户标签、换行及引用后正文 |
 | `nga-bbcode-reply-to-header.txt` | NGA API BBCode | 依据真机 18 楼原始显示形状脱敏重写 | 无外层 `[quote]` 的粗体 `Reply to` 头、`pid/uid`、当前回复正文及表情 |
 | `nga-bbcode-inline-html-formatting.txt` | NGA API 混合标记 | 依据真机 44 楼原始显示形状脱敏重写 | BBCode 正文中的 `<del class='gray'>` 行内 HTML 容器及后续正文 |
+| `nga-bbcode-inline-html-list.txt` | NGA API 混合标记 | 依据 2026-07-27 用户提供的真机截图脱敏重写 | 带字号/行高的 `<span>` 容器及 `<ul>/<li>` 项目列表不得泄漏 HTML 标签 |
 | `nga-thread-api-content-unusable.json` | NGA API | 人工组合失败边界 | API 请求成功但正文 unusable |
 | `nga-thread-web-valid-fallback.html` | NGA Web | 人工组合边界，DOM 形状来自真实页面 | API 正文 unusable 时的同楼层整文档回退 |
 | `nga-thread-api-unusable-reply.json` | NGA API | 人工组合失败边界 | 主楼可读但 API 回复正文 unusable 时仍保留楼层身份 |
@@ -26,6 +27,11 @@
 | `v2ex-node-qna-shape.html` | V2EX Web | 依据 `/go/qna` 普通节点页真实 DOM 形状脱敏裁剪 | `TopicsNode` 内 `cell from_<uid> t_<topicid>` 容器、无 `topic-link` class、属性顺序变化、节点说明主题干扰链接、作者、回复数和 onclick 下一页标记 |
 | `v2ex-node-all4all-shape.html` | V2EX Web | 依据 `/go/all4all` 普通节点页真实 DOM 形状脱敏裁剪 | `TopicsNode` 与 topic class token 顺序变化、单引号 `href`、额外属性、HTML entity、作者、回复数和 onclick 下一页标记 |
 | `cross-source-feed-times.json` | NGA/V2EX/Discourse 时间边界 | 人工组合边界 | Unix 秒/毫秒、ISO 8601 和旧快照日期统一解析为 `MM-dd HH:mm` |
+| `nga-check-in-already-observed-sanitized.json` | NGA 签到 | 授权会话观测语义的最小脱敏重写 | 已签到写响应；不含原始响应和账号字段 |
+| `nga-check-in-not-checked-synthetic.json` / `nga-check-in-success-synthetic.json` | NGA 签到 | 人工组合边界 | 注入证据策略下的先读后写测试，不构成生产写入证据 |
+| `v2ex-daily-already-observed-sanitized.html` | V2EX 每日奖励 | 授权会话观测语义的最小脱敏重写 | 已领取页面，不含账号或动态参数 |
+| `v2ex-daily-available-observed-sanitized.html` | V2EX 每日奖励 | 2026-07-23 授权真实领取链的最小脱敏重写 | `input onclick` 可领取结构；真实 `once` 与奖励数量已替换为不可重放占位值 |
+| `v2ex-daily-available-synthetic.html` | V2EX 每日奖励 | 人工组合边界（历史 `href` 结构） | 证明未被真实观测支持的普通链接必须 fail closed，不构成生产写入证据 |
 
 ## NGA 内容证据覆盖
 
@@ -46,3 +52,4 @@
 - 正常、降级和失败路径分别命名，避免一个巨大 Fixture 覆盖所有场景；
 - 修改 Parser 时先补 Fixture 和失败测试，再修改实现；
 - Fixture 进入测试 Bundle 后必须在真机运行相关测试。
+- 文件名含 `synthetic` 的签到 Fixture 不得用于打开生产写入门禁；真实未完成/成功样本补齐前，NGA 与 V2EX 的生产 evidence policy 必须保持禁止写入。

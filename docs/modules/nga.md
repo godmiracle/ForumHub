@@ -41,3 +41,6 @@ It currently supports:
 - Reply pagination needs careful duplicate filtering because later pages may reintroduce the main post.
 - NGA may change the private response shape; a future mismatch must fail closed and retain the last confirmed directory rather than introduce position or attributes heuristics.
 - Rich content and images are a major source of UX complexity.
+- 自动签到使用已恢复的 NGA Cookie 会话访问 `nuke.php`，先读 `get_stat`，只有真实 Fixture 明确确认未签到状态且生产证据门禁解除后才允许 POST `check_in`。当前门禁未解除，因此已签到语义可安全展示，未知或合成未签到结构均不可触发写请求。
+- NGA 服务端日界线尚未由真实响应确认，本地日期不作为跳过服务端检查的权威依据。
+- 2026-07-27 真机按本地文档调用 `app_api.php` 的 `get_stat → check_in → get_stat`，三次均为相同 `code=2` 且没有状态变化；这只证明端点可达，不证明请求合约或签到成功。当前 production 继续使用不可写门禁，也不得在未确认额外请求头、method 或客户端参数前切换端点。
