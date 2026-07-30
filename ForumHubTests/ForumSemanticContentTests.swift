@@ -162,6 +162,91 @@ struct ForumSemanticContentTests {
         }
     }
 
+    @Test func parserLowersMixedHTMLRichContentWithoutLeakingMarkupOrScripts() throws {
+        let bundle = Bundle(for: SemanticFixtureLocator.self)
+        let url = try #require(
+            bundle.url(forResource: "nga-mixed-html-rich-content", withExtension: "txt", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "nga-mixed-html-rich-content", withExtension: "txt")
+        )
+        let markup = try String(contentsOf: url, encoding: .utf8)
+
+        let documents = [
+            NGABBCodeContentParser.parse(markup),
+            NGAHTMLContentParser.parse(markup)
+        ]
+
+        for document in documents {
+            let body = document.bodyText
+            for visibleText in [
+                "富文本标题", "第一段", "重点", "强调", "折叠内容", "折叠正文",
+                "安全链接", "引用正文", "第一项", "第二项", "名称", "值", "状态",
+                "正常", "未来组件正文"
+            ] {
+                #expect(body.contains(visibleText))
+            }
+            #expect(document.imageURLs.map(\.absoluteString) == [
+                "https://img.nga.178.com/attachments/sample/rich.jpg"
+            ])
+            #expect(document.blocks.contains {
+                $0.content == .link(
+                    label: "安全链接",
+                    destination: URL(string: "https://example.com/read?id=1&from=nga")!
+                )
+            })
+            #expect(document.blocks.contains {
+                $0.content == .video(.init(
+                    sourceURL: URL(string: "https://img.nga.cn/attachments/sample/rich.gif.mp4")!,
+                    posterURL: URL(string: "https://img.nga.cn/attachments/sample/rich.gif.mp4.thumb.jpg")!
+                ))
+            })
+            #expect(!body.contains("<"))
+            #expect(!body.contains(">"))
+            #expect(!body.contains("onclick"))
+            #expect(!body.contains("javascript:"))
+            #expect(!body.contains("collapse(document.body)"))
+            #expect(!body.contains("display: none"))
+            #expect(!body.contains("浏览器不支持"))
+        }
+    }
+
+    @Test func parserLowersVideoSourceChildToOneSemanticVideoBlock() throws {
+        let document = NGABBCodeContentParser.parse(
+            """
+            <video poster="//img.nga.cn/attachments/sample/poster.jpg" controls>
+              <source src="//img.nga.cn/attachments/sample/video.mp4" type="video/mp4">
+              浏览器不支持
+            </video>
+            """
+        )
+
+        #expect(document.blocks.count == 1)
+        #expect(document.blocks.first?.content == .video(.init(
+            sourceURL: URL(string: "https://img.nga.cn/attachments/sample/video.mp4")!,
+            posterURL: URL(string: "https://img.nga.cn/attachments/sample/poster.jpg")!
+        )))
+        #expect(document.imageURLs.isEmpty)
+        #expect(document.bodyText == "[视频] https://img.nga.cn/attachments/sample/video.mp4")
+        #expect(!document.bodyText.contains("浏览器不支持"))
+    }
+
+    @Test func inlineVideoPlaybackCoordinatorKeepsOnlyTheLatestVideoActive() {
+        let coordinator = InlineVideoPlaybackCoordinator()
+        let first = UUID()
+        let second = UUID()
+
+        coordinator.activate(first)
+        #expect(coordinator.activePlaybackID == first)
+
+        coordinator.activate(second)
+        #expect(coordinator.activePlaybackID == second)
+
+        coordinator.deactivate(first)
+        #expect(coordinator.activePlaybackID == second)
+
+        coordinator.deactivate(second)
+        #expect(coordinator.activePlaybackID == nil)
+    }
+
     @Test func nga47185513ShapeMapsRootMetadataAndOrderedSemanticContent() throws {
         let bundle = Bundle(for: SemanticFixtureLocator.self)
         let url = try #require(

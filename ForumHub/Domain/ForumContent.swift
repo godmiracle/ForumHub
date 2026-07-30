@@ -140,6 +140,7 @@ struct ForumContentBlock: Identifiable, Equatable {
     enum Kind: Equatable {
         case paragraph
         case image
+        case video
         case emoji
         case quote
         case unsupported
@@ -150,6 +151,7 @@ struct ForumContentBlock: Identifiable, Equatable {
         case inline([ForumInlineNode])
         case link(label: String, destination: URL)
         case image(URL)
+        case video(ForumContentVideo)
         case emoji(ForumContentEmoji)
         case quote(ForumQuoteBlock)
         case unsupported(String)
@@ -163,6 +165,7 @@ struct ForumContentBlock: Identifiable, Equatable {
         switch content {
         case .text, .inline, .link: .paragraph
         case .image: .image
+        case .video: .video
         case .emoji: .emoji
         case .quote: .quote
         case .unsupported: .unsupported
@@ -178,6 +181,7 @@ enum ForumContentProjector {
             case let .inline(nodes): return plainText(from: nodes)
             case let .link(label, destination): return "\(label) (\(destination.absoluteString))"
             case let .image(url): return "[图片] \(url.absoluteString)"
+            case let .video(video): return "[视频] \(video.sourceURL.absoluteString)"
             case let .emoji(emoji): return "[表情] \(emoji.name)"
             case let .quote(quote):
                 return "[引用 author=\"\(quote.author)\" time=\"\(quote.createdAt)\"]\(quote.body)[/引用]"
@@ -226,6 +230,11 @@ enum ForumContentProjector {
 struct ForumContentEmoji: Equatable {
     let name: String
     let url: URL
+}
+
+struct ForumContentVideo: Equatable {
+    let sourceURL: URL
+    let posterURL: URL?
 }
 
 struct ForumQuoteBlock: Equatable {

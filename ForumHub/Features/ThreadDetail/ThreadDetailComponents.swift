@@ -16,6 +16,7 @@ struct ThreadDetailHeaderSection: View {
     let threadReplyTotalCount: Int
     let activeInlineGIFPlaybackIDs: Set<UUID>
     let scrollTrackingSpaceName: String
+    let inlineVideoPlaybackCoordinator: InlineVideoPlaybackCoordinator
 
     var body: some View {
         ThreadDetailCard {
@@ -47,7 +48,8 @@ struct ThreadDetailHeaderSection: View {
                     document: thread.contentDocument,
                     fontSize: 18,
                     activeGIFPlaybackImageIDs: activeInlineGIFPlaybackIDs,
-                    scrollTrackingSpaceName: scrollTrackingSpaceName
+                    scrollTrackingSpaceName: scrollTrackingSpaceName,
+                    videoPlaybackCoordinator: inlineVideoPlaybackCoordinator
                 )
             }
             .padding(.vertical, 8)
@@ -64,6 +66,7 @@ struct ThreadDetailReplySection: View {
     let supportsReplyTargeting: Bool
     let activeInlineGIFPlaybackIDs: Set<UUID>
     let scrollTrackingSpaceName: String
+    let inlineVideoPlaybackCoordinator: InlineVideoPlaybackCoordinator
     let pageAnchorID: (Int) -> String
     let onReplyAppear: (ThreadDetailDisplayedReplyEntry) -> Void
     let onReplyAction: (ThreadDetailDisplayedReplyEntry) -> Void
@@ -104,6 +107,7 @@ struct ThreadDetailReplySection: View {
                     supportsReplyTargeting: supportsReplyTargeting,
                     activeInlineGIFPlaybackIDs: activeInlineGIFPlaybackIDs,
                     scrollTrackingSpaceName: scrollTrackingSpaceName,
+                    inlineVideoPlaybackCoordinator: inlineVideoPlaybackCoordinator,
                     pageAnchorID: pageAnchorID,
                     onAppear: { onReplyAppear(entry) },
                     onReplyAction: { onReplyAction(entry) },
@@ -121,6 +125,7 @@ struct ThreadDetailReplyRow: View {
     let supportsReplyTargeting: Bool
     let activeInlineGIFPlaybackIDs: Set<UUID>
     let scrollTrackingSpaceName: String
+    let inlineVideoPlaybackCoordinator: InlineVideoPlaybackCoordinator
     let pageAnchorID: (Int) -> String
     let onAppear: () -> Void
     let onReplyAction: () -> Void
@@ -173,7 +178,8 @@ struct ThreadDetailReplyRow: View {
                             document: entry.displayedContentDocument,
                             fontSize: 17,
                             activeGIFPlaybackImageIDs: activeInlineGIFPlaybackIDs,
-                            scrollTrackingSpaceName: scrollTrackingSpaceName
+                            scrollTrackingSpaceName: scrollTrackingSpaceName,
+                            videoPlaybackCoordinator: inlineVideoPlaybackCoordinator
                         )
                         .accessibilityLabel(entry.reply.body)
                     }

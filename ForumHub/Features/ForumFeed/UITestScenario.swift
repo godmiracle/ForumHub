@@ -5,6 +5,8 @@ enum UITestScenario: String, CaseIterable {
     case sourceSwitch = "UITEST_SOURCE_SWITCH"
     case pagedThread = "UITEST_PAGED_THREAD"
     case authenticatedFeed = "UITEST_AUTHENTICATED_FEED"
+    case replyFailure = "UITEST_REPLY_FAILURE"
+    case replyDelayedSuccess = "UITEST_REPLY_DELAYED_SUCCESS"
     case expiredFeed = "UITEST_EXPIRED_FEED"
     case v2exRestoredHot = "UITEST_V2EX_RESTORED_HOT"
 
@@ -50,15 +52,19 @@ enum UITestScenario: String, CaseIterable {
             viewModel.canLoadMore = true
             viewModel.hasLoadedInitialFeed = true
             return viewModel
-        case .defaultFeed, .sourceSwitch, .authenticatedFeed, .expiredFeed:
+        case .defaultFeed, .sourceSwitch, .authenticatedFeed, .replyFailure, .replyDelayedSuccess, .expiredFeed:
             let repositories: [ForumSource: any ThreadRepository] = [
-                .nga: UITestRefreshTrackingRepository(source: .nga),
+                .nga: UITestRefreshTrackingRepository(
+                    source: .nga,
+                    failsReply: self == .replyFailure,
+                    replyDelayNanoseconds: self == .replyDelayedSuccess ? 300_000_000 : 0
+                ),
                 .v2ex: MockThreadRepository(source: .v2ex),
                 .linuxDo: MockThreadRepository(source: .linuxDo)
             ]
             let viewModel = ForumViewModel(repositories: repositories, initialSource: .nga)
             switch self {
-            case .authenticatedFeed:
+            case .authenticatedFeed, .replyFailure, .replyDelayedSuccess:
                 viewModel.isAuthenticated = true
                 viewModel.sessionState = .authenticated
             case .expiredFeed:
@@ -112,6 +118,19 @@ enum UITestScenario: String, CaseIterable {
 
 private struct UITestRefreshTrackingRepository: ThreadRepository {
     let source: ForumSource
+    let failsReply: Bool
+    let replyDelayNanoseconds: UInt64
+
+    init(
+        source: ForumSource,
+        failsReply: Bool = false,
+        replyDelayNanoseconds: UInt64 = 0
+    ) {
+        self.source = source
+        self.failsReply = failsReply
+        self.replyDelayNanoseconds = replyDelayNanoseconds
+    }
+
     var capabilities: ForumCapabilities { MockThreadRepository(source: source).capabilities }
     var defaultChannel: ForumChannel {
         switch source {
@@ -168,7 +187,19 @@ private struct UITestRefreshTrackingRepository: ThreadRepository {
 
     func addFavoriteThread(tid: Int) async throws {}
     func removeFavoriteThread(tid: Int) async throws {}
-    func replyThread(tid: Int, target: ThreadReplyTarget, content: String, attachments: [ReplyAttachmentUpload]) async throws {}
+    func replyThread(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload]
+    ) async throws {
+        if replyDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: replyDelayNanoseconds)
+        }
+        if failsReply {
+            throw URLError(.timedOut)
+        }
+    }
 
     private func result(
         id: Int,

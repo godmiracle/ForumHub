@@ -195,11 +195,13 @@ final class ThreadDetailViewModel {
 
         do {
             let target = actions.replyTarget
-            try await repository.replyThread(
+            let attachments = actions.replyAttachments.map(\.upload)
+            try await repository.submitReply(
                 tid: thread.id,
                 target: target,
                 content: content,
-                attachments: actions.replyAttachments.map(\.upload)
+                attachments: attachments,
+                previousReplyCount: thread.replyCount
             )
             actions.replyDocument = ReplyComposerDocument()
             actions.replyAttachments = []

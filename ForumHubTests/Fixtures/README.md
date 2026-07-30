@@ -13,6 +13,7 @@
 | `nga-bbcode-reply-to-header.txt` | NGA API BBCode | 依据真机 18 楼原始显示形状脱敏重写 | 无外层 `[quote]` 的粗体 `Reply to` 头、`pid/uid`、当前回复正文及表情 |
 | `nga-bbcode-inline-html-formatting.txt` | NGA API 混合标记 | 依据真机 44 楼原始显示形状脱敏重写 | BBCode 正文中的 `<del class='gray'>` 行内 HTML 容器及后续正文 |
 | `nga-bbcode-inline-html-list.txt` | NGA API 混合标记 | 依据 2026-07-27 用户提供的真机截图脱敏重写 | 带字号/行高的 `<span>` 容器及 `<ul>/<li>` 项目列表不得泄漏 HTML 标签 |
+| `nga-mixed-html-rich-content.txt` | NGA API/Web 混合标记 | 依据 2026-07-28/30 用户截图中的折叠容器与视频形状脱敏扩展 | 通用块级/行内标签、折叠容器、列表、表格、链接、延迟图片、视频、未知元素及脚本样式的统一安全降级 |
 | `nga-thread-api-content-unusable.json` | NGA API | 人工组合失败边界 | API 请求成功但正文 unusable |
 | `nga-thread-web-valid-fallback.html` | NGA Web | 人工组合边界，DOM 形状来自真实页面 | API 正文 unusable 时的同楼层整文档回退 |
 | `nga-thread-api-unusable-reply.json` | NGA API | 人工组合失败边界 | 主楼可读但 API 回复正文 unusable 时仍保留楼层身份 |

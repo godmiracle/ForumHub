@@ -478,7 +478,7 @@ Accepted
 - 键盘、表情面板和 Sheet 高度不再形成相互反馈，标题与底部操作获得稳定空间
 - 任何未来需要聚焦编辑器的动作都必须签发新 generation，不能恢复持续 `isFocused` 绑定
 - 发布任务由详情页持有；提交中禁止重复发布和下滑关闭，但显式关闭会取消 Task、保留草稿并静默退出
-- NGA 回复上下文和最终 POST 使用 30 秒超时，附件上传使用 60 秒超时，避免依赖共享 Session 默认等待把用户长期锁在提交态
+- NGA 写请求使用隔离的 ephemeral Session 和 `URLSessionDataDelegate` 收包；真机实测显示最终回帖 POST 可能已经返回正文、服务端也已落库，但不会可靠触发传输完成回调。仅最终回帖 POST 在正文静默 1 秒后以已收到的响应结束读取；若仍无回包，NGA Repository 通过既有详情读取确认回复总数增长，确认后取消悬挂写请求。回复上下文、确认读取和附件上传保留系统 `URLSession` 的完整响应路径，不使用这个自定义 delegate；最终回帖 POST 有 30 秒硬截止，附件上传保持 60 秒，避免 UI 无限等待
 - 固定大号 Sheet 占用更多垂直空间，小屏真机仍需单独验证布局
 
 ## ADR-019 NGA Parent Metadata Is The Authority For Child-Forum Filtering
@@ -597,6 +597,31 @@ NGA 与 V2EX 的每日签到都会修改第三方账号状态，但两站没有�
 - 用户开关在对应来源门禁解除前可能只完成安全检查并显示“远端状态尚未确认”
 - NGA 完整证据、V2EX 失效会话证据及两来源完整真机人工回归完成前，不得宣称整项线上自动签到已验收
 - 远端页面或响应变化会停止写入，不会把普通网络失败误判为会话过期
+
+## ADR-023 Thread Videos Use Semantic Blocks And One Inline Playback Owner
+
+### Status
+
+Accepted
+
+### Date
+
+2026-07
+
+### Context
+
+NGA 楼层会把 GIF 转码视频作为 HTML `<video>` 返回。将它降级成普通封面图片和外部链接会让封面点击进入图片预览、播放动作离开 App，也无法协调同一帖子中的多个播放器；按 `foldBox`、`videoSize` 等 class 继续补规则还会把来源 HTML 细节泄漏到 View。
+
+### Decision
+
+共享正文模型增加含 source URL 与可选 poster URL 的视频块。NGA 来源解析器按 HTML 标签语义消费直接 `src` 或嵌套 `source`，View 只消费视频块并将封面作为原位系统播放器入口。一个详情页共享一个单视频协调器，激活新视频会暂停旧视频；浏览器打开仅作为长按兜底。纯文本、无障碍与长图继续从同一视频块生成可读降级。
+
+### Consequences
+
+- 视频不再伪装成图片与链接，主入口留在 App 内
+- 同一详情页最多一个活跃视频，避免多路声音同时播放
+- NGA HTML 变化只要保留标准 `video/source` 语义就不依赖站点 class
+- 当前播放器使用远端 HTTP(S) 资源；服务端鉴权、编码或网络不兼容时仍可能需要浏览器兜底
 
 ## Template
 

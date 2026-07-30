@@ -8,6 +8,7 @@ struct ReplyComposerSheet: View {
     @Binding var target: ThreadReplyTarget
     @Binding var document: ReplyComposerDocument
     @Binding var attachments: [ReplyComposerAttachment]
+    @Binding var errorMessage: String?
     let isSubmitting: Bool
     let onCancel: () -> Void
     let onSubmit: () -> Void
@@ -26,6 +27,17 @@ struct ReplyComposerSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             composerHeader
 
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Color.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityIdentifier("reply-composer-error-message")
+            }
+
             if case let .reply(targetReply) = target {
                 ForumQuoteBlockCard(
                     quote: ForumQuoteBlock(
@@ -41,8 +53,7 @@ struct ReplyComposerSheet: View {
 
             ReplyComposerRichTextEditor(
                 document: $document,
-                focusCommand: editorFocusCommand,
-                isEditable: !isSubmitting
+                focusCommand: editorFocusCommand
             )
             .frame(minHeight: 104, maxHeight: .infinity)
             .padding(.horizontal, 6)
@@ -103,6 +114,11 @@ struct ReplyComposerSheet: View {
         } message: {
             Text(imageLoadErrorMessage ?? "请换一张图片重试。")
         }
+        .alert("回复失败", isPresented: replyErrorBinding) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "请稍后重试。")
+        }
     }
 
     private var composerHeader: some View {
@@ -146,6 +162,13 @@ struct ReplyComposerSheet: View {
             .accessibilityLabel(isSubmitting ? "取消发布并关闭回复编辑器" : "关闭回复编辑器")
             .accessibilityIdentifier("reply-composer-close")
         }
+    }
+
+    private var replyErrorBinding: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )
     }
 
     private var composerToolbar: some View {
@@ -714,7 +737,6 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
     private static let emojiMarkupAttribute = NSAttributedString.Key("ForumHubEmojiMarkup")
     @Binding var document: ReplyComposerDocument
     let focusCommand: ReplyComposerEditorFocusCommand
-    let isEditable: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -745,8 +767,6 @@ struct ReplyComposerRichTextEditor: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: ReplyComposerTextView, context: Context) {
-        textView.isEditable = isEditable
-        textView.isSelectable = true
         context.coordinator.synchronize(document, to: textView)
         context.coordinator.updateFocusCommand(focusCommand, for: textView)
     }

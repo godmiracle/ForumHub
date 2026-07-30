@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Observation
 
 struct InlineGIFPlaybackCoordinator {
     let viewportBuffer: CGFloat
@@ -29,5 +30,20 @@ struct InlineGIFPlaybackCoordinator {
                 .prefix(max(maximumSimultaneousGIFs, 0))
                 .map(\.id)
         )
+    }
+}
+
+@Observable
+@MainActor
+final class InlineVideoPlaybackCoordinator {
+    private(set) var activePlaybackID: UUID?
+
+    func activate(_ playbackID: UUID) {
+        activePlaybackID = playbackID
+    }
+
+    func deactivate(_ playbackID: UUID) {
+        guard activePlaybackID == playbackID else { return }
+        activePlaybackID = nil
     }
 }

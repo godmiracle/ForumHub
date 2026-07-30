@@ -11,6 +11,7 @@ enum NGABBCodeContentParser {
         case formattedText(String)
         case strikethrough(String)
         case link(label: String, destination: String)
+        case video(source: String, poster: String?)
         case unsupported(String)
     }
 
@@ -84,7 +85,7 @@ enum NGABBCodeContentParser {
                 continue
             case let .link(label, rawDestination):
                 flushPendingInlineNodes()
-                if let destination = URL(string: rawDestination.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                if let destination = NGARichContentURLResolver.resolve(rawDestination) {
                     appendBlock(.link(label: label, destination: destination))
                 } else {
                     appendBlock(.unsupported(label))
@@ -104,6 +105,19 @@ enum NGABBCodeContentParser {
                         code: .malformedMarkup,
                         severity: .warning,
                         safeMessage: "NGA 图片地址无法解析"
+                    ))
+                }
+            case let .video(rawSource, rawPoster):
+                flushPendingInlineNodes()
+                if let sourceURL = NGARichContentURLResolver.resolve(rawSource) {
+                    let posterURL = rawPoster.flatMap { NGAImageURLResolver.resolve($0) }
+                    appendBlock(.video(.init(sourceURL: sourceURL, posterURL: posterURL)))
+                } else {
+                    appendBlock(.unsupported("[视频] \(rawSource)"))
+                    diagnostics.append(.init(
+                        code: .malformedMarkup,
+                        severity: .warning,
+                        safeMessage: "NGA 视频地址无法解析"
                     ))
                 }
             case let .emoji(rawMarkup):
@@ -154,7 +168,7 @@ enum NGABBCodeContentParser {
             rawMarkup: markup,
             markupFormat: .ngaBBCode,
             sourceURL: sourceURL,
-            parserVersion: 1
+            parserVersion: 2
         )
 
         return ForumPostDocument(
@@ -241,6 +255,11 @@ enum NGABBCodeContentParser {
                 label: body,
                 destination: linkDestination(in: header) ?? body
             )], closingRange.upperBound)
+        case "video":
+            return ([.video(
+                source: body,
+                poster: attribute("poster", in: header)
+            )], closingRange.upperBound)
         case "引用":
             return ([.quote(
                 author: attribute("author", in: header) ?? "",
@@ -271,7 +290,7 @@ enum NGABBCodeContentParser {
     }
 
     private static func knownStandaloneTag(_ name: String) -> Bool {
-        ["img", "url", "引用", "quote", "b", "i", "u", "color", "size", "del"].contains(name.lowercased())
+        ["img", "url", "video", "引用", "quote", "b", "i", "u", "color", "size", "del"].contains(name.lowercased())
     }
 
     private static func attribute(_ name: String, in header: String) -> String? {
@@ -441,76 +460,15 @@ enum NGABBCodeContentParser {
     }
 
     private static func normalizedSourceMarkup(_ markup: String) -> String {
-        var value = normalizeLegacyQuotes(in: markup.decodedHTMLEntities)
-        value = replaceHTMLImages(in: value)
-        value = value.replacingOccurrences(
-            of: #"(?i)<br\s*/?>"#,
-            with: "[br]",
-            options: .regularExpression
-        )
-        value = normalizingKnownPresentationalHTMLTags(in: value)
+        var value = normalizeLegacyQuotes(in: markup)
+        value = NGAEmbeddedHTMLNormalizer.normalize(value)
+        value = value.decodedHTMLEntities
         value = value.replacingOccurrences(
             of: #"(?i)\[图片\]\s*((?:https?:)?//[^\s\[]+|\.?/[^\s\[]+)"#,
             with: "[img]$1[/img]",
             options: .regularExpression
         )
         return value
-    }
-
-    /// NGA API 正文会夹带少量展示 HTML。按标签边界将已验证样式映射为语义标记，
-    /// 保留标签内文字；未知 HTML 不在这里静默删除，继续走可见降级路径。
-    private static func normalizingKnownPresentationalHTMLTags(in markup: String) -> String {
-        let transparentTags: Set<String> = ["b", "span"]
-        var output = ""
-        var cursor = markup.startIndex
-
-        while cursor < markup.endIndex {
-            guard let openingBracket = markup[cursor...].firstIndex(of: "<") else {
-                output.append(contentsOf: markup[cursor...])
-                break
-            }
-            output.append(contentsOf: markup[cursor..<openingBracket])
-
-            guard let closingBracket = markup[openingBracket...].firstIndex(of: ">") else {
-                output.append(contentsOf: markup[openingBracket...])
-                break
-            }
-
-            let headerStart = markup.index(after: openingBracket)
-            let rawHeader = markup[headerStart..<closingBracket]
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let isClosingTag = rawHeader.hasPrefix("/")
-            let tagHeader = isClosingTag
-                ? rawHeader.dropFirst()
-                : rawHeader[rawHeader.startIndex...]
-            let tagName = String(tagHeader.prefix { character in
-                character.isLetter || character.isNumber
-            }).lowercased()
-
-            if tagName == "del" {
-                output.append(isClosingTag ? "[/del]" : "[del]")
-            } else if tagName == "ul" {
-                output.append("[br]")
-            } else if tagName == "li" {
-                output.append(isClosingTag ? "[br]" : "[br]• ")
-            } else if !transparentTags.contains(tagName) {
-                output.append(contentsOf: markup[openingBracket...closingBracket])
-            }
-            cursor = markup.index(after: closingBracket)
-        }
-
-        return output
-    }
-
-    private static func replaceHTMLImages(in markup: String) -> String {
-        guard let expression = try? NSRegularExpression(
-            pattern: #"(?is)<img\b[^>]*\b(?:src|data-src|data-original)\s*=\s*['\"]([^'\"]+)['\"][^>]*>"#
-        ) else { return markup }
-        return expression.stringByReplacingMatches(
-            in: markup,
-            range: NSRange(markup.startIndex..<markup.endIndex, in: markup),
-            withTemplate: "[img]$1[/img]"
-        )
     }
 
     private static func normalizeLegacyQuotes(in markup: String) -> String {
@@ -558,5 +516,363 @@ enum NGABBCodeContentParser {
         let value = header[header.index(after: separator)...]
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+}
+
+/// NGA 正文同时可能包含 BBCode 与浏览器 HTML。这里以容错扫描方式把 HTML 降低成
+/// 已有 BBCode 语义接缝：不执行事件或脚本，不依赖站点 class，并让未知元素透明保留子内容。
+private enum NGAEmbeddedHTMLNormalizer {
+    private struct Tag {
+        let name: String
+        let header: String
+        let isClosing: Bool
+        let isSelfClosing: Bool
+    }
+
+    private struct MediaContext {
+        let type: String
+        var sourceURL: URL?
+        let posterURL: URL?
+    }
+
+    private static let blockTags: Set<String> = [
+        "address", "article", "aside", "blockquote", "body", "dd", "details", "dialog",
+        "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form",
+        "h1", "h2", "h3", "h4", "h5", "h6", "header", "main", "nav", "ol", "p",
+        "pre", "section", "summary", "table", "tbody", "tfoot", "thead", "tr", "ul"
+    ]
+    private static let suppressedTags: Set<String> = [
+        "canvas", "noscript", "script", "style", "template"
+    ]
+
+    static func normalize(_ markup: String) -> String {
+        var output = ""
+        var cursor = markup.startIndex
+        var anchorStack: [Bool] = []
+        var mediaStack: [MediaContext] = []
+
+        while cursor < markup.endIndex {
+            guard let tagStart = markup[cursor...].firstIndex(of: "<") else {
+                if mediaStack.isEmpty {
+                    output.append(contentsOf: markup[cursor...])
+                }
+                break
+            }
+            if mediaStack.isEmpty {
+                output.append(contentsOf: markup[cursor..<tagStart])
+            }
+
+            if markup[tagStart...].hasPrefix("<!--") {
+                guard let commentEnd = markup.range(
+                    of: "-->",
+                    range: markup.index(tagStart, offsetBy: 4)..<markup.endIndex
+                ) else {
+                    break
+                }
+                cursor = commentEnd.upperBound
+                continue
+            }
+
+            guard let end = tagEnd(in: markup, from: tagStart),
+                  let tag = parseTag(String(markup[markup.index(after: tagStart)..<end]))
+            else {
+                if mediaStack.isEmpty {
+                    output.append("<")
+                }
+                cursor = markup.index(after: tagStart)
+                continue
+            }
+            let afterTag = markup.index(after: end)
+
+            if !tag.isClosing, suppressedTags.contains(tag.name) {
+                cursor = tag.isSelfClosing
+                    ? afterTag
+                    : endOfSuppressedElement(named: tag.name, in: markup, after: afterTag)
+                continue
+            }
+
+            switch tag.name {
+            case "a":
+                if tag.isClosing {
+                    if anchorStack.popLast() == true {
+                        output.append("[/url]")
+                    }
+                } else {
+                    let destination: URL?
+                    if let rawDestination = attribute("href", in: tag.header) {
+                        destination = NGARichContentURLResolver.resolve(rawDestination)
+                    } else {
+                        destination = nil
+                    }
+                    let opensSemanticLink = destination != nil && mediaStack.isEmpty
+                    if let destination, opensSemanticLink {
+                        output.append("[url=\(destination.absoluteString)]")
+                    }
+                    if !tag.isSelfClosing {
+                        anchorStack.append(opensSemanticLink)
+                    }
+                }
+
+            case "img":
+                guard !tag.isClosing, mediaStack.isEmpty,
+                      let rawSource = firstAttribute(
+                        ["data-src", "data-original", "data-lazy-src", "src"],
+                        in: tag.header
+                      ),
+                      let source = NGAImageURLResolver.resolve(rawSource)
+                else { break }
+                output.append("[img]\(source.absoluteString)[/img]")
+
+            case "video", "audio":
+                if tag.isClosing {
+                    if let index = mediaStack.lastIndex(where: { $0.type == tag.name }) {
+                        let media = mediaStack[index]
+                        mediaStack.removeSubrange(index...)
+                        appendMedia(media, to: &output)
+                    }
+                } else {
+                    let media = mediaContext(for: tag)
+                    if tag.isSelfClosing {
+                        appendMedia(media, to: &output)
+                    } else {
+                        mediaStack.append(media)
+                    }
+                }
+
+            case "source":
+                guard !tag.isClosing, !mediaStack.isEmpty,
+                      let rawSource = firstAttribute(["src", "data-src"], in: tag.header),
+                      let source = NGARichContentURLResolver.resolve(rawSource)
+                else { break }
+                if mediaStack[mediaStack.count - 1].sourceURL == nil {
+                    mediaStack[mediaStack.count - 1].sourceURL = source
+                }
+
+            case "iframe":
+                guard !tag.isClosing,
+                      let rawSource = firstAttribute(["src", "data-src"], in: tag.header),
+                      let source = NGARichContentURLResolver.resolve(rawSource)
+                else { break }
+                output.append("[url=\(source.absoluteString)]打开嵌入内容[/url][br]")
+
+            case "br", "hr":
+                if !tag.isClosing {
+                    output.append("[br]")
+                }
+
+            case "li":
+                output.append(tag.isClosing ? "[br]" : "[br]• ")
+
+            case "td", "th":
+                if tag.isClosing {
+                    output.append("　")
+                }
+
+            case "del", "s", "strike":
+                output.append(tag.isClosing ? "[/del]" : "[del]")
+
+            default:
+                if blockTags.contains(tag.name) {
+                    output.append("[br]")
+                }
+                // 行内样式与未知自定义元素都只去掉标签外壳，子内容按原顺序继续解析。
+            }
+
+            cursor = afterTag
+        }
+
+        while let openedSemanticLink = anchorStack.popLast() {
+            if openedSemanticLink {
+                output.append("[/url]")
+            }
+        }
+        for media in mediaStack {
+            appendMedia(media, to: &output)
+        }
+        return output
+    }
+
+    private static func mediaContext(for tag: Tag) -> MediaContext {
+        let sourceURL = firstAttribute(["src", "data-src"], in: tag.header)
+            .flatMap { NGARichContentURLResolver.resolve($0) }
+        let posterURL = firstAttribute(["poster", "data-poster"], in: tag.header)
+            .flatMap { NGAImageURLResolver.resolve($0) }
+        return MediaContext(type: tag.name, sourceURL: sourceURL, posterURL: posterURL)
+    }
+
+    private static func appendMedia(_ media: MediaContext, to output: inout String) {
+        guard let sourceURL = media.sourceURL else { return }
+        if media.type == "video" {
+            let posterAttribute = media.posterURL.map { #" poster="\#($0.absoluteString)""# } ?? ""
+            output.append("[video\(posterAttribute)]\(sourceURL.absoluteString)[/video][br]")
+        } else {
+            output.append(mediaLink(url: sourceURL, type: media.type))
+        }
+    }
+
+    private static func mediaLink(url: URL, type: String) -> String {
+        let label = type == "audio" ? "播放音频" : "播放视频"
+        return "[url=\(url.absoluteString)]\(label)[/url][br]"
+    }
+
+    private static func endOfSuppressedElement(
+        named name: String,
+        in markup: String,
+        after openingTag: String.Index
+    ) -> String.Index {
+        guard let closingStart = markup.range(
+            of: "</\(name)",
+            options: [.caseInsensitive],
+            range: openingTag..<markup.endIndex
+        )?.lowerBound,
+              let closingEnd = tagEnd(in: markup, from: closingStart)
+        else {
+            return markup.endIndex
+        }
+        return markup.index(after: closingEnd)
+    }
+
+    private static func tagEnd(in markup: String, from start: String.Index) -> String.Index? {
+        var cursor = markup.index(after: start)
+        var quote: Character?
+        while cursor < markup.endIndex {
+            let character = markup[cursor]
+            if let activeQuote = quote {
+                if character == activeQuote {
+                    quote = nil
+                }
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character == ">" {
+                return cursor
+            }
+            cursor = markup.index(after: cursor)
+        }
+        return nil
+    }
+
+    private static func parseTag(_ rawHeader: String) -> Tag? {
+        let header = rawHeader.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !header.isEmpty else { return nil }
+        if header.hasPrefix("!") || header.hasPrefix("?") {
+            return Tag(name: "", header: header, isClosing: false, isSelfClosing: true)
+        }
+
+        var cursor = header.startIndex
+        let isClosing = header[cursor] == "/"
+        if isClosing {
+            cursor = header.index(after: cursor)
+        }
+        guard cursor < header.endIndex, header[cursor].isLetter else { return nil }
+        let nameStart = cursor
+        while cursor < header.endIndex {
+            let character = header[cursor]
+            guard character.isLetter || character.isNumber || character == "-" || character == ":"
+            else { break }
+            cursor = header.index(after: cursor)
+        }
+        let name = header[nameStart..<cursor].lowercased()
+        return Tag(
+            name: name,
+            header: header,
+            isClosing: isClosing,
+            isSelfClosing: header.hasSuffix("/") || ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"].contains(name)
+        )
+    }
+
+    private static func firstAttribute(_ names: [String], in header: String) -> String? {
+        for name in names {
+            if let value = attribute(name, in: header), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func attribute(_ requestedName: String, in header: String) -> String? {
+        var cursor = header.startIndex
+        if cursor < header.endIndex, header[cursor] == "/" {
+            cursor = header.index(after: cursor)
+        }
+        while cursor < header.endIndex, !header[cursor].isWhitespace {
+            cursor = header.index(after: cursor)
+        }
+
+        while cursor < header.endIndex {
+            while cursor < header.endIndex,
+                  header[cursor].isWhitespace || header[cursor] == "/" {
+                cursor = header.index(after: cursor)
+            }
+            guard cursor < header.endIndex else { break }
+            let nameStart = cursor
+            while cursor < header.endIndex {
+                let character = header[cursor]
+                guard character.isLetter || character.isNumber || character == "-" || character == "_" || character == ":"
+                else { break }
+                cursor = header.index(after: cursor)
+            }
+            guard nameStart < cursor else {
+                cursor = header.index(after: cursor)
+                continue
+            }
+            let name = header[nameStart..<cursor].lowercased()
+            while cursor < header.endIndex, header[cursor].isWhitespace {
+                cursor = header.index(after: cursor)
+            }
+            guard cursor < header.endIndex, header[cursor] == "=" else {
+                continue
+            }
+            cursor = header.index(after: cursor)
+            while cursor < header.endIndex, header[cursor].isWhitespace {
+                cursor = header.index(after: cursor)
+            }
+            guard cursor < header.endIndex else { return nil }
+
+            let value: String
+            if header[cursor] == "\"" || header[cursor] == "'" {
+                let quote = header[cursor]
+                cursor = header.index(after: cursor)
+                let valueStart = cursor
+                while cursor < header.endIndex, header[cursor] != quote {
+                    cursor = header.index(after: cursor)
+                }
+                value = String(header[valueStart..<cursor])
+                if cursor < header.endIndex {
+                    cursor = header.index(after: cursor)
+                }
+            } else {
+                let valueStart = cursor
+                while cursor < header.endIndex,
+                      !header[cursor].isWhitespace {
+                    cursor = header.index(after: cursor)
+                }
+                value = String(header[valueStart..<cursor])
+            }
+
+            if name == requestedName.lowercased() {
+                return value.decodedHTMLEntities
+            }
+        }
+        return nil
+    }
+}
+
+private enum NGARichContentURLResolver {
+    static func resolve(_ rawValue: String) -> URL? {
+        var value = rawValue
+            .decodedHTMLEntities
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\/", with: "/")
+        if value.hasPrefix("//") {
+            value = "https:" + value
+        }
+        guard !value.contains("["),
+              !value.contains("]"),
+              let forumBaseURL = URL(string: "https://bbs.nga.cn/"),
+              let url = URL(string: value, relativeTo: forumBaseURL)?.absoluteURL,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return nil }
+        return url
     }
 }

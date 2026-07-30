@@ -1,3 +1,4 @@
+import AVKit
 import Photos
 import SwiftUI
 import UIKit
@@ -8,29 +9,34 @@ struct ForumRichContentView: View {
     let fontSize: CGFloat
     let activeGIFPlaybackImageIDs: Set<UUID>
     let scrollTrackingSpaceName: String?
+    let videoPlaybackCoordinator: InlineVideoPlaybackCoordinator?
 
     init(
         text: String,
         fontSize: CGFloat,
         activeGIFPlaybackImageIDs: Set<UUID> = [],
-        scrollTrackingSpaceName: String? = nil
+        scrollTrackingSpaceName: String? = nil,
+        videoPlaybackCoordinator: InlineVideoPlaybackCoordinator? = nil
     ) {
         blocks = ForumPostDocument.plainText(text).blocks
         self.fontSize = fontSize
         self.activeGIFPlaybackImageIDs = activeGIFPlaybackImageIDs
         self.scrollTrackingSpaceName = scrollTrackingSpaceName
+        self.videoPlaybackCoordinator = videoPlaybackCoordinator
     }
 
     init(
         document: ForumPostDocument,
         fontSize: CGFloat,
         activeGIFPlaybackImageIDs: Set<UUID> = [],
-        scrollTrackingSpaceName: String? = nil
+        scrollTrackingSpaceName: String? = nil,
+        videoPlaybackCoordinator: InlineVideoPlaybackCoordinator? = nil
     ) {
         blocks = document.blocks
         self.fontSize = fontSize
         self.activeGIFPlaybackImageIDs = activeGIFPlaybackImageIDs
         self.scrollTrackingSpaceName = scrollTrackingSpaceName
+        self.videoPlaybackCoordinator = videoPlaybackCoordinator
     }
 
     var body: some View {
@@ -59,6 +65,15 @@ struct ForumRichContentView: View {
                         activeGIFPlaybackImageIDs: activeGIFPlaybackImageIDs,
                         scrollTrackingSpaceName: scrollTrackingSpaceName
                     )
+                case let .video(video):
+                    if let videoPlaybackCoordinator {
+                        InlineForumVideo(
+                            video: video,
+                            playbackCoordinator: videoPlaybackCoordinator
+                        )
+                    } else {
+                        ForumVideoPoster(video: video, showsPlaybackHint: false)
+                    }
                 case let .emoji(emoji):
                     InlineForumEmoji(url: emoji.url, name: emoji.name)
                 case let .quote(quote):
@@ -70,6 +85,126 @@ struct ForumRichContentView: View {
                         .lineSpacing(fontSize >= 18 ? 6 : 5)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+        }
+    }
+}
+
+private struct InlineForumVideo: View {
+    let video: ForumContentVideo
+    let playbackCoordinator: InlineVideoPlaybackCoordinator
+    @State private var playbackID = UUID()
+    @State private var player: AVPlayer?
+
+    private var isActive: Bool {
+        playbackCoordinator.activePlaybackID == playbackID
+    }
+
+    var body: some View {
+        Group {
+            if isActive, let player {
+                VideoPlayer(player: player)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityLabel("视频播放中")
+            } else {
+                Button(action: play) {
+                    ForumVideoPoster(video: video, showsPlaybackHint: true)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("播放视频")
+                .accessibilityHint("在当前帖子中播放")
+            }
+        }
+        .contextMenu {
+            ShareLink(item: video.sourceURL) {
+                Label("分享视频链接", systemImage: "square.and.arrow.up")
+            }
+            Link(destination: video.sourceURL) {
+                Label("使用浏览器打开", systemImage: "safari")
+            }
+        }
+        .onChange(of: playbackCoordinator.activePlaybackID) { _, activePlaybackID in
+            if activePlaybackID != playbackID {
+                player?.pause()
+            }
+        }
+        .onDisappear {
+            player?.pause()
+            playbackCoordinator.deactivate(playbackID)
+        }
+    }
+
+    private func play() {
+        let player = player ?? AVPlayer(url: video.sourceURL)
+        self.player = player
+        playbackCoordinator.activate(playbackID)
+        player.play()
+    }
+}
+
+private struct ForumVideoPoster: View {
+    let video: ForumContentVideo
+    let showsPlaybackHint: Bool
+    @State private var asset: ForumRemoteImageAsset?
+    @State private var failed = false
+
+    var body: some View {
+        ZStack {
+            if let asset {
+                Image(uiImage: asset.previewImage)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Rectangle()
+                    .fill(PaperTheme.paperDeep.opacity(0.35))
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .overlay {
+                        if failed || video.posterURL == nil {
+                            Image(systemName: "video")
+                                .font(.system(size: 38, weight: .medium))
+                                .foregroundStyle(PaperTheme.mutedText)
+                        } else {
+                            ProgressView()
+                                .tint(PaperTheme.mutedText)
+                        }
+                    }
+            }
+
+            if showsPlaybackHint {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 66, height: 66)
+                    .background(Color.black.opacity(0.58), in: Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background(Color.black.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(alignment: .bottomTrailing) {
+            Text("视频")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.black.opacity(0.55), in: Capsule())
+                .padding(10)
+        }
+        .task(id: video.posterURL) {
+            guard let posterURL = video.posterURL else {
+                failed = true
+                return
+            }
+            do {
+                asset = try await NGAImageLoader.loadAsset(url: posterURL)
+            } catch is CancellationError {
+                return
+            } catch {
+                failed = true
             }
         }
     }

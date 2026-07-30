@@ -32,7 +32,7 @@ It currently supports:
 - 普通 NGA 裸数字栏目在导航和订阅边界规范化为 `nga:fid:<id>`。同一 fid 在全站目录和权威目录中只展示一次，`fid:N` 与 `stid:N` 不得合并。
 - `stid` 独立栏目的网页列表按 `tr.topicrow` 一行一主题解析：标题取 `a.topic`，作者取 `a.author`，回复数取 `a.replies`。不得把排在标题前面的“打开新窗口”辅助链接当成主题，也不得用“来自网页兜底解析”替代可确认的行元数据。
 - 完整快照确认改名时保留首页订阅，确认取消时分别清理首页订阅与父版筛选；请求或结构失败继续保留最近确认目录和两类偏好。
-- `NGABBCodeContentParser` and `NGAHTMLContentParser` lower source markup into the same ordered semantic blocks with parse quality and safe diagnostics.
+- `NGABBCodeContentParser` and `NGAHTMLContentParser` share one tolerant embedded-HTML normalizer before lowering source markup into ordered semantic blocks. The normalizer is tag-semantic rather than class-specific: it preserves readable descendants and block boundaries, extracts safe links/images, lowers both direct `video src` and nested `video/source` markup into one video block carrying source and optional poster URLs, and drops scripts, styles, event attributes and non-HTTP(S) destinations.
 - Only unusable API content enters Web fallback. The fallback replaces a whole same-floor document while preserving API identity, metadata, membership, and order; Web-only floors are ignored and diagnosed.
 - Complete API transport failure is a typed error; users can still choose the existing original-page action.
 - NGA emoji tables, relative attachment resolution, BBCode, HTML and DOM rules stay inside the NGA adapter.

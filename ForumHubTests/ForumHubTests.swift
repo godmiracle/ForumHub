@@ -4,6 +4,36 @@ import Testing
 import UIKit
 @testable import ForumHub
 
+private final class NGAResponseBodyWithoutCompletionURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "reply-test.forumhub.invalid"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: nil
+              )
+        else {
+            return
+        }
+
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("published".utf8))
+        // Intentionally omit urlProtocolDidFinishLoading(_:), mirroring the NGA response that
+        // has sent its body but keeps the transport open.
+    }
+
+    override func stopLoading() {}
+}
+
 @MainActor
 struct ForumHubTests {
 
@@ -53,6 +83,70 @@ struct ForumHubTests {
         #expect(viewModel.actions.replyErrorMessage == nil)
         #expect(viewModel.actions.replyDocument.markup == "保留的回复草稿")
         #expect(viewModel.actions.showsReplyComposer)
+    }
+
+    @Test func ngaWriteRequestsUseFreshIsolatedSessions() {
+        let firstSession = NGAWriteRequestSession.make(timeoutInterval: 30)
+        let secondSession = NGAWriteRequestSession.make(timeoutInterval: 60)
+        defer {
+            firstSession.invalidateAndCancel()
+            secondSession.invalidateAndCancel()
+        }
+
+        #expect(firstSession !== secondSession)
+        #expect(firstSession.configuration.identifier == nil)
+        #expect(firstSession.configuration.httpCookieStorage == nil)
+        #expect(!firstSession.configuration.httpShouldSetCookies)
+        #expect(firstSession.configuration.timeoutIntervalForRequest == 30)
+        #expect(firstSession.configuration.timeoutIntervalForResource == 30)
+        #expect(secondSession.configuration.timeoutIntervalForResource == 60)
+    }
+
+    @Test func ngaReplyRequestFinishesAfterReceivingBodyWithoutTransportCompletion() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [NGAResponseBodyWithoutCompletionURLProtocol.self]
+        let request = URLRequest(url: testURL("https://reply-test.forumhub.invalid/post.php"))
+
+        let (data, response) = try await NGAWriteRequestSession.load(
+            request,
+            timeoutInterval: 1,
+            responseBodyIdleInterval: 0.01,
+            configuration: configuration
+        )
+
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        #expect(String(decoding: data, as: UTF8.self) == "published")
+    }
+
+    @Test func cancellingNGAWriteRequestDoesNotWaitForTransportCompletion() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [NGAResponseBodyWithoutCompletionURLProtocol.self]
+        let request = URLRequest(url: testURL("https://reply-test.forumhub.invalid/post.php"))
+        let submission = Task {
+            try await NGAWriteRequestSession.load(
+                request,
+                timeoutInterval: 60,
+                configuration: configuration
+            )
+        }
+
+        try await Task.sleep(for: .milliseconds(20))
+        submission.cancel()
+
+        do {
+            _ = try await submission.value
+            Issue.record("取消请求不应等待未结束的传输。")
+        } catch is CancellationError {
+            // Expected: cancellation directly resumes the waiting continuation.
+        }
+    }
+
+    @Test func ngaServerReplyMessageIsPreservedForTheComposer() {
+        let error = NGARequestError.apiMessage("帖子发布或回复时间超过限制")
+
+        #expect(
+            ForumError.resolve(error)?.userMessage == "帖子发布或回复时间超过限制"
+        )
     }
 
     @Test func ngaReplyEmojiCatalogIncludesConfirmedResourceRanges() {
@@ -123,16 +217,17 @@ struct ForumHubTests {
         #expect(document.selection == NSRange(location: 2, length: 0))
     }
 
-    @Test func ngaReplySubmissionFormIncludesServerIssuedAuthToken() {
+    @Test func ngaReplySubmissionFormIncludesServerRequiredSubject() {
         let form = NGAReplySubmissionForm.make(
             action: "reply",
             tid: 1001,
             fid: -7,
             content: "[img]https://img4.nga.178.com/ngabbs/post/smile/ng_1.png[/img]",
-            auth: "server-issued-auth"
+            subject: "测试主题"
         )
 
-        #expect(form["auth"] == "server-issued-auth")
+        #expect(form["post_subject"] == "测试主题")
+        #expect(form["auth"] == nil)
         #expect(form["post_content"] == "[img]https://img4.nga.178.com/ngabbs/post/smile/ng_1.png[/img]")
         #expect(form["__output"] == "14")
     }

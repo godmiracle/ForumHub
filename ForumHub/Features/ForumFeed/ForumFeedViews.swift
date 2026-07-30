@@ -84,7 +84,6 @@ struct ForumFeedContent: View {
     let onRefresh: () async -> Void
     let onLoadNextPage: () async -> Void
     var onBrowserVerificationRequested: () -> Void = {}
-    var onOpenThread: (ForumThread) -> Void = { _ in }
     var onSwipeChannel: (ChannelPagingDirection) -> Void = { _ in }
     var onHeaderCollapseChange: (Bool) -> Void = { _ in }
     @State private var suppressesThreadNavigation = false
@@ -249,8 +248,7 @@ struct ForumFeedContent: View {
                 blockedUsers: blockedUsers,
                 favoriteThreads: favoriteThreads,
                 sortMode: sortMode,
-                navigationDisabled: suppressesThreadNavigation,
-                onOpen: { onOpenThread(thread) }
+                navigationDisabled: suppressesThreadNavigation
             )
         }
     }
@@ -271,8 +269,7 @@ struct ForumFeedContent: View {
                     blockedUsers: blockedUsers,
                     favoriteThreads: favoriteThreads,
                     sortMode: sortMode,
-                    navigationDisabled: suppressesThreadNavigation,
-                    onOpen: { onOpenThread(thread) }
+                    navigationDisabled: suppressesThreadNavigation
                 )
                 .task(id: threads.count) {
                     if FeedPaginationPolicy.shouldPrefetch(
@@ -346,7 +343,6 @@ struct BlockableThreadLink: View {
     @Bindable var favoriteThreads: FavoriteThreadsStore
     var sortMode: FeedSortMode = .lastReply
     var navigationDisabled = false
-    var onOpen: () -> Void = {}
     @State private var favoriteErrorMessage: String?
 
     var body: some View {
@@ -368,9 +364,6 @@ struct BlockableThreadLink: View {
         .accessibilityIdentifier("thread-row-\(thread.id)")
         .buttonStyle(.plain)
         .disabled(navigationDisabled)
-        .simultaneousGesture(TapGesture().onEnded {
-            if !navigationDisabled { onOpen() }
-        })
         .contextMenu {
             if repository.capabilities.supportsFavorites {
                 Button {
@@ -825,7 +818,7 @@ struct ForumTopBar: View {
 
     private var searchPlaceholder: String {
         capabilities.supportsSearch
-            ? "搜索 \(selectedSource.title)"
+            ? "搜索 \(selectedSource.title) 主题标题"
             : "\(selectedSource.title) 暂不支持全站搜索"
     }
 

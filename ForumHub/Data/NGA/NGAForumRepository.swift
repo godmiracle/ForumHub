@@ -1,6 +1,261 @@
 import Foundation
 import CoreFoundation
 
+enum NGAWriteRequestSession {
+    static func make(timeoutInterval: TimeInterval) -> URLSession {
+        URLSession(configuration: configuration(timeoutInterval: timeoutInterval))
+    }
+
+    private static func configuration(
+        timeoutInterval: TimeInterval,
+        base: URLSessionConfiguration? = nil
+    ) -> URLSessionConfiguration {
+        let configuration = (base?.copy() as? URLSessionConfiguration)
+            ?? URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.timeoutIntervalForRequest = timeoutInterval
+        configuration.timeoutIntervalForResource = timeoutInterval
+        return configuration
+    }
+
+    static func load(
+        _ request: URLRequest,
+        timeoutInterval: TimeInterval,
+        responseBodyIdleInterval: TimeInterval? = nil,
+        configuration: URLSessionConfiguration? = nil
+    ) async throws -> (Data, URLResponse) {
+        let requestDelegate = NGAWriteRequestDelegate(
+            timeoutInterval: timeoutInterval,
+            responseBodyIdleInterval: responseBodyIdleInterval
+        )
+        let session = make(
+            timeoutInterval: timeoutInterval,
+            delegate: requestDelegate,
+            configuration: configuration
+        )
+        defer { session.invalidateAndCancel() }
+        return try await requestDelegate.load(request, with: session)
+    }
+
+    private static func make(
+        timeoutInterval: TimeInterval,
+        delegate: URLSessionDataDelegate,
+        configuration sessionConfiguration: URLSessionConfiguration? = nil
+    ) -> URLSession {
+        return URLSession(
+            configuration: configuration(timeoutInterval: timeoutInterval, base: sessionConfiguration),
+            delegate: delegate,
+            delegateQueue: nil
+        )
+    }
+}
+
+private nonisolated final class NGAWriteRequestDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private let timeoutInterval: TimeInterval
+    private let responseBodyIdleInterval: TimeInterval?
+    private var continuation: CheckedContinuation<(Data, URLResponse), Error>?
+    private var task: URLSessionDataTask?
+    private var isCancelled = false
+    private var response: URLResponse?
+    private var receivedData = Data()
+    private var timeoutWorkItem: DispatchWorkItem?
+    private var responseBodyIdleWorkItem: DispatchWorkItem?
+
+    init(
+        timeoutInterval: TimeInterval,
+        responseBodyIdleInterval: TimeInterval?
+    ) {
+        self.timeoutInterval = timeoutInterval
+        self.responseBodyIdleInterval = responseBodyIdleInterval
+    }
+
+    func load(
+        _ request: URLRequest,
+        with session: URLSession
+    ) async throws -> (Data, URLResponse) {
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                guard !isCancelled else {
+                    lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+
+                self.continuation = continuation
+                let task = session.dataTask(with: request)
+                self.task = task
+                self.scheduleTimeoutLocked()
+                lock.unlock()
+                task.resume()
+            }
+        } onCancel: {
+            self.cancel()
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        isCancelled = true
+        let task = task
+        let continuation = continuation
+        self.continuation = nil
+        cancelWorkItemsLocked()
+        lock.unlock()
+        task?.cancel()
+        continuation?.resume(throwing: CancellationError())
+    }
+
+    func urlSession(
+        _: URLSession,
+        dataTask _: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+    ) {
+        lock.lock()
+        self.response = response
+        lock.unlock()
+        completionHandler(.allow)
+    }
+
+    func urlSession(
+        _: URLSession,
+        dataTask _: URLSessionDataTask,
+        didReceive data: Data
+    ) {
+        lock.lock()
+        receivedData.append(data)
+        scheduleResponseBodyIdleCompletionLocked()
+        lock.unlock()
+    }
+
+    func urlSession(
+        _: URLSession,
+        task _: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        lock.lock()
+        let continuation = continuation
+        self.continuation = nil
+        let response = response
+        let data = receivedData
+        cancelWorkItemsLocked()
+        lock.unlock()
+
+        if let error {
+            continuation?.resume(throwing: error)
+        } else if let response {
+            continuation?.resume(returning: (data, response))
+        } else {
+            continuation?.resume(throwing: URLError(.badServerResponse))
+        }
+    }
+
+    private func scheduleTimeoutLocked() {
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.finishWithTimeout()
+        }
+        timeoutWorkItem = workItem
+        DispatchQueue.global().asyncAfter(
+            deadline: .now() + timeoutInterval,
+            execute: workItem
+        )
+    }
+
+    private func scheduleResponseBodyIdleCompletionLocked() {
+        guard let responseBodyIdleInterval else { return }
+
+        responseBodyIdleWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.finishWithReceivedResponse()
+        }
+        responseBodyIdleWorkItem = workItem
+        DispatchQueue.global().asyncAfter(
+            deadline: .now() + responseBodyIdleInterval,
+            execute: workItem
+        )
+    }
+
+    private func finishWithTimeout() {
+        lock.lock()
+        let continuation = continuation
+        self.continuation = nil
+        let task = task
+        cancelWorkItemsLocked()
+        lock.unlock()
+
+        task?.cancel()
+        continuation?.resume(throwing: URLError(.timedOut))
+    }
+
+    private func finishWithReceivedResponse() {
+        lock.lock()
+        guard let response, !receivedData.isEmpty else {
+            lock.unlock()
+            return
+        }
+        let continuation = continuation
+        self.continuation = nil
+        let data = receivedData
+        let task = task
+        cancelWorkItemsLocked()
+        lock.unlock()
+
+        task?.cancel()
+        continuation?.resume(returning: (data, response))
+    }
+
+    private func cancelWorkItemsLocked() {
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+        responseBodyIdleWorkItem?.cancel()
+        responseBodyIdleWorkItem = nil
+    }
+}
+
+private nonisolated final class NGAReplySubmissionCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var result: Result<Void, Error>?
+
+    func wait() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            if let result {
+                lock.unlock()
+                continuation.resume(with: result)
+                return
+            }
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    func succeed() {
+        finish(.success(()))
+    }
+
+    func fail(_ error: any Error) {
+        finish(.failure(error))
+    }
+
+    private func finish(_ result: Result<Void, Error>) {
+        lock.lock()
+        guard self.result == nil else {
+            lock.unlock()
+            return
+        }
+        self.result = result
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(with: result)
+    }
+}
+
 extension FeedSortMode {
     var ngaOrderByValue: String {
         switch self {
@@ -29,6 +284,13 @@ protocol ThreadRepository {
     func fetchThread(tid: Int, page: Int) async throws -> ThreadDetailFetchResult
     func addFavoriteThread(tid: Int) async throws
     func removeFavoriteThread(tid: Int) async throws
+    func submitReply(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload],
+        previousReplyCount: Int
+    ) async throws
     func replyThread(
         tid: Int,
         target: ThreadReplyTarget,
@@ -41,6 +303,21 @@ protocol ThreadRepository {
 }
 
 extension ThreadRepository {
+    func submitReply(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload],
+        previousReplyCount _: Int
+    ) async throws {
+        try await replyThread(
+            tid: tid,
+            target: target,
+            content: content,
+            attachments: attachments
+        )
+    }
+
     func fetchForum(
         channel: ForumChannel,
         page: Int,
@@ -61,6 +338,9 @@ struct NGALiveThreadRepository: ThreadRepository {
 
     private static let replyRequestTimeout: TimeInterval = 30
     private static let attachmentUploadTimeout: TimeInterval = 60
+    private static let replyConfirmationAttempts = 3
+    private static let replyConfirmationInterval: TimeInterval = 1
+    private static let replyConfirmationReadTimeout: TimeInterval = 2
     let source = ForumSource.nga
     let capabilities = ForumCapabilities(
         supportsSearch: true,
@@ -364,7 +644,11 @@ struct NGALiveThreadRepository: ThreadRepository {
         return ThreadDetailFetchResult(thread: resolvedThread, rawText: selectedRawText)
     }
 
-    private func fetchAPIThread(tid: Int, page: Int) async throws -> (thread: ForumThread?, rawText: String) {
+    private func fetchAPIThread(
+        tid: Int,
+        page: Int,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> (thread: ForumThread?, rawText: String) {
         let url = URL(string: "https://bbs.nga.cn/app_api.php?__lib=post&__act=list")!
         let (data, rawText) = try await post(
             url: url,
@@ -373,7 +657,8 @@ struct NGALiveThreadRepository: ThreadRepository {
                 "page": "\(page)",
                 "_v": "2",
                 "__output": "14"
-            ]
+            ],
+            timeoutInterval: timeoutInterval
         )
         if let apiThread = ThreadDetailParser.parse(
             data: data,
@@ -449,7 +734,7 @@ struct NGALiveThreadRepository: ThreadRepository {
             tid: tid,
             fid: context.fid,
             content: composedContent,
-            auth: context.auth
+            subject: context.subject
         )
         if case let .reply(targetReply) = target,
            let sourcePostID = targetReply.sourcePostID {
@@ -460,15 +745,84 @@ struct NGALiveThreadRepository: ThreadRepository {
             form["attachments_check"] = uploadedAttachments.attachmentChecks.joined(separator: "\t")
         }
 
-        let (_, rawText) = try await post(
-            url: url,
-            form: form,
-            timeoutInterval: Self.replyRequestTimeout
-        )
+        let rawText: String
+        do {
+            (_, rawText) = try await post(
+                url: url,
+                form: form,
+                timeoutInterval: Self.replyRequestTimeout,
+                responseBodyIdleInterval: 1
+            )
+        } catch let error as NGARequestError {
+            if case let .httpStatus(_, responseText) = error,
+               let message = postFailureMessage(from: responseText) {
+                throw NGARequestError.apiMessage(message)
+            }
+            throw error
+        }
 
         if let message = postFailureMessage(from: rawText) {
             throw NGARequestError.apiMessage(message)
         }
+    }
+
+    func submitReply(
+        tid: Int,
+        target: ThreadReplyTarget,
+        content: String,
+        attachments: [ReplyAttachmentUpload],
+        previousReplyCount: Int
+    ) async throws {
+        let completion = NGAReplySubmissionCompletion()
+        let postTask = Task {
+            do {
+                try await replyThread(
+                    tid: tid,
+                    target: target,
+                    content: content,
+                    attachments: attachments
+                )
+                completion.succeed()
+            } catch {
+                completion.fail(error)
+            }
+        }
+        let confirmationTask = Task {
+            if await confirmsReplySubmission(tid: tid, previousReplyCount: previousReplyCount) {
+                completion.succeed()
+            } else {
+                completion.fail(
+                    NGARequestError.apiMessage("发布结果暂未确认，请刷新帖子后再试。")
+                )
+            }
+        }
+
+        defer {
+            postTask.cancel()
+            confirmationTask.cancel()
+        }
+        try await completion.wait()
+    }
+
+    private func confirmsReplySubmission(tid: Int, previousReplyCount: Int) async -> Bool {
+        for attempt in 0..<Self.replyConfirmationAttempts {
+            guard !Task.isCancelled else { return false }
+
+            if let result = try? await fetchAPIThread(
+                tid: tid,
+                page: 1,
+                timeoutInterval: Self.replyConfirmationReadTimeout
+            ),
+               let thread = result.thread,
+               thread.replyCount > previousReplyCount {
+                return true
+            }
+
+            guard attempt < Self.replyConfirmationAttempts - 1 else { break }
+            try? await Task.sleep(for: .seconds(Self.replyConfirmationInterval))
+        }
+
+        return false
     }
 
     private func fetchWebForum(
@@ -597,6 +951,7 @@ struct NGALiveThreadRepository: ThreadRepository {
         }
 
         let auth = dataDictionary["auth"] as? String
+        let subject = (dataDictionary["subject"] as? String)?.decodedUnicodeEscapes ?? ""
         let prefilledContent = (dataDictionary["content"] as? String)?.decodedUnicodeEscapes
         let attachURLRawValue = dataDictionary["attach_url"] as? String
         let attachURLBase = URL(string: "https://bbs.nga.cn/")
@@ -618,7 +973,8 @@ struct NGALiveThreadRepository: ThreadRepository {
             auth: auth,
             attachURL: attachURL,
             action: action,
-            prefilledContent: prefilledContent
+            prefilledContent: prefilledContent,
+            subject: subject
         )
     }
 
@@ -730,7 +1086,10 @@ struct NGALiveThreadRepository: ThreadRepository {
             request.setValue(value, forHTTPHeaderField: field)
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await data(
+            for: request,
+            hardTimeoutInterval: Self.attachmentUploadTimeout
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NGARequestError.invalidResponse
         }
@@ -777,6 +1136,13 @@ struct NGALiveThreadRepository: ThreadRepository {
 
     private func postFailureMessage(from rawText: String) -> String? {
         let normalized = rawText.cleanedForumText
+        if let serverMessage = rawText.matches(
+            pattern: #""0"\s*:\s*"([^"]+)""#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ).first?[1].cleanedForumText,
+           !serverMessage.isEmpty {
+            return serverMessage
+        }
         let patterns = [
             #"alert\(["']([^"']+)["']\)"#,
             #"showError\(["']([^"']+)["']\)"#,
@@ -865,7 +1231,10 @@ struct NGALiveThreadRepository: ThreadRepository {
             request.setValue(value, forHTTPHeaderField: field)
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await data(
+            for: request,
+            hardTimeoutInterval: timeoutInterval
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NGARequestError.invalidResponse
         }
@@ -881,7 +1250,8 @@ struct NGALiveThreadRepository: ThreadRepository {
     private func post(
         url: URL,
         form: [String: String],
-        timeoutInterval: TimeInterval? = nil
+        timeoutInterval: TimeInterval? = nil,
+        responseBodyIdleInterval: TimeInterval? = nil
     ) async throws -> (Data, String) {
         var request = URLRequest(url: url)
         if let timeoutInterval {
@@ -903,7 +1273,11 @@ struct NGALiveThreadRepository: ThreadRepository {
             request.setValue(value, forHTTPHeaderField: field)
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await data(
+            for: request,
+            hardTimeoutInterval: timeoutInterval,
+            responseBodyIdleInterval: responseBodyIdleInterval
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NGARequestError.invalidResponse
         }
@@ -914,6 +1288,24 @@ struct NGALiveThreadRepository: ThreadRepository {
         }
 
         return (data, rawText)
+    }
+
+    private func data(
+        for request: URLRequest,
+        hardTimeoutInterval: TimeInterval?,
+        responseBodyIdleInterval: TimeInterval? = nil
+    ) async throws -> (Data, URLResponse) {
+        // 只有 NGA 写接口会在响应体已经返回后保持连接不关闭。普通读取请求
+        // 交给系统 URLSession，避免自定义 delegate 参与回帖上下文与确认读取的生命周期。
+        guard let hardTimeoutInterval, responseBodyIdleInterval != nil else {
+            return try await URLSession.shared.data(for: request)
+        }
+
+        return try await NGAWriteRequestSession.load(
+            request,
+            timeoutInterval: hardTimeoutInterval,
+            responseBodyIdleInterval: responseBodyIdleInterval
+        )
     }
 
     private func percentEncode(_ value: String) -> String {
@@ -984,22 +1376,20 @@ enum NGAReplySubmissionForm {
         tid: Int,
         fid: Int,
         content: String,
-        auth: String?
+        subject: String
     ) -> [String: String] {
-        var form = [
+        let form = [
             "step": "2",
             "action": action,
             "tid": "\(tid)",
             "fid": "\(fid)",
+            "post_subject": subject,
             "post_content": content,
             "lite": "js",
             "__inchst": "UTF8",
             "__output": "14"
         ]
 
-        if let auth = auth?.trimmingCharacters(in: .whitespacesAndNewlines), !auth.isEmpty {
-            form["auth"] = auth
-        }
         return form
     }
 }
@@ -1010,6 +1400,7 @@ private struct NGAReplyContext {
     let attachURL: URL?
     let action: NGAReplyPostAction
     let prefilledContent: String?
+    let subject: String
 }
 
 struct MockThreadRepository: ThreadRepository {
@@ -1320,8 +1711,8 @@ extension NGARequestError: ForumErrorConvertible {
             return .malformedResponse
         case let .httpStatus(statusCode, _):
             return ForumError.fromHTTPStatus(statusCode)
-        case .apiMessage:
-            return .sourceUnavailable
+        case let .apiMessage(message):
+            return .unsupported(message)
         }
     }
 }

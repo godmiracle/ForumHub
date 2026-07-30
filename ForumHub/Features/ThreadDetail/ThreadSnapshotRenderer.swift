@@ -109,6 +109,8 @@ enum ThreadSnapshotRenderer {
                 url = imageURL
             case let .emoji(emoji):
                 url = emoji.url
+            case let .video(video):
+                url = video.posterURL
             case .text, .inline, .link, .quote, .unsupported:
                 url = nil
             }
@@ -284,6 +286,36 @@ private struct SnapshotRichContent: View {
                             .padding(.vertical, 24)
                             .background(PaperTheme.paperDeep.opacity(0.3))
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                case let .video(video):
+                    ZStack {
+                        if let posterURL = video.posterURL,
+                           let image = loadedImages[posterURL] {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                        } else {
+                            Rectangle()
+                                .fill(PaperTheme.paperDeep.opacity(0.3))
+                                .aspectRatio(16 / 9, contentMode: .fit)
+                        }
+
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 52, height: 52)
+                            .background(Color.black.opacity(0.58), in: Circle())
+                    }
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(alignment: .bottomTrailing) {
+                        Text("视频")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.black.opacity(0.55), in: Capsule())
+                            .padding(10)
                     }
                 case let .emoji(emoji):
                     if let image = loadedImages[emoji.url] {

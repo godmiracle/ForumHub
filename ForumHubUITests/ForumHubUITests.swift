@@ -45,6 +45,38 @@ final class ForumHubUITests: XCTestCase {
     }
 
     @MainActor
+    func testOpeningSearchResultRecordsBrowsingHistory() throws {
+        let app = launch(scenario: "UITEST_DEFAULT_FEED")
+        let title = "足迹回归主题"
+
+        let searchField = app.textFields["forum-search-field"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 8))
+        searchField.tap()
+        searchField.typeText(title)
+
+        let keyboard = app.keyboards.firstMatch
+        let searchButton = keyboard.buttons["search"].exists
+            ? keyboard.buttons["search"]
+            : keyboard.buttons["搜索"]
+        XCTAssertTrue(searchButton.waitForExistence(timeout: 3))
+        searchButton.tap()
+
+        let result = app.buttons["thread-row-990104"]
+        XCTAssertTrue(result.waitForExistence(timeout: 8))
+        result.tap()
+        XCTAssertTrue(app.scrollViews["thread-detail-scroll"].waitForExistence(timeout: 8))
+
+        app.navigationBars.buttons.firstMatch.tap()
+        app.navigationBars.buttons.firstMatch.tap()
+        tapBottomTab(named: "足迹", in: app)
+
+        XCTAssertTrue(
+            app.staticTexts[title].waitForExistence(timeout: 5),
+            "从搜索结果打开的主题应由详情入口统一写入浏览足迹。"
+        )
+    }
+
+    @MainActor
     func testSwitchesFromNGAToV2EX() throws {
         let app = launch(scenario: "UITEST_SOURCE_SWITCH")
 
@@ -445,6 +477,66 @@ final class ForumHubUITests: XCTestCase {
             "输入正文后点击发布应执行 Mock Repository 并显示成功反馈"
         )
         XCTAssertFalse(app.textViews["reply-composer-editor"].exists)
+    }
+
+    @MainActor
+    func testNGAReplyComposerClosesAfterAsynchronousSubmission() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(scenario: "UITEST_REPLY_DELAYED_SUCCESS")
+
+        let threadRow = app.buttons["thread-row-90002"]
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 8))
+        threadRow.tap()
+
+        let replyAction = app.buttons["thread-detail-reply-action"]
+        XCTAssertTrue(replyAction.waitForExistence(timeout: 8))
+        replyAction.tap()
+
+        let editor = app.textViews["reply-composer-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.typeText("asynchronous reply")
+
+        let submitButton = app.buttons["reply-composer-submit"]
+        XCTAssertTrue(submitButton.isEnabled)
+        submitButton.tap()
+
+        XCTAssertTrue(
+            app.alerts["回复已发送"].waitForExistence(timeout: 8),
+            "异步回复成功后必须关闭编辑页并显示成功反馈"
+        )
+        XCTAssertFalse(editor.exists)
+    }
+
+    @MainActor
+    func testNGAReplyComposerShowsFailureInsidePresentedSheet() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(scenario: "UITEST_REPLY_FAILURE")
+
+        let threadRow = app.buttons["thread-row-90002"]
+        XCTAssertTrue(threadRow.waitForExistence(timeout: 8))
+        threadRow.tap()
+
+        let replyAction = app.buttons["thread-detail-reply-action"]
+        XCTAssertTrue(replyAction.waitForExistence(timeout: 8))
+        replyAction.tap()
+
+        let editor = app.textViews["reply-composer-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.typeText("failure feedback")
+
+        let submitButton = app.buttons["reply-composer-submit"]
+        XCTAssertTrue(submitButton.isEnabled)
+        submitButton.tap()
+
+        XCTAssertTrue(
+            app.alerts["回复失败"].waitForExistence(timeout: 8),
+            "Repository 或登录校验失败时，当前回复 Sheet 必须显示可见反馈。"
+        )
+        XCTAssertTrue(
+            app.staticTexts["reply-composer-error-message"].exists,
+            "即使系统弹窗被键盘或 Sheet 转场抑制，错误也必须直接显示在编辑页内。"
+        )
+        XCTAssertTrue(editor.exists, "提交失败后应保留回复编辑器和草稿。")
     }
 
     @MainActor

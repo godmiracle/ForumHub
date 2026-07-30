@@ -24,6 +24,8 @@ It includes:
 ## Notes
 
 - Local persistence is the offline cache for blocked users and remains authoritative for browsing history and subscribed channel order. NGA and V2EX favorites treat the source account as authoritative while retaining lightweight local UI metadata.
+- Browsing history is recorded at the shared thread-detail presentation boundary rather than at individual list tap gestures, so feed, search, favorites, and history re-entry all follow the same `source + threadID` deduplication path.
+- 2026-07-30 用户已在真机确认打开帖子后足迹能够正常保留。
 - Session-like credentials use iCloud-synchronizable Keychain items and cookie stores rather than KVS or plain defaults.
 - Persistence is source-aware so different communities do not collide on the same IDs or usernames.
 - Favorites, history, and blocked users use a versioned `{ version, payload }` JSON envelope. Legacy raw arrays migrate in place; corrupt or unsupported snapshots degrade to an empty local state.

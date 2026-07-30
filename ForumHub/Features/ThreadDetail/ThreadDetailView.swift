@@ -8,6 +8,7 @@ private enum ThreadDetailScrollAnchor: Hashable {
 }
 
 struct ThreadDetailView: View {
+    @Environment(\.browsingHistoryRecorder) private var browsingHistoryRecorder
     let thread: ForumThread
     let repository: any ThreadRepository
     @Bindable var blockedUsers: BlockedUsersStore
@@ -17,6 +18,7 @@ struct ThreadDetailView: View {
     private let scrollTrackingSpaceName = "thread-detail-scroll"
     private let directPaginationPrefetchReplyDistance = 6
     private let inlineGIFPlaybackCoordinator = InlineGIFPlaybackCoordinator()
+    @State private var inlineVideoPlaybackCoordinator = InlineVideoPlaybackCoordinator()
     @State private var showsOnlyThreadAuthor = false
     @State private var showsRepliesInReverseOrder = false
     @State private var showsV2EXReplyTree = true
@@ -115,12 +117,12 @@ struct ThreadDetailView: View {
     private var replyDocument: ReplyComposerDocument { get { actionState.replyDocument } nonmutating set { actionState.replyDocument = newValue } }
     private var replyAttachments: [ReplyComposerAttachment] { get { actionState.replyAttachments } nonmutating set { actionState.replyAttachments = newValue } }
     private var isSubmittingReply: Bool { get { actionState.isSubmittingReply } nonmutating set { actionState.isSubmittingReply = newValue } }
-    private var replyErrorMessage: String? { get { actionState.replyErrorMessage } nonmutating set { actionState.replyErrorMessage = newValue } }
     private var replySuccessMessage: String? { get { actionState.replySuccessMessage } nonmutating set { actionState.replySuccessMessage = newValue } }
 
     private var replyTargetBinding: Binding<ThreadReplyTarget> { Binding(get: { actionState.replyTarget }, set: { actionState.replyTarget = $0 }) }
     private var replyDocumentBinding: Binding<ReplyComposerDocument> { Binding(get: { actionState.replyDocument }, set: { actionState.replyDocument = $0 }) }
     private var replyAttachmentsBinding: Binding<[ReplyComposerAttachment]> { Binding(get: { actionState.replyAttachments }, set: { actionState.replyAttachments = $0 }) }
+    private var replyErrorMessageBinding: Binding<String?> { Binding(get: { actionState.replyErrorMessage }, set: { actionState.replyErrorMessage = $0 }) }
     private var showsReplyComposerBinding: Binding<Bool> { Binding(get: { actionState.showsReplyComposer }, set: { actionState.showsReplyComposer = $0 }) }
 
     var body: some View {
@@ -138,7 +140,8 @@ struct ThreadDetailView: View {
                             thread: detailThread,
                             threadReplyTotalCount: threadReplyTotalCount,
                             activeInlineGIFPlaybackIDs: activeInlineGIFPlaybackIDs,
-                            scrollTrackingSpaceName: scrollTrackingSpaceName
+                            scrollTrackingSpaceName: scrollTrackingSpaceName,
+                            inlineVideoPlaybackCoordinator: inlineVideoPlaybackCoordinator
                         )
                         .background(
                             GeometryReader { proxy in
@@ -190,6 +193,7 @@ struct ThreadDetailView: View {
                                 supportsReplyTargeting: repository.capabilities.supportsReplyTargeting,
                                 activeInlineGIFPlaybackIDs: activeInlineGIFPlaybackIDs,
                                 scrollTrackingSpaceName: scrollTrackingSpaceName,
+                                inlineVideoPlaybackCoordinator: inlineVideoPlaybackCoordinator,
                                 pageAnchorID: pageAnchorID(for:),
                                 onReplyAppear: handleReplyEntryAppear(_:),
                                 onReplyAction: { entry in
@@ -444,11 +448,6 @@ struct ThreadDetailView: View {
         } message: {
             Text(favoriteErrorMessage ?? "请稍后重试。")
         }
-        .alert("回复失败", isPresented: replyErrorBinding) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text(replyErrorMessage ?? "请稍后重试。")
-        }
         .alert("回复已发送", isPresented: replySuccessBinding) {
             Button("好", role: .cancel) {}
         } message: {
@@ -463,6 +462,7 @@ struct ThreadDetailView: View {
                 target: replyTargetBinding,
                 document: replyDocumentBinding,
                 attachments: replyAttachmentsBinding,
+                errorMessage: replyErrorMessageBinding,
                 isSubmitting: isSubmittingReply,
                 onCancel: {
                     replySubmissionTask?.cancel()
@@ -492,6 +492,9 @@ struct ThreadDetailView: View {
                     showsPagePicker = false
                 }
             )
+        }
+        .onAppear {
+            browsingHistoryRecorder?.record(thread)
         }
     }
 
@@ -668,13 +671,6 @@ struct ThreadDetailView: View {
         Binding(
             get: { favoriteErrorMessage != nil },
             set: { if !$0 { favoriteErrorMessage = nil } }
-        )
-    }
-
-    private var replyErrorBinding: Binding<Bool> {
-        Binding(
-            get: { replyErrorMessage != nil },
-            set: { if !$0 { replyErrorMessage = nil } }
         )
     }
 

@@ -85,6 +85,10 @@ struct ContentView: View {
                     )
                 }
         }
+        .environment(
+            \.browsingHistoryRecorder,
+            BrowsingHistoryRecorder { browsingHistory.record($0) }
+        )
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(selectedTab == .user ? .visible : .hidden, for: .navigationBar)
@@ -343,7 +347,6 @@ struct ContentView: View {
                 onBrowserVerificationRequested: {
                     showsLinuxDoBrowserVerification = true
                 },
-                onOpenThread: { browsingHistory.record($0) },
                 onSwipeChannel: { direction in
                     guard tab == .home,
                           !viewModel.isLoading,

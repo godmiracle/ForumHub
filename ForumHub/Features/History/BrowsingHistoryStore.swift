@@ -1,5 +1,22 @@
 import Foundation
 import Observation
+import SwiftUI
+
+@MainActor
+struct BrowsingHistoryRecorder {
+    let record: (ForumThread) -> Void
+}
+
+private struct BrowsingHistoryRecorderKey: EnvironmentKey {
+    static let defaultValue: BrowsingHistoryRecorder? = nil
+}
+
+extension EnvironmentValues {
+    var browsingHistoryRecorder: BrowsingHistoryRecorder? {
+        get { self[BrowsingHistoryRecorderKey.self] }
+        set { self[BrowsingHistoryRecorderKey.self] = newValue }
+    }
+}
 
 struct BrowsingHistoryEntry: Codable, Equatable, Identifiable {
     let source: ForumSource
