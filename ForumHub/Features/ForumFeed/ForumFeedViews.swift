@@ -86,9 +86,10 @@ struct ForumFeedContent: View {
     var onBrowserVerificationRequested: () -> Void = {}
     var onSwipeChannel: (ChannelPagingDirection) -> Void = { _ in }
     var onHeaderCollapseChange: (Bool) -> Void = { _ in }
-    @State private var suppressesThreadNavigation = false
     @State private var tracksHorizontalSwipe = false
+    @State private var suppressesThreadNavigationHitTesting = false
     @State private var suppressionGeneration = 0
+    @GestureState private var isChannelPagingDragActive = false
     @State private var previousScrollOffset: CGFloat?
     private var topAnchorID: String { "feed-\(tab.rawValue)-top-anchor" }
 
@@ -130,6 +131,10 @@ struct ForumFeedContent: View {
                 .coordinateSpace(name: "forum-feed-scroll")
                 .scrollDismissesKeyboard(.interactively)
                 .simultaneousGesture(channelPagingGesture)
+                .onChange(of: isChannelPagingDragActive) { wasActive, isActive in
+                    guard wasActive, !isActive else { return }
+                    releaseThreadNavigationAfterDrag()
+                }
                 .onChange(of: scrollRequest) { _, request in
                     guard request?.targets(tab) == true else { return }
                     withAnimation(.snappy(duration: 0.28)) {
@@ -161,6 +166,9 @@ struct ForumFeedContent: View {
 
     private var channelPagingGesture: some Gesture {
         DragGesture(minimumDistance: 8)
+            .updating($isChannelPagingDragActive) { _, state, _ in
+                state = true
+            }
             .onChanged { value in
                 guard ChannelPagingPolicy.isHorizontalIntent(value.translation),
                       !tracksHorizontalSwipe
@@ -171,6 +179,7 @@ struct ForumFeedContent: View {
             .onEnded { value in
                 if abs(value.translation.height) > abs(value.translation.width),
                    abs(value.translation.height) > 40 {
+                    endHorizontalSwipe(with: .zero)
                     onHeaderCollapseChange(value.translation.height < 0)
                     return
                 }
@@ -180,22 +189,27 @@ struct ForumFeedContent: View {
 
     private func beginHorizontalSwipe() {
         tracksHorizontalSwipe = true
-        suppressesThreadNavigation = true
+        suppressesThreadNavigationHitTesting = true
         suppressionGeneration += 1
     }
 
     private func endHorizontalSwipe(with translation: CGSize) {
-        let generation = suppressionGeneration
         tracksHorizontalSwipe = false
 
         if let direction = ChannelPagingPolicy.direction(for: translation) {
             onSwipeChannel(direction)
         }
+    }
+
+    private func releaseThreadNavigationAfterDrag() {
+        tracksHorizontalSwipe = false
+        guard suppressesThreadNavigationHitTesting else { return }
+        let generation = suppressionGeneration
 
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(220))
             guard generation == suppressionGeneration else { return }
-            suppressesThreadNavigation = false
+            suppressesThreadNavigationHitTesting = false
         }
     }
 
@@ -248,7 +262,7 @@ struct ForumFeedContent: View {
                 blockedUsers: blockedUsers,
                 favoriteThreads: favoriteThreads,
                 sortMode: sortMode,
-                navigationDisabled: suppressesThreadNavigation
+                navigationHitTestingDisabled: suppressesThreadNavigationHitTesting
             )
         }
     }
@@ -269,7 +283,7 @@ struct ForumFeedContent: View {
                     blockedUsers: blockedUsers,
                     favoriteThreads: favoriteThreads,
                     sortMode: sortMode,
-                    navigationDisabled: suppressesThreadNavigation
+                    navigationHitTestingDisabled: suppressesThreadNavigationHitTesting
                 )
                 .task(id: threads.count) {
                     if FeedPaginationPolicy.shouldPrefetch(
@@ -342,17 +356,14 @@ struct BlockableThreadLink: View {
     @Bindable var blockedUsers: BlockedUsersStore
     @Bindable var favoriteThreads: FavoriteThreadsStore
     var sortMode: FeedSortMode = .lastReply
-    var navigationDisabled = false
+    var navigationHitTestingDisabled = false
     @State private var favoriteErrorMessage: String?
+    @State private var showsThreadDetail = false
 
     var body: some View {
-        NavigationLink {
-            ThreadDetailView(
-                thread: thread,
-                repository: repository,
-                blockedUsers: blockedUsers,
-                favoriteThreads: favoriteThreads
-            )
+        Button {
+            guard !navigationHitTestingDisabled else { return }
+            showsThreadDetail = true
         } label: {
             ThreadRow(
                 thread: thread,
@@ -363,7 +374,15 @@ struct BlockableThreadLink: View {
         }
         .accessibilityIdentifier("thread-row-\(thread.id)")
         .buttonStyle(.plain)
-        .disabled(navigationDisabled)
+        .allowsHitTesting(!navigationHitTestingDisabled)
+        .navigationDestination(isPresented: $showsThreadDetail) {
+            ThreadDetailView(
+                thread: thread,
+                repository: repository,
+                blockedUsers: blockedUsers,
+                favoriteThreads: favoriteThreads
+            )
+        }
         .contextMenu {
             if repository.capabilities.supportsFavorites {
                 Button {
