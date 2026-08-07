@@ -4,6 +4,7 @@ import WebKit
 enum AppCacheManager {
     static func clear() async {
         URLCache.shared.removeAllCachedResponses()
+        NGAForumEmojiLocalStore.clear()
 
         let cacheTypes: Set<String> = [
             WKWebsiteDataTypeDiskCache,

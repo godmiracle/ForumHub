@@ -43,9 +43,52 @@ struct NGAForumEmojiItem: Identifiable, Equatable, Sendable {
 }
 
 enum NGAReplyEmojiCatalog {
-    private static let baseURL = URL(string: "https://img4.nga.178.com/ngabbs/post/smile/")!
+    private static let baseURL = URL(string: "https://img4.nga.cn/ngabbs/post/smile/")!
+    private static let compatibleSmileHosts: Set<String> = [
+        "img4.nga.cn",
+        "img4.nga.178.com"
+    ]
+    static let confirmedUnavailableFilenames: Set<String> = [
+        "ng_39.png",
+        "ng_40.png",
+        "a2_06.png",
+        "a2_29.png",
+        "a2_34.png",
+        "a2_35.png"
+    ]
 
     static func items(in group: NGAForumEmojiGroup) -> [NGAForumEmojiItem] {
+        catalogItems(in: group).filter {
+            !confirmedUnavailableFilenames.contains($0.filename)
+        }
+    }
+
+    static func item(filename: String) -> NGAForumEmojiItem? {
+        allItemsByFilename[filename]
+    }
+
+    static func item(imageURL: URL) -> NGAForumEmojiItem? {
+        guard let host = imageURL.host?.lowercased(),
+              compatibleSmileHosts.contains(host),
+              imageURL.path.hasPrefix(baseURL.path),
+              let filename = imageURL.pathComponents.last
+        else { return nil }
+        return item(filename: filename)
+    }
+
+    static func imageURL(for filename: String) -> URL {
+        baseURL.appendingPathComponent(filename)
+    }
+
+    private static let allItemsByFilename: [String: NGAForumEmojiItem] = {
+        Dictionary(
+            uniqueKeysWithValues: NGAForumEmojiGroup.allCases
+                .flatMap { catalogItems(in: $0) }
+                .map { ($0.filename, $0) }
+        )
+    }()
+
+    private static func catalogItems(in group: NGAForumEmojiGroup) -> [NGAForumEmojiItem] {
         switch group {
         case .ng:
             numberedItems(group: group, range: 1...40, prefix: "ng_", padsToTwoDigits: false)
@@ -61,30 +104,6 @@ enum NGAReplyEmojiCatalog {
             numberedItems(group: group, range: 1...15, prefix: "pg", padsToTwoDigits: true)
         }
     }
-
-    static func item(filename: String) -> NGAForumEmojiItem? {
-        allItemsByFilename[filename]
-    }
-
-    static func item(imageURL: URL) -> NGAForumEmojiItem? {
-        guard imageURL.host == baseURL.host,
-              imageURL.path.hasPrefix(baseURL.path),
-              let filename = imageURL.pathComponents.last
-        else { return nil }
-        return item(filename: filename)
-    }
-
-    static func imageURL(for filename: String) -> URL {
-        baseURL.appendingPathComponent(filename)
-    }
-
-    private static let allItemsByFilename: [String: NGAForumEmojiItem] = {
-        Dictionary(
-            uniqueKeysWithValues: NGAForumEmojiGroup.allCases
-                .flatMap { items(in: $0) }
-                .map { ($0.filename, $0) }
-        )
-    }()
 
     private static func numberedItems(
         group: NGAForumEmojiGroup,

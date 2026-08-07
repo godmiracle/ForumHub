@@ -3,6 +3,8 @@ import Foundation
 enum NGAImageURLResolver {
     private static let imageBaseURL = "https://img.nga.178.com"
     private static let trustedHosts: Set<String> = [
+        "img.nga.cn",
+        "img4.nga.cn",
         "img.nga.178.com", "img4.nga.178.com", "bbs.nga.cn", "nga.178.com"
     ]
 
@@ -23,6 +25,10 @@ enum NGAImageURLResolver {
               let host = components.host?.lowercased(),
               components.scheme == "http" || components.scheme == "https"
         else { return nil }
+        if host == "img4.nga.178.com",
+           components.path.hasPrefix("/ngabbs/post/smile/") {
+            components.host = "img4.nga.cn"
+        }
         if components.scheme == "http", trustedHosts.contains(host) {
             components.scheme = "https"
         }

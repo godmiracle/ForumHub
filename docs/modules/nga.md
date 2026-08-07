@@ -36,7 +36,7 @@ It currently supports:
 - Only unusable API content enters Web fallback. The fallback replaces a whole same-floor document while preserving API identity, metadata, membership, and order; Web-only floors are ignored and diagnosed.
 - Complete API transport failure is a typed error; users can still choose the existing original-page action.
 - NGA emoji tables, relative attachment resolution, BBCode, HTML and DOM rules stay inside the NGA adapter.
-- `NGAReplyEmojiCatalog` 是回复表情的来源专属事实入口，按 `NG娘、AC娘 v1、AC娘 v2、潘斯特、外域、企鹅` 提供六组条目；新增资源边界为 `pt00...pt64`、`dt01...dt33`、`pg01...pg15`。回复继续序列化为 `[img]https://img4.nga.178.com/ngabbs/post/smile/<filename>[/img]`，只有可信 NGA smile 域名且属于目录的文件名才能恢复为富文本表情。
+- `NGAReplyEmojiCatalog` 是回复表情的来源专属事实入口，按 `NG娘、AC娘 v1、AC娘 v2、潘斯特、外域、企鹅` 提供六组条目；新增资源边界为 `pt00...pt64`、`dt01...dt33`、`pg01...pg15`。回复继续序列化为 `[img]https://img4.nga.cn/ngabbs/post/smile/<filename>[/img]`，读取旧帖时会把旧的 `img4.nga.178.com` smile 地址归一化到当前域名，编辑器也兼容旧地址；标准 smile PNG 随 App 分发作为首选本地兜底，运行时缓存使用文件名保存在 `Library/Caches/ForumEmoji`，只有可信 NGA smile 域名且属于合法文件名的资源才进入该路径。
 - A future dual-source reconciler requires two independent real paired Fixtures proving complementary semantic loss; current evidence does not meet that gate.
 - Reply pagination needs careful duplicate filtering because later pages may reintroduce the main post.
 - NGA may change the private response shape; a future mismatch must fail closed and retain the last confirmed directory rather than introduce position or attributes heuristics.

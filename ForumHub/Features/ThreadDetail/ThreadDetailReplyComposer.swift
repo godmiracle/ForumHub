@@ -576,7 +576,7 @@ struct ReplyComposerEmoji: Equatable {
               let item = NGAReplyEmojiCatalog.item(imageURL: imageURL)
         else { return nil }
         filename = item.filename
-        self.imageURL = imageURL
+        self.imageURL = item.imageURL
     }
 }
 

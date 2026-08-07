@@ -10,6 +10,7 @@
 - 将用户确认的资源区间纳入目录：`pt00...pt64`、`dt01...dt33`、`pg01...pg15`，保留各组真实的起始编号与两位补零格式。
 - 统一回复选择、富文本插入、文档恢复和提交序列化所依赖的表情目录，确保新增三组不会在编辑过程中退化或丢失。
 - 移除开发阶段说明文案，使连续选择行为与界面反馈一致，并为加载失败、空正文、提交中和附件上限保留明确状态。
+- 为已确认的 NGA 标准表情随 App 分发一份本地 PNG 兜底，并将运行时缓存按表情文件名保存，避免远端域名变化使已知表情失效。
 - 增加目录边界、插入位置、序列化往返和主要回复面板状态的聚焦测试。
 
 ## Capabilities
@@ -25,7 +26,8 @@
 
 ## Impact
 
-- 主要影响 `ForumHub/Features/ThreadDetail/ThreadDetailReplyComposer.swift` 及其回复状态、富文本编辑器和测试。
+- 主要影响 `ForumHub/Features/ThreadDetail/ThreadDetailReplyComposer.swift`、NGA 图片加载管线、表情本地资源和相关测试。
 - NGA 表情目录可能需要从 Feature 文件迁移到可被回复编辑与 NGA 内容解析共同复用的来源适配边界，但不改变其他数据源的回复能力声明。
 - 不新增第三方依赖，不改变 NGA 图片上传与回复提交端点，不为 V2EX 或 LINUX DO 宣称新的原生回复能力。
+- 本地资源仅覆盖 NGA 标准表情；普通帖子图片仍使用现有远程加载和缓存路径。
 - 用户可见行为发生变化，实施并验证后需要同步 `docs/modules/thread-detail.md`、`docs/modules/nga.md`、`docs/changelog.md` 与受影响待办。

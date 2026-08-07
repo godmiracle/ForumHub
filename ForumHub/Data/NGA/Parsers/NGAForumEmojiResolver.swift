@@ -1,6 +1,10 @@
 import Foundation
 
 enum NGAForumEmojiResolver {
+    static func isKnownFilename(_ filename: String) -> Bool {
+        filenames.values.contains { $0.values.contains(filename) }
+    }
+
     static func resolve(markup: String) -> ForumContentEmoji? {
         let pattern = #"^\[s:([a-zA-Z0-9_]+):([^\]\r\n]+)\]$"#
         guard let expression = try? NSRegularExpression(pattern: pattern),
@@ -11,9 +15,8 @@ enum NGAForumEmojiResolver {
 
         let group = String(markup[groupRange])
         let name = String(markup[nameRange])
-        guard let filename = filenames[group]?[name],
-              let url = URL(string: "https://img4.nga.178.com/ngabbs/post/smile/\(filename)")
-        else { return nil }
+        guard let filename = filenames[group]?[name] else { return nil }
+        let url = NGAReplyEmojiCatalog.imageURL(for: filename)
         return ForumContentEmoji(name: name, url: url)
     }
 

@@ -342,6 +342,8 @@ private struct SnapshotRichContent: View {
 
 enum NGAImageLoader {
     private static let trustedNGAImageHosts: Set<String> = [
+        "img.nga.cn",
+        "img4.nga.cn",
         "img.nga.178.com",
         "img4.nga.178.com",
         "bbs.nga.cn",
@@ -378,6 +380,15 @@ enum NGAImageLoader {
         return request
     }
 
+    fileprivate static func canonicalURL(for url: URL) -> URL {
+        NGAImageURLResolver.resolve(url.absoluteString) ?? url
+    }
+
+    fileprivate static func loadLocalEmojiAsset(url: URL) -> ForumRemoteImageAsset? {
+        guard let data = NGAForumEmojiLocalStore.data(for: url) else { return nil }
+        return try? makeAsset(data: data, mimeType: "image/png")
+    }
+
     fileprivate static func fetchAsset(url: URL) async throws -> ForumRemoteImageAsset {
         let request = makeRequest(url: url)
 
@@ -386,8 +397,7 @@ enum NGAImageLoader {
             ?? NGAImageLoader.inferredMimeType(from: url, data: data)
 
         guard let response = response as? HTTPURLResponse,
-              (200..<300).contains(response.statusCode),
-              let previewImage = downsampledPreviewImage(from: data)
+              (200..<300).contains(response.statusCode)
         else {
             throw URLError(.cannotDecodeContentData)
         }
@@ -404,11 +414,25 @@ enum NGAImageLoader {
             }
         }
 
+        NGAForumEmojiLocalStore.store(data, for: url)
+
+        return try makeAsset(data: data, mimeType: mimeType, localFileURL: fileURL)
+    }
+
+    private static func makeAsset(
+        data: Data,
+        mimeType: String,
+        localFileURL: URL? = nil
+    ) throws -> ForumRemoteImageAsset {
+        guard let previewImage = downsampledPreviewImage(from: data) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+
         return ForumRemoteImageAsset(
             data: data,
             mimeType: mimeType,
             previewImage: previewImage,
-            localFileURL: fileURL
+            localFileURL: localFileURL
         )
     }
 
@@ -460,24 +484,31 @@ private final class ForumImagePipeline {
     private var inFlightTasks: [URL: Task<ForumRemoteImageAsset, Error>] = [:]
 
     func loadAsset(url: URL) async throws -> ForumRemoteImageAsset {
-        if let cached = cache.object(forKey: url as NSURL)?.asset {
+        let canonicalURL = NGAImageLoader.canonicalURL(for: url)
+
+        if let cached = cache.object(forKey: canonicalURL as NSURL)?.asset {
             return cached
         }
 
-        if let task = inFlightTasks[url] {
+        if let task = inFlightTasks[canonicalURL] {
             return try await task.value
         }
 
-        let task = Task { try await NGAImageLoader.fetchAsset(url: url) }
-        inFlightTasks[url] = task
+        if let localAsset = NGAImageLoader.loadLocalEmojiAsset(url: canonicalURL) {
+            cache.setObject(ForumRemoteImageAssetBox(asset: localAsset), forKey: canonicalURL as NSURL)
+            return localAsset
+        }
+
+        let task = Task { try await NGAImageLoader.fetchAsset(url: canonicalURL) }
+        inFlightTasks[canonicalURL] = task
 
         defer {
-            inFlightTasks[url] = nil
+            inFlightTasks[canonicalURL] = nil
         }
 
         do {
             let asset = try await task.value
-            cache.setObject(ForumRemoteImageAssetBox(asset: asset), forKey: url as NSURL)
+            cache.setObject(ForumRemoteImageAssetBox(asset: asset), forKey: canonicalURL as NSURL)
             return asset
         } catch {
             throw error
